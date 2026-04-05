@@ -1,0 +1,24 @@
+{
+  "name": "tages",
+  "private": true,
+  "description": "Persistent codebase memory for AI coding agents. MCP server + CLI + dashboard.",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --filter @tages/dashboard dev",
+    "test": "pnpm -r test",
+    "lint": "eslint .",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "keywords": [
+    "mcp",
+    "ai",
+    "coding",
+    "memory",
+    "codebase",
+    "claude-code",
+    "cursor",
+    "agents"
+  ],
+  "author": "Ryan Lee",
+  "license": "MIT"
+}
