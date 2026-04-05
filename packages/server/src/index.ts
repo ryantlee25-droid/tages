@@ -2,6 +2,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createSupabaseClient } from '@tages/shared'
+import { z } from 'zod'
 
 import { loadServerConfig } from './config'
 import { SqliteCache } from './cache/sqlite'
@@ -19,6 +20,7 @@ import { handleStaleness } from './tools/staleness'
 import { handleConflicts } from './tools/conflicts'
 import { handleStats } from './tools/stats'
 import { handleSessionEnd } from './tools/session-end'
+import { handleObserve } from './tools/observe'
 import { RememberSchema, RecallSchema, ForgetSchema, ContextSchema, SessionEndSchema } from './schemas'
 
 async function main() {
@@ -164,6 +166,15 @@ async function main() {
     'Show memory usage statistics — counts by type, recall hit rate, agent sessions, most/least accessed',
     {},
     async () => handleStats(projectId, cache, sync),
+  )
+
+  server.tool(
+    'observe',
+    'Report what you are doing or learning — Tages silently extracts memories from your observations. Call this naturally as you work, no need to format.',
+    {
+      observation: z.string().min(1).describe('What you observed, decided, or learned while working'),
+    },
+    async (args) => handleObserve(args, projectId, cache, sync),
   )
 
   server.tool(

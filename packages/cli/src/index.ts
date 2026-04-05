@@ -13,6 +13,8 @@ import { tokenGenerateCommand, tokenListCommand } from './commands/token.js'
 import { snapshotCommand } from './commands/snapshot.js'
 import { checkCommand } from './commands/check.js'
 import { patternsDetectCommand, patternsPromoteCommand, patternsListCommand } from './commands/patterns.js'
+import { onboardCommand } from './commands/onboard.js'
+import { exportCommand } from './commands/export.js'
 
 const program = new Command()
 
@@ -121,6 +123,20 @@ program
   .option('-p, --project <slug>', 'Project slug')
   .option('--fix', 'Mark stale memories in the database')
   .action(checkCommand)
+
+program
+  .command('onboard')
+  .description('Get a structured project briefing from stored memories')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(onboardCommand)
+
+program
+  .command('export')
+  .description('Export memories as markdown files (CLAUDE.md, ARCHITECTURE.md, or JSON)')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('-o, --output <path>', 'Output file path')
+  .option('-f, --format <format>', 'Format: claude-md, architecture-md, json', 'claude-md')
+  .action(exportCommand)
 
 const patternsCmd = program
   .command('patterns')
