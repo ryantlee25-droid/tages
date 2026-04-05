@@ -14,6 +14,15 @@ export default async function AppLayout({
     redirect('/auth/login')
   }
 
+  // Check Pro status
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('is_pro')
+    .eq('user_id', user.id)
+    .single()
+
+  const isPro = profile?.is_pro ?? false
+
   return (
     <div className="flex h-screen bg-zinc-950">
       {/* Sidebar */}
@@ -34,9 +43,24 @@ export default async function AppLayout({
               {user.email?.[0]?.toUpperCase() || '?'}
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-xs text-zinc-300">{user.email}</p>
+              <div className="flex items-center gap-1.5">
+                <p className="truncate text-xs text-zinc-300">{user.email}</p>
+                {isPro && (
+                  <span className="shrink-0 rounded bg-[#3BA3C7]/20 px-1.5 py-0.5 text-[10px] font-medium text-[#3BA3C7]">
+                    PRO
+                  </span>
+                )}
+              </div>
             </div>
           </div>
+          {!isPro && (
+            <Link
+              href="/app/upgrade"
+              className="mt-2 block w-full rounded-md py-1.5 text-center text-xs font-medium text-[#3BA3C7] transition-colors hover:bg-[#3BA3C7]/10"
+            >
+              Upgrade to Pro
+            </Link>
+          )}
           <form action="/auth/signout" method="post">
             <button
               type="submit"
