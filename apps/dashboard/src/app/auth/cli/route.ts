@@ -65,16 +65,14 @@ export async function GET(request: Request) {
 
     if (error || !data.session) {
       // Fire-and-forget: log failed login
-      supabase
-        .from('auth_audit_log')
-        .insert({
+      void Promise.resolve(
+        supabase.from('auth_audit_log').insert({
           event_type: 'login_failed',
           ip_address: ipAddress,
           user_agent: userAgent,
           metadata: { error: error?.message ?? 'no_session' },
         })
-        .then(() => {})
-        .catch(() => {})
+      ).catch(() => {})
 
       const url = new URL(redirectUri)
       url.searchParams.set('error', 'session_exchange_failed')
@@ -82,17 +80,15 @@ export async function GET(request: Request) {
     }
 
     // Fire-and-forget: log successful login
-    supabase
-      .from('auth_audit_log')
-      .insert({
+    void Promise.resolve(
+      supabase.from('auth_audit_log').insert({
         user_id: data.session.user.id,
         event_type: 'login_success',
         ip_address: ipAddress,
         user_agent: userAgent,
         metadata: {},
       })
-      .then(() => {})
-      .catch(() => {})
+    ).catch(() => {})
 
     const url = new URL(redirectUri)
     url.searchParams.set('access_token', data.session.access_token)

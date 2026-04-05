@@ -27,14 +27,12 @@ export async function validateToken(
 
   if (error || !data) {
     // Fire-and-forget: log invalid token lookup (no user_id known)
-    supabase
-      .from('auth_audit_log')
-      .insert({
+    void Promise.resolve(
+      supabase.from('auth_audit_log').insert({
         event_type: 'token_invalid',
         metadata: {},
       })
-      .then(() => {})
-      .catch(() => {})
+    ).catch(() => {})
 
     return { valid: false }
   }
@@ -43,15 +41,13 @@ export async function validateToken(
   const expiresAt: string | null = (data as { user_id: string; expires_at?: string | null }).expires_at ?? null
   if (expiresAt !== null && new Date(expiresAt) < new Date()) {
     // Fire-and-forget: log expired token
-    supabase
-      .from('auth_audit_log')
-      .insert({
+    void Promise.resolve(
+      supabase.from('auth_audit_log').insert({
         user_id: data.user_id,
         event_type: 'token_expired',
         metadata: { expires_at: expiresAt },
       })
-      .then(() => {})
-      .catch(() => {})
+    ).catch(() => {})
 
     return { valid: false }
   }
