@@ -14,15 +14,19 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Resolve project
+  // Resolve project + ownership check
   const { data: project } = await supabase
     .from('projects')
-    .select('id, name, slug')
+    .select('id, name, slug, owner_id')
     .eq('slug', slug)
     .single()
 
   if (!project) {
     return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+  }
+
+  if (project.owner_id !== user.id) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
   // Fetch memories
