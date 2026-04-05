@@ -25,7 +25,7 @@ export default async function SettingsPage({
   return (
     <div className="p-8">
       <h1 className="mb-2 text-2xl font-bold text-white">{project.name}</h1>
-      <ProjectNav slug={slug} active="settings" />
+      <ProjectNav slug={slug} active="settings" projectId={project.id} />
 
       <div className="max-w-2xl space-y-8">
         {/* Project info */}

@@ -1,9 +1,9 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
-import { MemoryTable } from '@/components/memory-table'
+import { StatsDashboard } from '@/components/stats-dashboard'
 import { ProjectNav } from '@/components/project-nav'
 
-export default async function ProjectPage({
+export default async function StatsPage({
   params,
 }: {
   params: Promise<{ slug: string }>
@@ -28,9 +28,16 @@ export default async function ProjectPage({
         <p className="mt-1 text-sm text-zinc-400">{project.git_remote || project.slug}</p>
       </div>
 
-      <ProjectNav slug={slug} active="memories" projectId={project.id} />
+      <ProjectNav slug={slug} active="stats" projectId={project.id} />
 
-      <MemoryTable projectId={project.id} />
+      <div className="mb-6">
+        <h2 className="text-lg font-semibold text-white">Memory Stats</h2>
+        <p className="mt-0.5 text-sm text-zinc-400">
+          Breakdown of stored memories by type, confidence, and agent.
+        </p>
+      </div>
+
+      <StatsDashboard projectId={project.id} />
     </div>
   )
 }

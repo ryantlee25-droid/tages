@@ -11,6 +11,7 @@ interface Memory {
   value: string
   type: string
   source: string
+  status: string
   agent_name: string | null
   file_paths: string[]
   tags: string[]
@@ -19,14 +20,17 @@ interface Memory {
   updated_at: string
 }
 
-const MEMORY_TYPES = ['all', 'convention', 'decision', 'architecture', 'entity', 'lesson', 'preference', 'pattern']
+const MEMORY_TYPES = ['all', 'convention', 'decision', 'architecture', 'entity', 'lesson', 'preference', 'pattern', 'execution']
+type StatusFilter = 'live' | 'pending' | 'all'
 
 export function MemoryTable({ projectId }: { projectId: string }) {
   const [memories, setMemories] = useState<Memory[]>([])
   const [filter, setFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('live')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Memory | null>(null)
   const [loading, setLoading] = useState(true)
+  const [verifying, setVerifying] = useState<Set<string>>(new Set())
 
   const supabase = createClient()
 
@@ -49,7 +53,7 @@ export function MemoryTable({ projectId }: { projectId: string }) {
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
-  }, [projectId, filter])
+  }, [projectId, filter, statusFilter])
 
   async function loadMemories() {
     setLoading(true)
@@ -63,6 +67,10 @@ export function MemoryTable({ projectId }: { projectId: string }) {
       query = query.eq('type', filter)
     }
 
+    if (statusFilter !== 'all') {
+      query = query.eq('status', statusFilter)
+    }
+
     if (search.trim()) {
       const { data } = await supabase.rpc('recall_memories', {
         p_project_id: projectId,
@@ -70,12 +78,33 @@ export function MemoryTable({ projectId }: { projectId: string }) {
         p_type: filter === 'all' ? null : filter,
         p_limit: 50,
       })
-      setMemories(data || [])
+      // Apply status filter client-side for RPC results
+      const filtered = statusFilter === 'all'
+        ? (data || [])
+        : (data || []).filter((m: Memory) => m.status === statusFilter)
+      setMemories(filtered)
     } else {
       const { data } = await query
       setMemories(data || [])
     }
     setLoading(false)
+  }
+
+  async function verifyMemory(id: string) {
+    setVerifying((prev) => new Set(prev).add(id))
+    await supabase
+      .from('memories')
+      .update({ status: 'live', verified_at: new Date().toISOString() })
+      .eq('id', id)
+    setVerifying((prev) => { const next = new Set(prev); next.delete(id); return next })
+    await loadMemories()
+  }
+
+  async function rejectMemory(id: string) {
+    setVerifying((prev) => new Set(prev).add(id))
+    await supabase.from('memories').delete().eq('id', id)
+    setVerifying((prev) => { const next = new Set(prev); next.delete(id); return next })
+    setMemories((prev) => prev.filter((m) => m.id !== id))
   }
 
   useEffect(() => {
@@ -97,7 +126,7 @@ export function MemoryTable({ projectId }: { projectId: string }) {
       </div>
 
       {/* Type tabs */}
-      <div className="mb-4 flex gap-1 overflow-x-auto">
+      <div className="mb-3 flex gap-1 overflow-x-auto">
         {MEMORY_TYPES.map((type) => (
           <button
             key={type}
@@ -109,6 +138,27 @@ export function MemoryTable({ projectId }: { projectId: string }) {
             }`}
           >
             {type === 'all' ? 'All' : type}
+          </button>
+        ))}
+      </div>
+
+      {/* Status filter */}
+      <div className="mb-4 flex gap-1">
+        {(['live', 'pending', 'all'] as StatusFilter[]).map((s) => (
+          <button
+            key={s}
+            onClick={() => setStatusFilter(s)}
+            className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+              statusFilter === s
+                ? s === 'pending'
+                  ? 'bg-yellow-500/20 text-yellow-400'
+                  : s === 'live'
+                  ? 'bg-[#3BA3C7]/10 text-[#3BA3C7]'
+                  : 'bg-zinc-700 text-white'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            {s === 'live' ? 'Live' : s === 'pending' ? 'Pending' : 'All'}
           </button>
         ))}
       </div>
@@ -129,31 +179,56 @@ export function MemoryTable({ projectId }: { projectId: string }) {
         </div>
       ) : (
         <div className="space-y-1">
-          {memories.map((memory) => (
-            <button
-              key={memory.id}
-              onClick={() => setSelected(memory)}
-              className="flex w-full items-start gap-3 rounded-lg p-3 text-left transition-colors hover:bg-zinc-800/50"
-            >
-              <TypeBadge type={memory.type} />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-white">{memory.key}</p>
-                <p className="mt-0.5 truncate text-xs text-zinc-400">
-                  {memory.value.length > 80
-                    ? memory.value.slice(0, 80) + '...'
-                    : memory.value}
-                </p>
+          {memories.map((memory) => {
+            const isPending = memory.status === 'pending'
+            const busy = verifying.has(memory.id)
+            return (
+              <div
+                key={memory.id}
+                className="flex w-full items-start gap-3 rounded-lg p-3 transition-colors hover:bg-zinc-800/50"
+              >
+                <button
+                  onClick={() => setSelected(memory)}
+                  className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                >
+                  <TypeBadge type={memory.type} />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-white">{memory.key}</p>
+                    <p className="mt-0.5 truncate text-xs text-zinc-400">
+                      {memory.value.length > 80
+                        ? memory.value.slice(0, 80) + '...'
+                        : memory.value}
+                    </p>
+                  </div>
+                </button>
+                <div className="flex shrink-0 flex-col items-end gap-1.5">
+                  {isPending ? (
+                    <div className="flex gap-1.5">
+                      <button
+                        onClick={() => verifyMemory(memory.id)}
+                        disabled={busy}
+                        className="rounded px-2 py-1 text-[10px] font-medium text-[#3BA3C7] hover:bg-[#3BA3C7]/10 disabled:opacity-50"
+                      >
+                        Verify
+                      </button>
+                      <button
+                        onClick={() => rejectMemory(memory.id)}
+                        disabled={busy}
+                        className="rounded px-2 py-1 text-[10px] font-medium text-zinc-500 hover:bg-zinc-700 hover:text-white disabled:opacity-50"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="text-xs text-zinc-500">{memory.source}</span>
+                  )}
+                  <span className="text-xs text-zinc-600">
+                    {new Date(memory.created_at).toLocaleDateString()}
+                  </span>
+                </div>
               </div>
-              <div className="flex flex-col items-end gap-1">
-                <span className="text-xs text-zinc-500">
-                  {memory.source}
-                </span>
-                <span className="text-xs text-zinc-600">
-                  {new Date(memory.created_at).toLocaleDateString()}
-                </span>
-              </div>
-            </button>
-          ))}
+            )
+          })}
         </div>
       )}
 

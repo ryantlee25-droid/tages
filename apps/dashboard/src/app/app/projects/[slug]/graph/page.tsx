@@ -1,9 +1,9 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
-import { ActivityFeed } from '@/components/activity-feed'
 import { ProjectNav } from '@/components/project-nav'
+import { MemoryGraphView } from '@/components/memory-graph'
 
-export default async function ActivityPage({
+export default async function GraphPage({
   params,
 }: {
   params: Promise<{ slug: string }>
@@ -22,8 +22,8 @@ export default async function ActivityPage({
   return (
     <div className="p-8">
       <h1 className="mb-2 text-2xl font-bold text-white">{project.name}</h1>
-      <ProjectNav slug={slug} active="activity" projectId={project.id} />
-      <ActivityFeed projectId={project.id} />
+      <ProjectNav slug={slug} active="graph" projectId={project.id} />
+      <MemoryGraphView projectId={project.id} />
     </div>
   )
 }
