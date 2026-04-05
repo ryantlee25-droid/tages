@@ -1,5 +1,6 @@
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
+import { formatDiff } from '../diff/field-diff'
 
 interface VersionEntry {
   version: number
@@ -70,6 +71,15 @@ export async function handleMemoryHistory(
     }
   })
 
+  // Fetch field-level diffs for this memory
+  const fieldChanges = cache.getFieldChanges(memory.id)
+  const changesByVersion = new Map<string, ReturnType<typeof cache.getFieldChanges>>()
+  for (const fc of fieldChanges) {
+    const existing = changesByVersion.get(fc.versionId) || []
+    existing.push(fc)
+    changesByVersion.set(fc.versionId, existing)
+  }
+
   const currentLine = `Current: ${memory.value} (confidence: ${(memory.confidence * 100).toFixed(0)}%)`
   const historyLines = entries.map((v) => {
     const delta = v.confidenceDelta !== null
@@ -77,7 +87,15 @@ export async function handleMemoryHistory(
       : ''
     const by = v.changedBy ? ` by ${v.changedBy}` : ''
     const reason = v.changeReason ? ` [${v.changeReason}]` : ''
-    return `  v${v.version} (${new Date(v.createdAt).toLocaleDateString()})${by}${reason}${delta}: ${v.value.slice(0, 80)}${v.value.length > 80 ? '...' : ''}`
+
+    // Look for field changes associated with this version
+    const versionId = `${memory.id}-v${v.version}`
+    const changes = changesByVersion.get(versionId)
+    const diffLine = changes && changes.length > 0
+      ? `\n    Fields: ${formatDiff(changes.map(c => ({ field: c.fieldName, oldValue: c.oldValue, newValue: c.newValue, changeType: c.changeType as 'added' | 'removed' | 'modified' | 'unchanged' })))}`
+      : ''
+
+    return `  v${v.version} (${new Date(v.createdAt).toLocaleDateString()})${by}${reason}${delta}: ${v.value.slice(0, 80)}${v.value.length > 80 ? '...' : ''}${diffLine}`
   })
 
   return {

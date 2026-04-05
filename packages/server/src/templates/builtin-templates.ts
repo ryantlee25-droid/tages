@@ -1,0 +1,75 @@
+import type { MemoryTemplate } from './template-engine'
+
+export const BUILTIN_TEMPLATES: MemoryTemplate[] = [
+  {
+    id: 'api-endpoint',
+    name: 'API Endpoint',
+    description: 'Convention memory for a new API endpoint',
+    memoryType: 'convention',
+    filePatterns: [/routes?\//i, /api\//i, /controllers?\//i, /handlers?\//i],
+    fields: [
+      { name: 'endpoint', description: 'The endpoint path (e.g. POST /api/users)', required: true },
+      { name: 'auth_method', description: 'Authentication method (e.g. JWT, API key, none)', required: true },
+      { name: 'rate_limit', description: 'Rate limit (e.g. 100/min)', required: false, default: 'none' },
+      { name: 'error_format', description: 'Error response format', required: false, default: 'JSON { error, message }' },
+    ],
+    keyPrefix: 'api',
+  },
+  {
+    id: 'react-component',
+    name: 'React Component',
+    description: 'Convention memory for a new React component',
+    memoryType: 'convention',
+    filePatterns: [/components?\//i, /\.tsx?$/],
+    contentPatterns: [/React|JSX|tsx/],
+    fields: [
+      { name: 'component_name', description: 'Component name', required: true },
+      { name: 'props_interface', description: 'Props interface name', required: false },
+      { name: 'state_management', description: 'State management approach', required: false, default: 'useState' },
+      { name: 'styling', description: 'Styling approach (e.g. Tailwind, CSS modules)', required: false, default: 'Tailwind' },
+    ],
+    keyPrefix: 'component',
+  },
+  {
+    id: 'database-migration',
+    name: 'Database Migration',
+    description: 'Decision memory for a new database migration',
+    memoryType: 'decision',
+    filePatterns: [/migrations?\//i, /schema\./i, /\d{4}_.*\.sql$/],
+    fields: [
+      { name: 'migration_name', description: 'Migration name/description', required: true },
+      { name: 'tables_affected', description: 'Tables added, modified, or dropped', required: true },
+      { name: 'rollback_strategy', description: 'How to rollback this migration', required: false, default: 'DROP added columns/tables' },
+      { name: 'data_migration', description: 'Any data transformation required', required: false, default: 'none' },
+    ],
+    keyPrefix: 'migration',
+  },
+  {
+    id: 'test-suite',
+    name: 'Test Suite',
+    description: 'Convention memory for a test suite',
+    memoryType: 'convention',
+    filePatterns: [/\.test\./i, /\.spec\./i, /__tests__\//i],
+    fields: [
+      { name: 'test_file', description: 'Test file path', required: true },
+      { name: 'framework', description: 'Test framework (vitest, jest, etc.)', required: false, default: 'vitest' },
+      { name: 'coverage_target', description: 'Coverage target %', required: false, default: '80%' },
+      { name: 'test_patterns', description: 'describe/it naming convention', required: false },
+    ],
+    keyPrefix: 'tests',
+  },
+  {
+    id: 'cli-command',
+    name: 'CLI Command',
+    description: 'Convention memory for a new CLI command',
+    memoryType: 'convention',
+    filePatterns: [/commands?\//i, /cli\//i, /bin\//i],
+    fields: [
+      { name: 'command_name', description: 'Command name (e.g. tages dedup)', required: true },
+      { name: 'description', description: 'What the command does', required: true },
+      { name: 'arguments', description: 'Required arguments', required: false, default: 'none' },
+      { name: 'options', description: 'Key options/flags', required: false, default: '--project <slug>' },
+    ],
+    keyPrefix: 'cli',
+  },
+]

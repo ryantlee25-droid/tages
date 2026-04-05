@@ -29,6 +29,7 @@ export async function rememberCommand(key: string, value: string, options: Remem
     source: 'manual',
     filePaths: options.filePaths || [],
     tags: options.tags || [],
+    status: 'live',
     confidence: 1.0,
     createdAt: now,
     updatedAt: now,

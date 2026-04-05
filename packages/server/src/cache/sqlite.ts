@@ -823,6 +823,88 @@ export class SqliteCache {
   close(): void {
     this.db.close()
   }
+
+  // --- XL1: Dedup log ---
+
+  logDedupConsolidation(
+    projectId: string,
+    survivorKey: string,
+    victimKey: string,
+    mergeNote: string,
+  ): void {
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS dedup_log (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          survivor_key TEXT NOT NULL,
+          victim_key TEXT NOT NULL,
+          merge_note TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS dl_project ON dedup_log(project_id);
+      `)
+    } catch { /* already exists */ }
+    this.db.prepare(`
+      INSERT INTO dedup_log (id, project_id, survivor_key, victim_key, merge_note)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(_randomUUID(), projectId, survivorKey, victimKey, mergeNote)
+  }
+
+  getDedupLog(projectId: string): Array<{
+    id: string
+    survivorKey: string
+    victimKey: string
+    mergeNote: string
+    createdAt: string
+  }> {
+    try {
+      const rows = this.db.prepare(
+        'SELECT id, survivor_key, victim_key, merge_note, created_at FROM dedup_log WHERE project_id = ? ORDER BY created_at DESC'
+      ).all(projectId) as Array<{ id: string; survivor_key: string; victim_key: string; merge_note: string; created_at: string }>
+      return rows.map(r => ({
+        id: r.id,
+        survivorKey: r.survivor_key,
+        victimKey: r.victim_key,
+        mergeNote: r.merge_note,
+        createdAt: r.created_at,
+      }))
+    } catch { return [] }
+  }
+
+  // --- XL5: Template fill log ---
+
+  logTemplateFill(projectId: string, templateId: string, memoryKey: string): void {
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS template_fills (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL,
+          template_id TEXT NOT NULL,
+          memory_key TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS tf_project ON template_fills(project_id);
+      `)
+    } catch { /* already exists */ }
+    this.db.prepare(`
+      INSERT INTO template_fills (id, project_id, template_id, memory_key)
+      VALUES (?, ?, ?, ?)
+    `).run(_randomUUID(), projectId, templateId, memoryKey)
+  }
+
+  getTemplateFills(projectId: string): Array<{
+    templateId: string
+    memoryKey: string
+    createdAt: string
+  }> {
+    try {
+      const rows = this.db.prepare(
+        'SELECT template_id, memory_key, created_at FROM template_fills WHERE project_id = ? ORDER BY created_at DESC'
+      ).all(projectId) as Array<{ template_id: string; memory_key: string; created_at: string }>
+      return rows.map(r => ({ templateId: r.template_id, memoryKey: r.memory_key, createdAt: r.created_at }))
+    } catch { return [] }
+  }
 }
 
 interface SqliteMemoryRow {

@@ -140,6 +140,13 @@ pnpm test         # 58 vitest tests
 
 ## Release Notes
 
+### 2026-04-05 (v2)
+- **Advanced features**: analytics, archiving, branching, decay tracking, dedup, enforcement, federation, impact analysis, quality scoring, templates, multi-hop recall, three-way merge
+- **8 new CLI commands**: dedup, impact, risk, enforce, quality, templates, archive, federation
+- **16 new test suites** (362 total tests passing)
+- **13 new Supabase migrations** (0018–0030)
+- **Bug fixes**: archive SQLite schema, enforcement overlap threshold, CLI type safety, dashboard CommandPalette props
+
 ### 2026-04-05
 - **7 new MCP tools**: stats-detail, memory-history, contextual-recall, resolve-conflict/list-conflicts, suggestion-engine, import, memory-graph
 - **Dashboard pages**: Execution viewer, pending queue, stats dashboard, conflict resolver, memory graph

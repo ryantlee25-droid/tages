@@ -2,6 +2,9 @@ import type { Memory, MemoryType } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
 import { generateEmbedding } from '../embeddings'
+import { rankResults, asTextResults } from '../search/ranker'
+import type { ScoredMemory } from '../search/ranker'
+import { computeDecayScore, shouldArchive } from '../decay/scoring'
 
 export async function handleRecall(
   args: { query: string; type?: string; limit?: number },
@@ -14,28 +17,39 @@ export async function handleRecall(
   // Generate embedding for semantic search (works locally via Ollama)
   const embedding = await generateEmbedding(args.query)
 
-  // Try local semantic search first (sub-10ms, no network)
-  if (embedding) {
-    const localSemantic = cache.semanticQuery(
-      projectId, embedding, args.type as MemoryType | undefined, limit,
-    )
-    const localLike = cache.queryMemories(
-      projectId, args.query, args.type as MemoryType | undefined, limit,
-    )
+  // Try local unified scoring first (sub-10ms, no network)
+  const scoredResults = cache.scoredQuery(
+    projectId,
+    args.query,
+    embedding || null,
+    args.type as MemoryType | undefined,
+    limit * 3, // over-fetch for ranking
+  )
 
-    // Merge and deduplicate
-    const seen = new Set<string>()
-    const merged: Memory[] = []
-    for (const m of localSemantic) {
-      if (!seen.has(m.id)) { seen.add(m.id); merged.push(m) }
-    }
-    for (const m of localLike) {
-      if (!seen.has(m.id)) { seen.add(m.id); merged.push(m) }
+  if (scoredResults.length > 0) {
+    // Update access times for all recalled memories (T6)
+    for (const { memory } of scoredResults) {
+      cache.updateAccessTime(memory.id)
     }
 
-    if (merged.length > 0) {
-      return formatResults(merged.slice(0, limit), args.query, 'local (cached)')
-    }
+    // Apply decay scoring to demote stale results (T6)
+    const decayAdjusted: ScoredMemory[] = scoredResults.map(r => {
+      const accessInfo = cache.getAccessInfo(r.memory.id)
+      const decayScore = computeDecayScore(r.memory, {
+        lastAccessedAt: accessInfo?.lastAccessedAt,
+        accessCount: accessInfo?.accessCount ?? 0,
+      })
+      // Demote stale memories: multiply text/semantic scores by (1 - decay * 0.5)
+      const decayPenalty = 1 - decayScore * 0.5
+      return {
+        memory: r.memory,
+        semanticScore: r.semanticScore * decayPenalty,
+        textScore: r.textScore * decayPenalty,
+      }
+    })
+
+    const ranked = rankResults(decayAdjusted)
+    return formatResults(ranked.slice(0, limit), args.query, 'local (ranked)')
   }
 
   // If local cache is empty, try remote
@@ -54,10 +68,11 @@ export async function handleRecall(
   }
 
   // Last fallback: SQLite LIKE search without embeddings
-  const results = cache.queryMemories(
+  const fallback = cache.queryMemories(
     projectId, args.query, args.type as MemoryType | undefined, limit,
   )
-  return formatResults(results, args.query, 'local (text match)')
+  const ranked = rankResults(asTextResults(fallback))
+  return formatResults(ranked.slice(0, limit), args.query, 'local (text match)')
 }
 
 function formatResults(

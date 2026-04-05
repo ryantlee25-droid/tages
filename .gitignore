@@ -5,4 +5,7 @@ dist/
 .next/
 .turbo/
 .vercel/
+.claire/
+.claude/
 packages/server/coverage/
+supabase/.temp/

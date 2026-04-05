@@ -32,9 +32,22 @@ import { handleSuggestions } from './tools/suggestion-engine'
 import { handleImport } from './tools/import'
 import { handleMemoryGraph } from './tools/memory-graph'
 import { QueryLog } from './cache/query-log'
+import { handleDetectDuplicates, handleConsolidate } from './tools/dedup'
+import { handleImpactAnalysis, handleRiskReport, handleGraphAnalysis } from './tools/impact'
+import { handleCheckConvention, handleEnforcementReport } from './tools/enforce'
+import { handleMemoryQuality, handleProjectHealth } from './tools/quality'
+import { handleListTemplates, handleMatchTemplates, handleApplyTemplate } from './tools/templates'
+import { handleArchive, handleRestore, handleListArchived, handleArchiveStats, handleAutoArchive } from './tools/archive-manager'
+import { handlePromote, handleImportFederated, handleListFederated, handleResolveOverrides } from './tools/federation'
+import { handleSessionReplay, handleAgentMetrics, handleTrends } from './tools/analytics'
+import { globalSessionRecorder } from './analytics/session-recorder'
 import {
   RememberSchema, RecallSchema, ForgetSchema, ContextSchema, SessionEndSchema, VerifyMemorySchema,
   MemoryHistorySchema, ContextualRecallSchema, ResolveConflictSchema, ImportSchema,
+  DedupSchema, ConsolidateSchema, ImpactAnalysisSchema, MemoryQualitySchema,
+  MatchTemplatesSchema, ApplyTemplateSchema, ArchiveSchema, RestoreSchema, ListArchivedSchema,
+  AutoArchiveSchema, PromoteSchema, ImportFederatedSchema, ListFederatedSchema,
+  SessionReplaySchema, AgentMetricsSchema, TrendsSchema, CheckConventionSchema,
 } from './schemas'
 
 async function main() {
@@ -78,6 +91,10 @@ async function main() {
   // Initialize session tracker
   const tracker = new SessionTracker(supabaseClient, projectId)
   await tracker.startSession()
+
+  // XL8: Start analytics session recording
+  const analyticsSessionId = `session-${Date.now()}`
+  globalSessionRecorder.startSession(analyticsSessionId, projectId, process.env.TAGES_AGENT_NAME)
 
   // T6: Periodic decay check — every 5 minutes, archive stale memories
   const DECAY_INTERVAL_MS = 5 * 60 * 1000
@@ -398,6 +415,203 @@ async function main() {
         }],
       }
     },
+  )
+
+  // XL1 — Smart Memory Deduplication
+  server.tool(
+    'detect_duplicates',
+    'Detect near-duplicate memories using Jaccard similarity on key+value tokens',
+    { threshold: DedupSchema.shape.threshold },
+    async (args) => handleDetectDuplicates(args, projectId, cache),
+  )
+
+  server.tool(
+    'consolidate_memories',
+    'Merge two duplicate memories into one, preserving all metadata',
+    {
+      survivorKey: ConsolidateSchema.shape.survivorKey,
+      victimKey: ConsolidateSchema.shape.victimKey,
+      mergedValue: ConsolidateSchema.shape.mergedValue,
+    },
+    async (args) => handleConsolidate(args, projectId, cache, sync),
+  )
+
+  // XL2 — Memory Dependency Graph & Impact Analysis
+  server.tool(
+    'impact_analysis',
+    'Analyze the downstream impact of a memory — how many others depend on it',
+    { key: ImpactAnalysisSchema.shape.key },
+    async (args) => handleImpactAnalysis(args, projectId, cache),
+  )
+
+  server.tool(
+    'risk_report',
+    'Get project-wide risk ranking — which memories are most dangerous to change',
+    {},
+    async () => handleRiskReport({} as never, projectId, cache),
+  )
+
+  server.tool(
+    'graph_analysis',
+    'Analyze the memory dependency graph — orphans, critical paths, impact scores',
+    {},
+    async () => handleGraphAnalysis({} as never, projectId, cache),
+  )
+
+  // XL3 — Convention Enforcement
+  server.tool(
+    'check_convention',
+    'Check a memory against all stored conventions — detect conflicts or duplicates before storing',
+    {
+      key: CheckConventionSchema.shape.key,
+      agentName: CheckConventionSchema.shape.agentName,
+    },
+    async (args) => handleCheckConvention(args, projectId, cache),
+  )
+
+  server.tool(
+    'enforcement_report',
+    'Get per-agent convention compliance stats and recent violations',
+    {},
+    async () => handleEnforcementReport({} as never, projectId, cache),
+  )
+
+  // XL4 — Memory Quality Scoring
+  server.tool(
+    'memory_quality',
+    'Score a specific memory on completeness, freshness, consistency, and usefulness (0-100)',
+    { key: MemoryQualitySchema.shape.key },
+    async (args) => handleMemoryQuality(args, projectId, cache),
+  )
+
+  server.tool(
+    'project_health',
+    'Get overall project memory health score with dimension breakdown and improvement suggestions',
+    {},
+    async () => handleProjectHealth({} as never, projectId, cache),
+  )
+
+  // XL5 — Memory Templates
+  server.tool(
+    'list_templates',
+    'List available memory templates (api-endpoint, react-component, database-migration, test-suite, cli-command)',
+    {},
+    async () => handleListTemplates({} as never),
+  )
+
+  server.tool(
+    'match_templates',
+    'Find templates matching given file paths — prompts agent to fill required fields',
+    { filePaths: MatchTemplatesSchema.shape.filePaths },
+    async (args) => handleMatchTemplates(args),
+  )
+
+  server.tool(
+    'apply_template',
+    'Create a memory from a filled template with automatic key generation',
+    {
+      templateId: ApplyTemplateSchema.shape.templateId,
+      fields: ApplyTemplateSchema.shape.fields,
+      filePaths: ApplyTemplateSchema.shape.filePaths,
+    },
+    async (args) => handleApplyTemplate(args, projectId, cache, sync),
+  )
+
+  // XL6 — Memory Archival
+  server.tool(
+    'archive_memory',
+    'Archive a memory to cold storage — removes it from recall but preserves it for restoration',
+    {
+      key: ArchiveSchema.shape.key,
+      reason: ArchiveSchema.shape.reason,
+    },
+    async (args) => handleArchive(args, projectId, cache),
+  )
+
+  server.tool(
+    'restore_memory',
+    'Restore an archived memory back to live status',
+    { key: RestoreSchema.shape.key },
+    async (args) => handleRestore(args, projectId, cache, sync),
+  )
+
+  server.tool(
+    'list_archived',
+    'List archived memories with their archive reasons and dates',
+    { limit: ListArchivedSchema.shape.limit },
+    async (args) => handleListArchived(args, projectId),
+  )
+
+  server.tool(
+    'archive_stats',
+    'Get archive statistics — total archived, restored, expired',
+    {},
+    async () => handleArchiveStats({} as never, projectId),
+  )
+
+  server.tool(
+    'auto_archive',
+    'Scan for stale low-quality memories and auto-archive them',
+    {
+      qualityThreshold: AutoArchiveSchema.shape.qualityThreshold,
+      stalenessDays: AutoArchiveSchema.shape.stalenessDays,
+    },
+    async (args) => handleAutoArchive(args, projectId, cache),
+  )
+
+  // XL7 — Federation
+  server.tool(
+    'federate_memory',
+    'Promote a project memory to the org-wide federated library',
+    {
+      key: PromoteSchema.shape.key,
+      scope: PromoteSchema.shape.scope,
+      promotedBy: PromoteSchema.shape.promotedBy,
+    },
+    async (args) => handlePromote(args, projectId, cache),
+  )
+
+  server.tool(
+    'import_federated',
+    'Import a federated memory from the shared library into this project',
+    { key: ImportFederatedSchema.shape.key },
+    async (args) => handleImportFederated(args, projectId, cache, sync),
+  )
+
+  server.tool(
+    'list_federated',
+    'List all memories in the federated library',
+    { scope: ListFederatedSchema.shape.scope },
+    async (args) => handleListFederated(args),
+  )
+
+  server.tool(
+    'federation_overrides',
+    'Show which federated memories have local project overrides',
+    {},
+    async () => handleResolveOverrides({} as never, projectId),
+  )
+
+  // XL8 — Agent Analytics
+  server.tool(
+    'session_replay',
+    'Replay a session timeline showing all tool calls with metrics',
+    { sessionId: SessionReplaySchema.shape.sessionId },
+    async (args) => handleSessionReplay(args),
+  )
+
+  server.tool(
+    'agent_metrics',
+    'Get agent effectiveness metrics — recall hit rate, memory creation quality, convention compliance',
+    { agentName: AgentMetricsSchema.shape.agentName },
+    async (args) => handleAgentMetrics(args, projectId),
+  )
+
+  server.tool(
+    'trends',
+    'Detect performance trends across sessions — improvements and regressions',
+    { agentName: TrendsSchema.shape.agentName },
+    async (args) => handleTrends(args, projectId),
   )
 
   // Register resources

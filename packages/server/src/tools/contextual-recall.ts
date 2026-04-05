@@ -1,11 +1,13 @@
 import type { Memory } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
+import { expandRecall } from '../search/multi-hop'
 
 interface RecallContext {
   currentFiles?: string[]
   agentName?: string
   phase?: string
+  depth?: number // multi-hop depth (default 0 = no expansion)
 }
 
 export async function handleContextualRecall(
@@ -16,6 +18,7 @@ export async function handleContextualRecall(
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const limit = args.limit || 5
   const context = args.context || {}
+  const depth = context.depth ?? 0
 
   // Get candidate memories via text search
   const candidates = cache.queryMemories(projectId, args.query, undefined, limit * 4)
@@ -64,7 +67,14 @@ export async function handleContextualRecall(
     return true
   })
 
-  const results = filtered.slice(0, limit)
+  let results = filtered.slice(0, limit)
+
+  // Multi-hop expansion: expand via crossSystemRefs if depth > 0
+  if (depth > 0 && results.length > 0) {
+    const allMemories = cache.getAllForProject(projectId).filter(m => m.status === 'live')
+    const expanded = expandRecall(results, allMemories, depth)
+    results = expanded.slice(0, limit)
+  }
 
   if (results.length === 0) {
     return {
