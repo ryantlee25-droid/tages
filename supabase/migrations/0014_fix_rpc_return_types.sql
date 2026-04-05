@@ -1,37 +1,13 @@
 -- ============================================================
--- Tages — Execution memories, structured metadata, quality gates
--- Closes reviewer-identified gaps 1-7.
+-- Fix: drop and recreate RPCs with updated return types
+-- (0013 added columns but couldn't alter existing function returns)
 -- ============================================================
 
--- Drop existing functions that we're changing return types on
 drop function if exists recall_memories(uuid, text, text, int);
 drop function if exists semantic_recall(uuid, vector, text, int, real);
 drop function if exists importance_recall(uuid, text, text, int);
 
--- Allow 'execution' as a memory type
-alter table memories drop constraint if exists memories_type_check;
-alter table memories add constraint memories_type_check
-  check (type in (
-    'convention', 'decision', 'architecture',
-    'entity', 'lesson', 'preference', 'pattern', 'execution'
-  ));
-
--- Structured metadata fields (all optional, nullable)
-alter table memories add column if not exists conditions text[];
-alter table memories add column if not exists phases text[];
-alter table memories add column if not exists cross_system_refs text[];
-alter table memories add column if not exists examples jsonb;
-alter table memories add column if not exists execution_flow jsonb;
-
--- Quality gate: status (live = in recall, pending = needs verification)
-alter table memories add column if not exists status text not null default 'live'
-  check (status in ('live', 'pending'));
-alter table memories add column if not exists verified_at timestamptz;
-
--- Index for filtering by status in recall queries
-create index if not exists memories_status_idx on memories(project_id, status);
-
--- Update recall_memories to only return live memories
+-- Recreate recall_memories with new columns + status filter
 create or replace function recall_memories(
   p_project_id uuid,
   p_query text,
@@ -83,7 +59,7 @@ begin
 end;
 $$ language plpgsql security definer stable;
 
--- Update semantic_recall to only return live memories
+-- Recreate semantic_recall with status filter
 create or replace function semantic_recall(
   p_project_id uuid,
   p_embedding vector(1536),
@@ -131,7 +107,7 @@ begin
 end;
 $$ language plpgsql security definer stable;
 
--- Update importance_recall to filter by status
+-- Recreate importance_recall with status filter
 create or replace function importance_recall(
   p_project_id uuid,
   p_query text,
