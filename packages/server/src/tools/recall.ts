@@ -5,6 +5,13 @@ import { generateEmbedding } from '../embeddings'
 import { rankResults, asTextResults } from '../search/ranker'
 import type { ScoredMemory } from '../search/ranker'
 import { computeDecayScore, shouldArchive } from '../decay/scoring'
+import { getEncryptionKey, decryptValue } from '../crypto/encryption'
+
+function decryptMemories(memories: Memory[]): Memory[] {
+  const encKey = getEncryptionKey()
+  if (!encKey) return memories
+  return memories.map((m) => ({ ...m, value: decryptValue(m.value, encKey) }))
+}
 
 export async function handleRecall(
   args: { query: string; type?: string; limit?: number },
@@ -49,7 +56,7 @@ export async function handleRecall(
     })
 
     const ranked = rankResults(decayAdjusted)
-    return formatResults(ranked.slice(0, limit), args.query, 'local (ranked)')
+    return formatResults(decryptMemories(ranked.slice(0, limit)), args.query, 'local (ranked)')
   }
 
   // If local cache is empty, try remote
@@ -57,13 +64,13 @@ export async function handleRecall(
     if (embedding) {
       const results = await sync.remoteHybridRecall(args.query, embedding, args.type, limit)
       if (results && results.length > 0) {
-        return formatResults(results, args.query, 'remote (hybrid)')
+        return formatResults(decryptMemories(results), args.query, 'remote (hybrid)')
       }
     }
 
     const results = await sync.remoteRecall(args.query, args.type, limit)
     if (results && results.length > 0) {
-      return formatResults(results, args.query, 'remote (trigram)')
+      return formatResults(decryptMemories(results), args.query, 'remote (trigram)')
     }
   }
 
@@ -72,7 +79,7 @@ export async function handleRecall(
     projectId, args.query, args.type as MemoryType | undefined, limit,
   )
   const ranked = rankResults(asTextResults(fallback))
-  return formatResults(ranked.slice(0, limit), args.query, 'local (text match)')
+  return formatResults(decryptMemories(ranked.slice(0, limit)), args.query, 'local (text match)')
 }
 
 function formatResults(

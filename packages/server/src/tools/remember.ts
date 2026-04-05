@@ -3,6 +3,7 @@ import type { Memory, MemoryExample, ExecutionFlow } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
 import { scanForSensitiveData, formatSafetyWarnings, hasHighSeverity } from './safety'
+import { getEncryptionKey, encryptValue } from '../crypto/encryption'
 import { computeFieldDiff } from '../diff/field-diff'
 import { tokenize } from '../search/tokenizer'
 
@@ -77,6 +78,13 @@ export async function handleRemember(
         )
       }
     }
+  }
+
+  // Encrypt value at rest if encryption key is configured
+  const encKey = getEncryptionKey()
+  if (encKey) {
+    memory.value = encryptValue(memory.value, encKey)
+    memory.encrypted = true
   }
 
   cache.upsertMemory(memory, true)

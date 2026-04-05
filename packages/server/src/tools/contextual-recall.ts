@@ -2,6 +2,7 @@ import type { Memory } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
 import { expandRecall } from '../search/multi-hop'
+import { getEncryptionKey, decryptValue } from '../crypto/encryption'
 
 interface RecallContext {
   currentFiles?: string[]
@@ -67,7 +68,11 @@ export async function handleContextualRecall(
     return true
   })
 
-  let results = filtered.slice(0, limit)
+  // Decrypt values if encryption is enabled
+  const encKey = getEncryptionKey()
+  let results = filtered.slice(0, limit).map((m) =>
+    encKey ? { ...m, value: decryptValue(m.value, encKey) } : m,
+  )
 
   // Multi-hop expansion: expand via crossSystemRefs if depth > 0
   if (depth > 0 && results.length > 0) {
