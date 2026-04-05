@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { isValidSlug } from '@/lib/validate-slug'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(
@@ -6,6 +7,11 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> },
 ) {
   const { slug } = await params
+
+  if (!isValidSlug(slug)) {
+    return NextResponse.json({ error: 'Invalid slug format' }, { status: 400 })
+  }
+
   const supabase = await createClient()
 
   // Auth check
