@@ -121,7 +121,7 @@ export class SqliteCache {
    */
   semanticQuery(projectId: string, queryEmbedding: number[], type?: MemoryType, limit = 5): Memory[] {
     // Get all memories with embeddings for this project
-    let sql = 'SELECT * FROM memories WHERE project_id = ? AND embedding IS NOT NULL'
+    let sql = "SELECT * FROM memories WHERE project_id = ? AND status = 'live' AND embedding IS NOT NULL"
     const params: unknown[] = [projectId]
     if (type) {
       sql += ' AND type = ?'
@@ -147,7 +147,7 @@ export class SqliteCache {
     const pattern = `%${query}%`
     let sql = `
       SELECT * FROM memories
-      WHERE project_id = ? AND (key LIKE ? OR value LIKE ?)
+      WHERE project_id = ? AND status = 'live' AND (key LIKE ? OR value LIKE ?)
     `
     const params: unknown[] = [projectId, pattern, pattern]
 

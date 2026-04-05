@@ -25,14 +25,7 @@ export async function handleVerifyMemory(
   cache.updateMemoryStatus(memory.id, 'live', now)
 
   if (sync) {
-    try {
-      await (sync as unknown as { supabase: { from: (t: string) => { update: (d: Record<string, unknown>) => { eq: (k: string, v: string) => Promise<unknown> } } } }).supabase
-        .from('memories')
-        .update({ status: 'live', verified_at: now })
-        .eq('id', memory.id)
-    } catch {
-      // Best effort
-    }
+    await sync.remoteVerifyMemory(memory.id, now)
   }
 
   return {
