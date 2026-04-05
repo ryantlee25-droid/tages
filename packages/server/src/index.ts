@@ -21,7 +21,8 @@ import { handleConflicts } from './tools/conflicts'
 import { handleStats } from './tools/stats'
 import { handleSessionEnd } from './tools/session-end'
 import { handleObserve } from './tools/observe'
-import { RememberSchema, RecallSchema, ForgetSchema, ContextSchema, SessionEndSchema } from './schemas'
+import { handleVerifyMemory, handlePendingMemories } from './tools/verify'
+import { RememberSchema, RecallSchema, ForgetSchema, ContextSchema, SessionEndSchema, VerifyMemorySchema } from './schemas'
 
 async function main() {
   const config = loadServerConfig()
@@ -72,6 +73,11 @@ async function main() {
       type: RememberSchema.shape.type,
       filePaths: RememberSchema.shape.filePaths,
       tags: RememberSchema.shape.tags,
+      conditions: RememberSchema.shape.conditions,
+      phases: RememberSchema.shape.phases,
+      crossSystemRefs: RememberSchema.shape.crossSystemRefs,
+      examples: RememberSchema.shape.examples,
+      executionFlow: RememberSchema.shape.executionFlow,
     },
     async (args) => {
       const result = await handleRemember(args, projectId, cache, sync)
@@ -189,6 +195,22 @@ async function main() {
       await tracker.endSession()
       return result
     },
+  )
+
+  server.tool(
+    'verify_memory',
+    'Verify a pending auto-extracted memory — promotes it to live so it appears in recall results',
+    {
+      key: VerifyMemorySchema.shape.key,
+    },
+    async (args) => handleVerifyMemory(args, projectId, cache, sync),
+  )
+
+  server.tool(
+    'pending_memories',
+    'List auto-extracted memories that need verification before they appear in recall',
+    {},
+    async () => handlePendingMemories(projectId, cache),
   )
 
   // Register resources

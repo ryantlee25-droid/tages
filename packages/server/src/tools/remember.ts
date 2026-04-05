@@ -1,11 +1,22 @@
 import { randomUUID } from 'crypto'
-import type { Memory } from '@tages/shared'
+import type { Memory, MemoryExample, ExecutionFlow } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
 import { scanForSensitiveData, formatSafetyWarnings } from './safety'
 
 export async function handleRemember(
-  args: { key: string; value: string; type: string; filePaths?: string[]; tags?: string[] },
+  args: {
+    key: string
+    value: string
+    type: string
+    filePaths?: string[]
+    tags?: string[]
+    conditions?: string[]
+    phases?: string[]
+    crossSystemRefs?: string[]
+    examples?: MemoryExample[]
+    executionFlow?: ExecutionFlow
+  },
   projectId: string,
   cache: SqliteCache,
   sync: SupabaseSync | null,
@@ -23,9 +34,15 @@ export async function handleRemember(
     value: args.value,
     type: args.type as Memory['type'],
     source: 'agent',
+    status: 'live',
     filePaths: args.filePaths || [],
     tags: args.tags || [],
     confidence: 1.0,
+    conditions: args.conditions,
+    phases: args.phases,
+    crossSystemRefs: args.crossSystemRefs,
+    examples: args.examples,
+    executionFlow: args.executionFlow,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
   }
@@ -39,12 +56,18 @@ export async function handleRemember(
   }
 
   const action = existing ? 'Updated' : 'Stored'
+  const extras: string[] = []
+  if (args.conditions?.length) extras.push(`${args.conditions.length} conditions`)
+  if (args.examples?.length) extras.push(`${args.examples.length} examples`)
+  if (args.executionFlow) extras.push('execution flow')
+  if (args.crossSystemRefs?.length) extras.push(`${args.crossSystemRefs.length} cross-refs`)
+  const extraNote = extras.length ? ` [${extras.join(', ')}]` : ''
   const safetyNote = formatSafetyWarnings(warnings)
 
   return {
     content: [{
       type: 'text',
-      text: `${action} memory: "${args.key}" (${args.type})${safetyNote}`,
+      text: `${action} memory: "${args.key}" (${args.type})${extraNote}${safetyNote}`,
     }],
   }
 }

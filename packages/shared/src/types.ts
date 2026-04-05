@@ -10,12 +10,28 @@ export type MemoryType =
   | 'lesson'
   | 'preference'
   | 'pattern'
+  | 'execution'
 
 export type MemorySource =
   | 'manual'
   | 'auto_index'
   | 'agent'
   | 'import'
+
+export type MemoryStatus = 'live' | 'pending'
+
+export interface MemoryExample {
+  input: string
+  output: string
+  note?: string
+}
+
+export interface ExecutionFlow {
+  trigger: string
+  steps: string[]
+  phases?: string[]
+  hooks?: string[]
+}
 
 export interface Memory {
   id: string
@@ -24,10 +40,18 @@ export interface Memory {
   value: string
   type: MemoryType
   source: MemorySource
+  status: MemoryStatus
   agentName?: string
   filePaths?: string[]
   tags?: string[]
   confidence: number
+  // Structured metadata (optional — enriches recall quality)
+  conditions?: string[]
+  phases?: string[]
+  crossSystemRefs?: string[]
+  examples?: MemoryExample[]
+  executionFlow?: ExecutionFlow
+  verifiedAt?: string
   createdAt: string
   updatedAt: string
 }
@@ -88,6 +112,11 @@ export interface RememberInput {
   project?: string
   filePaths?: string[]
   tags?: string[]
+  conditions?: string[]
+  phases?: string[]
+  crossSystemRefs?: string[]
+  examples?: MemoryExample[]
+  executionFlow?: ExecutionFlow
 }
 
 export interface RecallInput {

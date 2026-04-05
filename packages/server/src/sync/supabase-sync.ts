@@ -211,12 +211,29 @@ export class SupabaseSync {
         .select('*')
         .eq('project_id', this.projectId)
         .eq('type', type)
+        .eq('status', 'live')
         .order('updated_at', { ascending: false })
 
       if (error) return null
       return (data || []).map(dbRowToMemory)
     } catch {
       return null
+    }
+  }
+
+  async remoteVerifyMemory(id: string, verifiedAt: string): Promise<boolean> {
+    try {
+      const { error } = await this.supabase
+        .from('memories')
+        .update({ status: 'live', verified_at: verifiedAt })
+        .eq('id', id)
+      if (error) {
+        console.error('[tages] Remote verify failed:', error.message)
+        return false
+      }
+      return true
+    } catch {
+      return false
     }
   }
 }
@@ -228,10 +245,17 @@ interface DbRow {
   value: string
   type: string
   source: string
+  status: string
   agent_name: string | null
   file_paths: string[]
   tags: string[]
   confidence: number
+  conditions: string[] | null
+  phases: string[] | null
+  cross_system_refs: string[] | null
+  examples: unknown | null
+  execution_flow: unknown | null
+  verified_at: string | null
   created_at: string
   updated_at: string
 }
@@ -244,10 +268,17 @@ function dbRowToMemory(row: DbRow): Memory {
     value: row.value,
     type: row.type as Memory['type'],
     source: row.source as Memory['source'],
+    status: (row.status || 'live') as Memory['status'],
     agentName: row.agent_name || undefined,
     filePaths: row.file_paths || [],
     tags: row.tags || [],
     confidence: row.confidence,
+    conditions: row.conditions || undefined,
+    phases: row.phases || undefined,
+    crossSystemRefs: row.cross_system_refs || undefined,
+    examples: row.examples as Memory['examples'],
+    executionFlow: row.execution_flow as Memory['executionFlow'],
+    verifiedAt: row.verified_at || undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -261,10 +292,17 @@ function memoryToDbRow(memory: Memory): DbRow {
     value: memory.value,
     type: memory.type,
     source: memory.source,
+    status: memory.status || 'live',
     agent_name: memory.agentName || null,
     file_paths: memory.filePaths || [],
     tags: memory.tags || [],
     confidence: memory.confidence,
+    conditions: memory.conditions || null,
+    phases: memory.phases || null,
+    cross_system_refs: memory.crossSystemRefs || null,
+    examples: memory.examples || null,
+    execution_flow: memory.executionFlow || null,
+    verified_at: memory.verifiedAt || null,
     created_at: memory.createdAt,
     updated_at: memory.updatedAt,
   }
