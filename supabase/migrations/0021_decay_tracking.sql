@@ -25,7 +25,7 @@ BEGIN
   UPDATE memories
   SET status = 'archived',
       updated_at = now()
-  WHERE project_id = p_project_id
+  WHERE project_id = p_project_id::uuid
     AND status = 'live'
     AND (
       last_accessed_at IS NULL
@@ -47,7 +47,7 @@ AS $$
   UPDATE memories
   SET last_accessed_at = now(),
       access_count = access_count + 1
-  WHERE id = p_memory_id;
+  WHERE id = p_memory_id::uuid;
 $$;
 
 COMMENT ON COLUMN memories.last_accessed_at IS 'When this memory was last returned in a recall result';

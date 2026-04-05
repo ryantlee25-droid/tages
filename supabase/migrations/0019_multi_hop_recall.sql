@@ -37,13 +37,13 @@ RETURNS TABLE (
 LANGUAGE sql STABLE
 AS $$
   SELECT
-    m.id, m.project_id, m.key, m.value, m.type, m.source, m.status,
+    m.id::text, m.project_id::text, m.key, m.value, m.type::text, m.source::text, m.status,
     m.agent_name, m.file_paths, m.tags, m.confidence,
     m.conditions, m.phases, m.cross_system_refs,
     m.examples, m.execution_flow, m.verified_at,
     m.created_at, m.updated_at
   FROM memories m
-  WHERE m.project_id = p_project_id
+  WHERE m.project_id = p_project_id::uuid
     AND m.status = 'live'
     AND (
       p_query = '' OR p_query IS NULL
@@ -61,5 +61,5 @@ AS $$
   LIMIT p_limit;
 $$;
 
-COMMENT ON FUNCTION contextual_recall IS
+COMMENT ON FUNCTION contextual_recall(text, text, text, text[], text, integer, integer) IS
   'Context-filtered recall with optional multi-hop depth (depth handled in application layer via expandRecall)';

@@ -22,23 +22,41 @@ create table if not exists memory_conflicts (
   created_at      timestamptz not null default now()
 );
 
-create index memory_conflicts_project_idx on memory_conflicts(project_id);
-create index memory_conflicts_unresolved_idx on memory_conflicts(project_id, resolved) where resolved = false;
+-- Ensure all columns exist (table may have been created from an earlier schema)
+alter table memory_conflicts add column if not exists reason text;
+alter table memory_conflicts add column if not exists resolved boolean not null default false;
+alter table memory_conflicts add column if not exists resolution_strategy text;
+alter table memory_conflicts add column if not exists merged_value text;
+alter table memory_conflicts add column if not exists resolved_by text;
+alter table memory_conflicts add column if not exists resolved_at timestamptz;
+alter table memory_conflicts add column if not exists created_at timestamptz not null default now();
+
+create index if not exists memory_conflicts_project_idx on memory_conflicts(project_id);
+create index if not exists memory_conflicts_unresolved_idx on memory_conflicts(project_id, resolved) where resolved = false;
 
 -- RLS
 alter table memory_conflicts enable row level security;
 
-create policy "Members can read conflicts"
-  on memory_conflicts for select
-  using (is_project_member(auth.uid(), project_id));
+do $$ begin
+  create policy "Members can read conflicts"
+    on memory_conflicts for select
+    using (is_project_member(auth.uid(), project_id));
+exception when duplicate_object then null;
+end $$;
 
-create policy "Members can insert conflicts"
-  on memory_conflicts for insert
-  with check (is_project_member(auth.uid(), project_id));
+do $$ begin
+  create policy "Members can insert conflicts"
+    on memory_conflicts for insert
+    with check (is_project_member(auth.uid(), project_id));
+exception when duplicate_object then null;
+end $$;
 
-create policy "Members can update conflicts"
-  on memory_conflicts for update
-  using (is_project_member(auth.uid(), project_id));
+do $$ begin
+  create policy "Members can update conflicts"
+    on memory_conflicts for update
+    using (is_project_member(auth.uid(), project_id));
+exception when duplicate_object then null;
+end $$;
 
 -- RPC: list unresolved conflicts
 create or replace function list_unresolved_conflicts(p_project_id uuid)
