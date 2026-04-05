@@ -20,30 +20,94 @@ export async function recallCommand(query: string, options: RecallOptions) {
 
   if (config.supabaseUrl && config.supabaseAnonKey) {
     const supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey)
-    const { data, error } = await supabase.rpc('recall_memories', {
+
+    // Hybrid search: run trigram + semantic in parallel, merge & deduplicate
+    let data: Record<string, unknown>[] | null = null
+    let searchMethod = 'trigram'
+
+    // Trigram search
+    const trigramPromise = supabase.rpc('recall_memories', {
       p_project_id: config.projectId,
       p_query: query,
       p_type: options.type || null,
       p_limit: limit,
     })
 
-    if (error) {
-      console.error(chalk.red(`Recall failed: ${error.message}`))
+    // Semantic search (if Ollama available)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let semanticPromise: any = Promise.resolve({ data: null, error: null })
+    try {
+      const embedRes = await fetch('http://localhost:11434/api/embeddings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'nomic-embed-text', prompt: query }),
+        signal: AbortSignal.timeout(3000),
+      })
+
+      if (embedRes.ok) {
+        const embedData = await embedRes.json() as { embedding: number[] }
+        let embedding = embedData.embedding
+        if (embedding.length < 1536) embedding = [...embedding, ...new Array(1536 - embedding.length).fill(0)]
+        const embeddingStr = `[${embedding.join(',')}]`
+
+        semanticPromise = supabase.rpc('semantic_recall', {
+          p_project_id: config.projectId,
+          p_embedding: embeddingStr,
+          p_type: options.type || null,
+          p_limit: limit,
+          p_threshold: 0.3,
+        })
+        searchMethod = 'hybrid (trigram + semantic)'
+      }
+    } catch {
+      // Ollama not available
+    }
+
+    const [trigramResult, semanticResult] = await Promise.all([trigramPromise, semanticPromise])
+
+    if (trigramResult.error) {
+      console.error(chalk.red(`Recall failed: ${trigramResult.error.message}`))
       process.exit(1)
     }
+
+    // Merge and deduplicate: semantic results first (usually more relevant), then trigram
+    const seen = new Set<string>()
+    const merged: Record<string, unknown>[] = []
+
+    for (const r of (semanticResult.data || [])) {
+      const id = r.id as string
+      if (!seen.has(id)) {
+        seen.add(id)
+        merged.push({ ...r, match_type: 'semantic' })
+      }
+    }
+    for (const r of (trigramResult.data || [])) {
+      const id = r.id as string
+      if (!seen.has(id)) {
+        seen.add(id)
+        merged.push({ ...r, match_type: 'trigram' })
+      }
+    }
+
+    // Sort by similarity desc, take top N
+    merged.sort((a, b) => ((b.similarity as number) || 0) - ((a.similarity as number) || 0))
+    data = merged.slice(0, limit)
+
+    if (semanticResult.data === null) searchMethod = 'trigram'
 
     if (!data || data.length === 0) {
       console.log(chalk.dim(`No memories found matching "${query}".`))
       return
     }
 
-    console.log(chalk.bold(`Found ${data.length} memories:\n`))
+    console.log(chalk.bold(`Found ${data.length} memories`) + chalk.dim(` (${searchMethod}):\n`))
     for (const row of data) {
-      const typeColor = getTypeColor(row.type)
-      console.log(`  ${typeColor(row.type.padEnd(12))} ${chalk.bold(row.key)}`)
+      const typeColor = getTypeColor(row.type as string)
+      console.log(`  ${typeColor((row.type as string).padEnd(12))} ${chalk.bold(row.key as string)}`)
       console.log(`  ${chalk.dim('             ')}${row.value}`)
       if (row.similarity) {
-        console.log(`  ${chalk.dim('             ')}${chalk.dim(`similarity: ${(row.similarity as number).toFixed(2)}`)}`)
+        const matchType = row.match_type ? ` [${row.match_type}]` : ''
+        console.log(`  ${chalk.dim('             ')}${chalk.dim(`similarity: ${(row.similarity as number).toFixed(2)}${matchType}`)}`)
       }
       console.log()
     }

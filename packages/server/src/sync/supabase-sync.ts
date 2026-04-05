@@ -128,6 +128,33 @@ export class SupabaseSync {
     }
   }
 
+  async remoteHybridRecall(
+    query: string,
+    embedding: number[],
+    type?: string,
+    limit = 5,
+  ): Promise<Memory[] | null> {
+    try {
+      const embeddingStr = `[${embedding.join(',')}]`
+      const { data, error } = await this.supabase.rpc('hybrid_recall', {
+        p_project_id: this.projectId,
+        p_query: query,
+        p_embedding: embeddingStr,
+        p_type: type || null,
+        p_limit: limit,
+      })
+
+      if (error) {
+        console.error('[tages] Hybrid recall failed:', error.message)
+        return null
+      }
+
+      return (data || []).map(dbRowToMemory)
+    } catch {
+      return null
+    }
+  }
+
   async remoteGetByType(type: string): Promise<Memory[] | null> {
     try {
       const { data, error } = await this.supabase
