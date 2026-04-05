@@ -34,6 +34,39 @@ That's it. Your AI tools now remember your codebase.
 2. **Remember** — Agents store decisions, conventions, and context as they work. Git hooks auto-extract from commits.
 3. **Recall** — Every new session starts with full project context. No re-explanation needed.
 
+## CLI Commands
+
+```bash
+tages init              # Initialize for current project (GitHub OAuth)
+tages init --local      # Local-only mode (no cloud sync)
+tages remember <key> <value> --type convention  # Store a memory
+tages recall <query>    # Fuzzy search memories
+tages forget <key>      # Delete a memory
+tages status            # Show memory counts and sync status
+tages dashboard         # Open web dashboard
+```
+
+## MCP Tools
+
+The MCP server exposes 7 tools to AI agents:
+
+| Tool | Description |
+|------|-------------|
+| `remember` | Store a memory (convention, decision, architecture, etc.) |
+| `recall` | Fuzzy search memories by query |
+| `forget` | Delete a memory by key |
+| `conventions` | List all coding conventions |
+| `architecture` | List architecture notes |
+| `decisions` | List the decision log |
+| `context` | Get memories related to a file path |
+
+Plus 4 resources: `memory://project/{id}/conventions`, `architecture`, `decisions`, `entities`.
+
+## Setup Guides
+
+- [Claude Code](docs/claude-code-setup.md)
+- [Quickstart](docs/quickstart.md)
+
 ## Features
 
 - **MCP Server** — 7 tools + 4 resources, works with any MCP-compatible agent
@@ -70,6 +103,31 @@ pnpm install
 pnpm build
 pnpm dev        # starts dashboard
 ```
+
+## Environment Variables
+
+For the dashboard (`apps/dashboard/.env.local`):
+```
+NEXT_PUBLIC_SUPABASE_URL=your-supabase-url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
+```
+
+For the CLI / MCP server (set via `tages init` or env):
+```
+TAGES_SUPABASE_URL=your-supabase-url
+TAGES_SUPABASE_ANON_KEY=your-supabase-anon-key
+TAGES_PROJECT_ID=your-project-id
+```
+
+## Release Notes
+
+### 2026-04-04 — Week 1: Foundation
+- Monorepo scaffold (pnpm workspaces, TypeScript strict)
+- Supabase schema: 5 tables, RLS policies, pg_trgm fuzzy search
+- MCP server: 7 tools + 4 resources, stdio transport, SQLite cache
+- CLI: `init`, `remember`, `recall`, `forget`, `status`, `dashboard`
+- Dashboard: GitHub OAuth, project list, memory browser with real-time updates
+- Local-only mode for offline/self-hosted usage
 
 ## License
 

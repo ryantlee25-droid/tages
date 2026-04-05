@@ -2,6 +2,7 @@
   "name": "tages",
   "version": "0.1.0",
   "description": "CLI for Tages — persistent codebase memory for AI coding agents",
+  "type": "module",
   "bin": {
     "tages": "./dist/index.js"
   },
@@ -12,6 +13,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.49.0",
     "@tages/shared": "workspace:*",
     "chalk": "^5.4.0",
     "commander": "^13.1.0",
@@ -19,6 +21,7 @@
     "ora": "^8.2.0"
   },
   "devDependencies": {
+    "@types/node": "^20.19.0",
     "tsx": "^4.21.0",
     "typescript": "^5.8.0",
     "vitest": "^4.1.0"
