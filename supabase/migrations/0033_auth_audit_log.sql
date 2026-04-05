@@ -22,3 +22,7 @@ ALTER TABLE auth_audit_log ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Users can read own audit log"
   ON auth_audit_log FOR SELECT
   USING (auth.uid() = user_id);
+
+CREATE POLICY "Allow insert of audit events"
+  ON auth_audit_log FOR INSERT
+  WITH CHECK (true);

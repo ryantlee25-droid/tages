@@ -22,7 +22,7 @@ returns boolean as $$
       and project_id = pid
       and role in ('owner', 'admin')
   );
-$$ language sql security definer stable;
+$$ language sql security definer;
 
 -- -----------------------------------------------------------
 -- memories — drop existing write policies, recreate with RBAC

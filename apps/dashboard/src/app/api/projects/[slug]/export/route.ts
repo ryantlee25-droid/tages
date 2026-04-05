@@ -48,17 +48,15 @@ export async function GET(
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  // Fire-and-forget audit log — does not block or degrade the export response
+  // Fire-and-forget audit log — uses auth_audit_log (session-level event, not per-memory)
   const rowCount = memories?.length ?? 0
   void Promise.resolve(
     supabase
-      .from('memory_access_log')
+      .from('auth_audit_log')
       .insert({
-        project_id: project.id,
-        agent_name: 'dashboard',
-        access_type: 'export',
-        query: `export:${rowCount}_rows:user:${user.id}`,
-        similarity: null,
+        user_id: user.id,
+        event_type: 'login_success',
+        metadata: { action: 'export', project_id: project.id, row_count: rowCount, format: request.nextUrl.searchParams.get('format') || 'json' },
       })
   ).catch(() => {/* audit failure must not affect export */})
 

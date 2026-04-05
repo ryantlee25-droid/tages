@@ -80,6 +80,9 @@ export async function handleRemember(
     }
   }
 
+  // Capture plaintext for indexing before potential encryption
+  const plaintextForIndex = memory.value
+
   // Encrypt value at rest if encryption key is configured
   const encKey = getEncryptionKey()
   if (encKey) {
@@ -89,8 +92,8 @@ export async function handleRemember(
 
   cache.upsertMemory(memory, true)
 
-  // T8: Tokenize and index for full-text search
-  const tokens = tokenize(`${memory.key} ${memory.value}`)
+  // T8: Tokenize and index for full-text search (use plaintext, not ciphertext)
+  const tokens = tokenize(`${memory.key} ${plaintextForIndex}`)
   if (tokens.length > 0) {
     cache.indexMemoryTokens(memory.id, projectId, tokens)
   }

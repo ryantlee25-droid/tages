@@ -52,10 +52,6 @@ export async function validateToken(
     return { valid: false }
   }
 
-  if (data.expires_at && new Date(data.expires_at) < new Date()) {
-    return { valid: false }
-  }
-
   // Update last_used
   await supabase
     .from('api_tokens')
