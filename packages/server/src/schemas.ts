@@ -2,12 +2,25 @@ import { z } from 'zod'
 
 export const MemoryTypeSchema = z.enum([
   'convention', 'decision', 'architecture',
-  'entity', 'lesson', 'preference', 'pattern',
+  'entity', 'lesson', 'preference', 'pattern', 'execution',
 ])
 
 export const MemorySourceSchema = z.enum([
   'manual', 'auto_index', 'agent', 'import',
 ])
+
+export const MemoryExampleSchema = z.object({
+  input: z.string().describe('Example input or trigger'),
+  output: z.string().describe('Expected output or result'),
+  note: z.string().optional().describe('Additional context'),
+})
+
+export const ExecutionFlowSchema = z.object({
+  trigger: z.string().describe('What initiates this flow'),
+  steps: z.array(z.string()).describe('Ordered execution steps'),
+  phases: z.array(z.string()).optional().describe('Named phases within the flow'),
+  hooks: z.array(z.string()).optional().describe('Event hooks or injection points'),
+})
 
 export const RememberSchema = z.object({
   key: z.string().min(1).describe('A short, descriptive key for this memory'),
@@ -15,6 +28,11 @@ export const RememberSchema = z.object({
   type: MemoryTypeSchema.describe('The type of memory'),
   filePaths: z.array(z.string()).optional().describe('Related file paths'),
   tags: z.array(z.string()).optional().describe('Tags for categorization'),
+  conditions: z.array(z.string()).optional().describe('When this applies — conditions or prerequisites'),
+  phases: z.array(z.string()).optional().describe('Phases or stages this memory relates to'),
+  crossSystemRefs: z.array(z.string()).optional().describe('Keys of related memories in other systems'),
+  examples: z.array(MemoryExampleSchema).optional().describe('Concrete input/output examples'),
+  executionFlow: ExecutionFlowSchema.optional().describe('Step-by-step execution pipeline (for execution type)'),
 })
 
 export const RecallSchema = z.object({
@@ -40,4 +58,8 @@ export const ContextSchema = z.object({
 export const SessionEndSchema = z.object({
   summary: z.string().min(1).describe('Summary of what happened in this session'),
   extractMemories: z.boolean().optional().describe('Auto-extract memories from the summary (default: true)'),
+})
+
+export const VerifyMemorySchema = z.object({
+  key: z.string().min(1).describe('Key of the pending memory to verify'),
 })

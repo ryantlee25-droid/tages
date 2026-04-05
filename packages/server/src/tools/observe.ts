@@ -84,6 +84,7 @@ export async function handleObserve(
     value: text,
     type: matchedType,
     source: 'agent',
+    status: 'pending' as const,
     confidence: 0.7,
     filePaths: [],
     tags: ['auto-observed'],
@@ -101,7 +102,7 @@ export async function handleObserve(
   return {
     content: [{
       type: 'text',
-      text: `Learned: "${key}" (${matchedType})`,
+      text: `Noted (pending verification): "${key}" (${matchedType})`,
     }],
   }
 }

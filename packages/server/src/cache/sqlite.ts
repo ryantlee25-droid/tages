@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import type { Memory, MemoryType, MemorySource } from '@tages/shared'
+import type { Memory, MemoryType, MemorySource, MemoryStatus } from '@tages/shared'
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS memories (
@@ -17,7 +17,14 @@ CREATE TABLE IF NOT EXISTS memories (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   synced_at TEXT,
   dirty INTEGER NOT NULL DEFAULT 0,
-  embedding TEXT
+  embedding TEXT,
+  status TEXT NOT NULL DEFAULT 'live',
+  conditions TEXT,
+  phases TEXT,
+  cross_system_refs TEXT,
+  examples TEXT,
+  execution_flow TEXT,
+  verified_at TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS memories_project_key ON memories(project_id, key);
@@ -40,14 +47,26 @@ export class SqliteCache {
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('synchronous = NORMAL')
     this.db.exec(SCHEMA)
-    // Add embedding column if missing (upgrade path)
-    try { this.db.exec('ALTER TABLE memories ADD COLUMN embedding TEXT') } catch { /* already exists */ }
+    // Upgrade path: add columns if missing on existing DBs
+    const upgrades = [
+      'ALTER TABLE memories ADD COLUMN embedding TEXT',
+      'ALTER TABLE memories ADD COLUMN status TEXT NOT NULL DEFAULT \'live\'',
+      'ALTER TABLE memories ADD COLUMN conditions TEXT',
+      'ALTER TABLE memories ADD COLUMN phases TEXT',
+      'ALTER TABLE memories ADD COLUMN cross_system_refs TEXT',
+      'ALTER TABLE memories ADD COLUMN examples TEXT',
+      'ALTER TABLE memories ADD COLUMN execution_flow TEXT',
+      'ALTER TABLE memories ADD COLUMN verified_at TEXT',
+    ]
+    for (const sql of upgrades) {
+      try { this.db.exec(sql) } catch { /* already exists */ }
+    }
   }
 
   upsertMemory(memory: Memory, dirty = true): void {
     const stmt = this.db.prepare(`
-      INSERT INTO memories (id, project_id, key, value, type, source, agent_name, file_paths, tags, confidence, created_at, updated_at, dirty)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO memories (id, project_id, key, value, type, source, agent_name, file_paths, tags, confidence, created_at, updated_at, dirty, status, conditions, phases, cross_system_refs, examples, execution_flow)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(project_id, key) DO UPDATE SET
         id = excluded.id,
         value = excluded.value,
@@ -58,7 +77,13 @@ export class SqliteCache {
         tags = excluded.tags,
         confidence = excluded.confidence,
         updated_at = excluded.updated_at,
-        dirty = excluded.dirty
+        dirty = excluded.dirty,
+        status = excluded.status,
+        conditions = excluded.conditions,
+        phases = excluded.phases,
+        cross_system_refs = excluded.cross_system_refs,
+        examples = excluded.examples,
+        execution_flow = excluded.execution_flow
     `)
     stmt.run(
       memory.id,
@@ -74,6 +99,12 @@ export class SqliteCache {
       memory.createdAt,
       memory.updatedAt,
       dirty ? 1 : 0,
+      memory.status || 'live',
+      memory.conditions ? JSON.stringify(memory.conditions) : null,
+      memory.phases ? JSON.stringify(memory.phases) : null,
+      memory.crossSystemRefs ? JSON.stringify(memory.crossSystemRefs) : null,
+      memory.examples ? JSON.stringify(memory.examples) : null,
+      memory.executionFlow ? JSON.stringify(memory.executionFlow) : null,
     )
   }
 
@@ -219,6 +250,25 @@ export class SqliteCache {
     return row.cnt
   }
 
+  getPendingMemories(projectId: string): Memory[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM memories WHERE project_id = ? AND status = ? ORDER BY created_at DESC'
+    ).all(projectId, 'pending') as SqliteMemoryRow[]
+    return rows.map(rowToMemory)
+  }
+
+  updateMemoryStatus(id: string, status: MemoryStatus, verifiedAt?: string): void {
+    if (verifiedAt) {
+      this.db.prepare(
+        'UPDATE memories SET status = ?, verified_at = ?, dirty = 1 WHERE id = ?'
+      ).run(status, verifiedAt, id)
+    } else {
+      this.db.prepare(
+        'UPDATE memories SET status = ?, dirty = 1 WHERE id = ?'
+      ).run(status, id)
+    }
+  }
+
   close(): void {
     this.db.close()
   }
@@ -239,6 +289,13 @@ interface SqliteMemoryRow {
   updated_at: string
   synced_at: string | null
   dirty: number
+  status: string
+  conditions: string | null
+  phases: string | null
+  cross_system_refs: string | null
+  examples: string | null
+  execution_flow: string | null
+  verified_at: string | null
 }
 
 function rowToMemory(row: SqliteMemoryRow): Memory {
@@ -249,10 +306,17 @@ function rowToMemory(row: SqliteMemoryRow): Memory {
     value: row.value,
     type: row.type as MemoryType,
     source: row.source as MemorySource,
+    status: (row.status || 'live') as MemoryStatus,
     agentName: row.agent_name || undefined,
     filePaths: JSON.parse(row.file_paths),
     tags: JSON.parse(row.tags),
     confidence: row.confidence,
+    conditions: row.conditions ? JSON.parse(row.conditions) : undefined,
+    phases: row.phases ? JSON.parse(row.phases) : undefined,
+    crossSystemRefs: row.cross_system_refs ? JSON.parse(row.cross_system_refs) : undefined,
+    examples: row.examples ? JSON.parse(row.examples) : undefined,
+    executionFlow: row.execution_flow ? JSON.parse(row.execution_flow) : undefined,
+    verifiedAt: row.verified_at || undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }

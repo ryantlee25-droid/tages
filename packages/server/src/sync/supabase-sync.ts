@@ -244,6 +244,7 @@ function dbRowToMemory(row: DbRow): Memory {
     value: row.value,
     type: row.type as Memory['type'],
     source: row.source as Memory['source'],
+    status: ((row as unknown as Record<string, unknown>).status as string || 'live') as Memory['status'],
     agentName: row.agent_name || undefined,
     filePaths: row.file_paths || [],
     tags: row.tags || [],

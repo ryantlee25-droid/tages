@@ -67,6 +67,7 @@ export async function handleSessionEnd(
         value: mem.value,
         type: mem.type,
         source: 'agent',
+        status: 'pending' as const,
         confidence: 0.8,
         filePaths: [],
         tags: ['session-extract'],

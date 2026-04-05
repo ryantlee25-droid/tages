@@ -19,6 +19,7 @@ function makeMemory(overrides: Partial<Parameters<SqliteCache['upsertMemory']>[0
     value: 'test-value',
     type: 'convention' as const,
     source: 'manual' as const,
+    status: 'live' as const,
     confidence: 1.0,
     filePaths: [],
     tags: [],

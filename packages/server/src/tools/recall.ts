@@ -72,9 +72,20 @@ function formatResults(
   }
 
   const lines = memories.map((m, i) => {
-    const files = m.filePaths?.length ? `\n   Files: ${m.filePaths.join(', ')}` : ''
-    const tags = m.tags?.length ? `\n   Tags: ${m.tags.join(', ')}` : ''
-    return `${i + 1}. [${m.type}] ${m.key}\n   ${m.value}${files}${tags}`
+    const parts = [`${i + 1}. [${m.type}] ${m.key}`, `   ${m.value}`]
+    if (m.filePaths?.length) parts.push(`   Files: ${m.filePaths.join(', ')}`)
+    if (m.conditions?.length) parts.push(`   When: ${m.conditions.join('; ')}`)
+    if (m.crossSystemRefs?.length) parts.push(`   Related: ${m.crossSystemRefs.join(', ')}`)
+    if (m.executionFlow) {
+      parts.push(`   Flow: ${m.executionFlow.trigger} → ${m.executionFlow.steps.join(' → ')}`)
+    }
+    if (m.examples?.length) {
+      for (const ex of m.examples.slice(0, 2)) {
+        parts.push(`   Example: ${ex.input} → ${ex.output}${ex.note ? ` (${ex.note})` : ''}`)
+      }
+    }
+    if (m.tags?.length) parts.push(`   Tags: ${m.tags.join(', ')}`)
+    return parts.join('\n')
   })
 
   return {
