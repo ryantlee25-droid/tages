@@ -1,9 +1,9 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
-import { MemoryTable } from '@/components/memory-table'
+import { ExecutionViewer } from '@/components/execution-viewer'
 import { ProjectNav } from '@/components/project-nav'
 
-export default async function ProjectPage({
+export default async function ExecutionPage({
   params,
 }: {
   params: Promise<{ slug: string }>
@@ -28,9 +28,16 @@ export default async function ProjectPage({
         <p className="mt-1 text-sm text-zinc-400">{project.git_remote || project.slug}</p>
       </div>
 
-      <ProjectNav slug={slug} active="memories" projectId={project.id} />
+      <ProjectNav slug={slug} active="execution" projectId={project.id} />
 
-      <MemoryTable projectId={project.id} />
+      <div className="mb-4">
+        <h2 className="text-lg font-semibold text-white">Execution Flows</h2>
+        <p className="mt-0.5 text-sm text-zinc-400">
+          Recorded trigger → step pipelines for this project.
+        </p>
+      </div>
+
+      <ExecutionViewer projectId={project.id} />
     </div>
   )
 }

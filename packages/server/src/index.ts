@@ -22,7 +22,18 @@ import { handleStats } from './tools/stats'
 import { handleSessionEnd } from './tools/session-end'
 import { handleObserve } from './tools/observe'
 import { handleVerifyMemory, handlePendingMemories } from './tools/verify'
-import { RememberSchema, RecallSchema, ForgetSchema, ContextSchema, SessionEndSchema, VerifyMemorySchema } from './schemas'
+import { handleStatsDetail } from './tools/stats-detail'
+import { handleMemoryHistory } from './tools/memory-history'
+import { handleContextualRecall } from './tools/contextual-recall'
+import { handleResolveConflict, handleListConflicts } from './tools/resolve-conflict'
+import { handleSuggestions } from './tools/suggestion-engine'
+import { handleImport } from './tools/import'
+import { handleMemoryGraph } from './tools/memory-graph'
+import { QueryLog } from './cache/query-log'
+import {
+  RememberSchema, RecallSchema, ForgetSchema, ContextSchema, SessionEndSchema, VerifyMemorySchema,
+  MemoryHistorySchema, ContextualRecallSchema, ResolveConflictSchema, ImportSchema,
+} from './schemas'
 
 async function main() {
   const config = loadServerConfig()
@@ -30,6 +41,7 @@ async function main() {
   // Initialize SQLite cache (works even without Supabase)
   const cachePath = config?.cachePath || '/tmp/tages-default.db'
   const cache = new SqliteCache(cachePath)
+  const queryLog = new QueryLog(cachePath)
   const projectId = config?.project.projectId || 'local'
 
   // Initialize Supabase sync if configured
@@ -105,6 +117,10 @@ async function main() {
         args.query,
         [], // similarities not available from cache
       )
+      // Log miss for suggestion engine
+      if (memories.length === 0) {
+        queryLog.logMiss(projectId, args.query)
+      }
       return result
     },
   )
@@ -211,6 +227,81 @@ async function main() {
     'List auto-extracted memories that need verification before they appear in recall',
     {},
     async () => handlePendingMemories(projectId, cache),
+  )
+
+  server.tool(
+    'memory_stats_detail',
+    'Detailed memory statistics — counts by type and status, average confidence, top 5 agents, and total count',
+    {},
+    async () => handleStatsDetail(projectId, cache),
+  )
+
+  server.tool(
+    'memory_history',
+    'Get the version history of a memory — shows past values, confidence changes, and who changed it. Optionally revert to a previous version.',
+    {
+      key: MemoryHistorySchema.shape.key,
+      revertToVersion: MemoryHistorySchema.shape.revertToVersion,
+    },
+    async (args) => handleMemoryHistory(args, projectId, cache, sync),
+  )
+
+  server.tool(
+    'contextual_recall',
+    'Search memories filtered by execution context — current files, agent name, or phase. More precise than recall for context-aware retrieval.',
+    {
+      query: ContextualRecallSchema.shape.query,
+      context: ContextualRecallSchema.shape.context,
+      limit: ContextualRecallSchema.shape.limit,
+    },
+    async (args) => handleContextualRecall(args, projectId, cache, sync),
+  )
+
+  server.tool(
+    'resolve_conflict',
+    'Resolve a detected memory conflict using keep_newer, keep_older, or merge strategies',
+    {
+      conflictId: ResolveConflictSchema.shape.conflictId,
+      strategy: ResolveConflictSchema.shape.strategy,
+      mergedValue: ResolveConflictSchema.shape.mergedValue,
+      resolvedBy: ResolveConflictSchema.shape.resolvedBy,
+    },
+    async (args) => handleResolveConflict(args, projectId, cache, sync),
+  )
+
+  server.tool(
+    'list_conflicts',
+    'List unresolved memory conflicts for this project',
+    {},
+    async () => handleListConflicts(projectId, cache),
+  )
+
+  server.tool(
+    'suggestions',
+    'Get suggestions for memories you should store, based on queries that returned no results',
+    {},
+    async () => handleSuggestions(projectId, cache, queryLog),
+  )
+
+  server.tool(
+    'import_memories',
+    'Import memories from a JSON array or markdown file content. Handles duplicates with skip/overwrite/merge strategies.',
+    {
+      content: ImportSchema.shape.content,
+      format: ImportSchema.shape.format,
+      strategy: ImportSchema.shape.strategy,
+    },
+    async (args) => {
+      const result = await handleImport({ ...args, projectId }, cache, sync)
+      return result
+    },
+  )
+
+  server.tool(
+    'memory_graph',
+    'Build a relationship graph from crossSystemRefs and output as a Mermaid diagram',
+    {},
+    async () => handleMemoryGraph(projectId, cache, sync),
   )
 
   // Register resources

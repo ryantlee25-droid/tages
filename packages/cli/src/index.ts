@@ -15,6 +15,11 @@ import { checkCommand } from './commands/check.js'
 import { patternsDetectCommand, patternsPromoteCommand, patternsListCommand } from './commands/patterns.js'
 import { onboardCommand } from './commands/onboard.js'
 import { exportCommand } from './commands/export.js'
+import { pendingCommand } from './commands/pending.js'
+import { verifyCommand } from './commands/verify.js'
+import { recallContextCommand } from './commands/recall-context.js'
+import { suggestCommand } from './commands/suggest.js'
+import { importMemoriesCommand } from './commands/import-memories.js'
 
 const program = new Command()
 
@@ -87,11 +92,12 @@ program
 
 program
   .command('import')
-  .description('Import memories from existing files')
-  .argument('<format>', 'File format: claude-md, architecture-md, lessons-md')
-  .argument('<path>', 'Path to the file')
+  .description('Import memories from a JSON or Markdown file with duplicate handling')
+  .argument('<file>', 'Path to the file (.json or .md)')
+  .option('-f, --format <format>', 'Format: json, markdown, auto', 'auto')
+  .option('-s, --strategy <strategy>', 'Duplicate strategy: skip, overwrite, merge', 'skip')
   .option('-p, --project <slug>', 'Project slug')
-  .action(importCommand)
+  .action(importMemoriesCommand)
 
 const tokenCmd = program
   .command('token')
@@ -137,6 +143,37 @@ program
   .option('-o, --output <path>', 'Output file path')
   .option('-f, --format <format>', 'Format: claude-md, architecture-md, json', 'claude-md')
   .action(exportCommand)
+
+program
+  .command('pending')
+  .description('List auto-extracted memories pending verification')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(pendingCommand)
+
+program
+  .command('verify')
+  .description('Promote a pending memory to live')
+  .argument('<key>', 'The memory key to verify')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(verifyCommand)
+
+program
+  .command('recall-context')
+  .description('Recall memories filtered by current git context (changed files, branch, phase)')
+  .argument('<query>', 'Search query')
+  .option('--agent <name>', 'Filter by agent name')
+  .option('--phase <phase>', 'Filter by phase (e.g. planning, implementation, review)')
+  .option('-l, --limit <n>', 'Max results', '5')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(recallContextCommand)
+
+program
+  .command('suggest')
+  .description('Get suggestions for memories you should store based on recall misses')
+  .option('-l, --limit <n>', 'Max suggestions', '10')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(suggestCommand)
+
 
 const patternsCmd = program
   .command('patterns')

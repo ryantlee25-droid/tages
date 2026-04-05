@@ -5,3 +5,4 @@ dist/
 .next/
 .turbo/
 .vercel/
+packages/server/coverage/

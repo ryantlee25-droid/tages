@@ -107,7 +107,7 @@ begin
 end;
 $$ language plpgsql security definer stable;
 
--- Recreate importance_recall with status filter
+-- Recreate importance_recall with status filter + structured metadata columns
 create or replace function importance_recall(
   p_project_id uuid,
   p_query text,
@@ -124,6 +124,11 @@ returns table (
   file_paths text[],
   tags text[],
   confidence real,
+  conditions text[],
+  phases text[],
+  cross_system_refs text[],
+  examples jsonb,
+  execution_flow jsonb,
   importance real,
   access_count int,
   stale boolean,
@@ -135,7 +140,10 @@ begin
   return query
     select
       m.id, m.project_id, m.key, m.value, m.type, m.source,
-      m.file_paths, m.tags, m.confidence, m.importance, m.access_count,
+      m.file_paths, m.tags, m.confidence,
+      m.conditions, m.phases, m.cross_system_refs,
+      m.examples, m.execution_flow,
+      m.importance, m.access_count,
       m.stale, m.created_at,
       greatest(
         similarity(m.key, p_query),

@@ -63,3 +63,37 @@ export const SessionEndSchema = z.object({
 export const VerifyMemorySchema = z.object({
   key: z.string().min(1).describe('Key of the pending memory to verify'),
 })
+
+export const StatsDetailSchema = z.object({})
+
+export const MemoryHistorySchema = z.object({
+  key: z.string().min(1).describe('Key of the memory to get history for'),
+  revertToVersion: z.number().int().min(1).optional().describe('Version number to revert to'),
+})
+
+export const ContextualRecallSchema = z.object({
+  query: z.string().describe('Search query (can be empty to list all contextual matches)'),
+  context: z.object({
+    currentFiles: z.array(z.string()).optional().describe('Currently open or relevant file paths'),
+    agentName: z.string().optional().describe('Name of the requesting agent'),
+    phase: z.string().optional().describe('Current phase (e.g., planning, implementation, review)'),
+  }).optional().describe('Execution context to filter results'),
+  limit: z.number().int().min(1).max(50).default(5).describe('Max results'),
+})
+
+export const ResolveConflictSchema = z.object({
+  conflictId: z.string().min(1).describe('ID of the conflict to resolve'),
+  strategy: z.enum(['keep_newer', 'keep_older', 'merge']).describe('Resolution strategy'),
+  mergedValue: z.string().optional().describe('Merged content (required when strategy is "merge")'),
+  resolvedBy: z.string().optional().describe('Agent or user resolving the conflict'),
+})
+
+export const SuggestionsSchema = z.object({})
+
+export const ImportSchema = z.object({
+  content: z.string().min(1).max(512_000).describe('JSON array or markdown content to import (max 500KB)'),
+  format: z.enum(['json', 'markdown', 'auto']).optional().default('auto').describe('Input format'),
+  strategy: z.enum(['skip', 'overwrite', 'merge']).optional().default('skip').describe('Duplicate handling strategy'),
+})
+
+export const MemoryGraphSchema = z.object({})

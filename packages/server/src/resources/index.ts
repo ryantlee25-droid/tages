@@ -79,6 +79,55 @@ export function registerResources(
     },
   )
 
+  // memory://project/{id}/execution
+  server.resource(
+    'execution',
+    new ResourceTemplate('memory://project/{id}/execution', { list: undefined }),
+    { description: 'Execution flows, pipelines, and event-driven processes' },
+    async (uri, params) => {
+      const projectId = params.id as string
+      const memories = cache.getByType(projectId, 'execution')
+
+      if (memories.length === 0) {
+        return {
+          contents: [{ uri: uri.href, mimeType: 'text/markdown', text: 'No execution flows recorded.' }],
+        }
+      }
+
+      const text = memories.map(m => {
+        const lines: string[] = [`## ${m.key}`, m.value]
+
+        if (m.executionFlow) {
+          lines.push(`**Trigger:** ${m.executionFlow.trigger}`)
+          if (m.executionFlow.steps.length > 0) {
+            lines.push(m.executionFlow.steps.map((s, i) => `${i + 1}. ${s}`).join('\n'))
+          }
+          if (m.executionFlow.phases?.length) {
+            lines.push(`**Conditions:** ${m.executionFlow.phases.join(', ')}`)
+          }
+          if (m.executionFlow.hooks?.length) {
+            lines.push(`**Event hooks:** ${m.executionFlow.hooks.join(', ')}`)
+          }
+        }
+
+        if (m.conditions?.length) {
+          lines.push(`**When:** ${m.conditions.join(', ')}`)
+        }
+
+        if (m.examples?.length) {
+          const ex = m.examples[0]
+          lines.push(`**Example:** ${ex.input} → ${ex.output}`)
+        }
+
+        return lines.join('\n')
+      }).join('\n\n')
+
+      return {
+        contents: [{ uri: uri.href, mimeType: 'text/markdown', text }],
+      }
+    },
+  )
+
   // memory://project/{id}/documentation_context
   // Bundled payload optimized for doc generators (DocGen, etc.)
   server.resource(

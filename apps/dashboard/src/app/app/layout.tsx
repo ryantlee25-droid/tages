@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
+import { CommandPalette } from '@/components/command-palette'
 
 export default async function AppLayout({
   children,
@@ -81,6 +82,8 @@ export default async function AppLayout({
       <main className="flex-1 overflow-auto pb-16 md:pb-0">
         {children}
       </main>
+
+      <CommandPalette />
     </div>
   )
 }

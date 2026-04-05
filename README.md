@@ -124,6 +124,16 @@ pnpm dev          # dashboard at localhost:3000
 pnpm test         # 58 vitest tests
 ```
 
+## Release Notes
+
+### 2026-04-05
+- **7 new MCP tools**: stats-detail, memory-history, contextual-recall, resolve-conflict/list-conflicts, suggestion-engine, import, memory-graph
+- **Dashboard pages**: Execution viewer, pending queue, stats dashboard, conflict resolver, memory graph
+- **CLI commands**: pending, verify, import-memories, recall-context, suggest
+- **Security fixes**: Cross-project conflict resolution auth, unbounded JSON.parse on import, missing project_id filter on pending queue verify/reject
+- **Test coverage**: 67 new vitest tests across 7 test suites
+- **Database**: 3 new migrations (memory versioning RPC, contextual recall table, conflict resolution table)
+
 ## License
 
 MIT

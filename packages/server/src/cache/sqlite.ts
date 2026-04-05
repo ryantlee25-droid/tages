@@ -2,6 +2,39 @@ import Database from 'better-sqlite3'
 import type { Memory, MemoryType, MemorySource, MemoryStatus } from '@tages/shared'
 
 const SCHEMA = `
+CREATE TABLE IF NOT EXISTS memory_versions (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  memory_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 1.0,
+  version INTEGER NOT NULL DEFAULT 1,
+  changed_by TEXT,
+  change_reason TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS mv_memory_id ON memory_versions(memory_id);
+CREATE INDEX IF NOT EXISTS mv_project_key ON memory_versions(project_id, key);
+
+CREATE TABLE IF NOT EXISTS memory_conflicts (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  memory_a_key TEXT NOT NULL,
+  memory_b_key TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  resolved INTEGER NOT NULL DEFAULT 0,
+  resolution_strategy TEXT,
+  merged_value TEXT,
+  resolved_by TEXT,
+  resolved_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS mc_project_id ON memory_conflicts(project_id);
+CREATE INDEX IF NOT EXISTS mc_unresolved ON memory_conflicts(project_id, resolved) WHERE resolved = 0;
+
 CREATE TABLE IF NOT EXISTS memories (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
@@ -47,6 +80,41 @@ export class SqliteCache {
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('synchronous = NORMAL')
     this.db.exec(SCHEMA)
+    // Upgrade path: create new tables on existing DBs
+    const tableUpgrades = [
+      `CREATE TABLE IF NOT EXISTS memory_versions (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        memory_id TEXT NOT NULL,
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 1.0,
+        version INTEGER NOT NULL DEFAULT 1,
+        changed_by TEXT,
+        change_reason TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`,
+      `CREATE INDEX IF NOT EXISTS mv_memory_id ON memory_versions(memory_id)`,
+      `CREATE INDEX IF NOT EXISTS mv_project_key ON memory_versions(project_id, key)`,
+      `CREATE TABLE IF NOT EXISTS memory_conflicts (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        memory_a_key TEXT NOT NULL,
+        memory_b_key TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        resolved INTEGER NOT NULL DEFAULT 0,
+        resolution_strategy TEXT,
+        merged_value TEXT,
+        resolved_by TEXT,
+        resolved_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`,
+      `CREATE INDEX IF NOT EXISTS mc_project_id ON memory_conflicts(project_id)`,
+    ]
+    for (const sql of tableUpgrades) {
+      try { this.db.exec(sql) } catch { /* already exists */ }
+    }
+
     // Upgrade path: add columns if missing on existing DBs
     const upgrades = [
       'ALTER TABLE memories ADD COLUMN embedding TEXT',
@@ -267,6 +335,145 @@ export class SqliteCache {
         'UPDATE memories SET status = ?, dirty = 1 WHERE id = ?'
       ).run(status, id)
     }
+  }
+
+  // --- Memory versioning ---
+
+  addVersion(
+    projectId: string,
+    key: string,
+    value: string,
+    confidence: number,
+    changedBy?: string,
+    changeReason?: string,
+  ): void {
+    const mem = this.getByKey(projectId, key)
+    const memoryId = mem?.id || key
+    const maxRow = this.db.prepare(
+      'SELECT MAX(version) as max_version FROM memory_versions WHERE project_id = ? AND key = ?'
+    ).get(projectId, key) as { max_version: number | null }
+    const version = (maxRow.max_version || 0) + 1
+    const { randomUUID } = require('crypto') as { randomUUID: () => string }
+    this.db.prepare(`
+      INSERT INTO memory_versions (id, project_id, memory_id, key, value, confidence, version, changed_by, change_reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(randomUUID(), projectId, memoryId, key, value, confidence, version, changedBy || null, changeReason || null)
+  }
+
+  getVersions(projectId: string, key: string): Array<{
+    version: number
+    value: string
+    confidence: number
+    changedBy: string | null
+    changeReason: string | null
+    createdAt: string
+  }> {
+    const rows = this.db.prepare(`
+      SELECT version, value, confidence, changed_by, change_reason, created_at
+      FROM memory_versions
+      WHERE project_id = ? AND key = ?
+      ORDER BY version DESC
+    `).all(projectId, key) as Array<{
+      version: number
+      value: string
+      confidence: number
+      changed_by: string | null
+      change_reason: string | null
+      created_at: string
+    }>
+    return rows.map((r) => ({
+      version: r.version,
+      value: r.value,
+      confidence: r.confidence,
+      changedBy: r.changed_by,
+      changeReason: r.change_reason,
+      createdAt: r.created_at,
+    }))
+  }
+
+  revertToVersion(projectId: string, key: string, version: number): boolean {
+    const row = this.db.prepare(`
+      SELECT value, confidence FROM memory_versions
+      WHERE project_id = ? AND key = ? AND version = ?
+    `).get(projectId, key, version) as { value: string; confidence: number } | undefined
+    if (!row) return false
+    const mem = this.getByKey(projectId, key)
+    if (!mem) return false
+    this.upsertMemory({ ...mem, value: row.value, confidence: row.confidence, updatedAt: new Date().toISOString() })
+    return true
+  }
+
+  // --- Conflict tracking ---
+
+  addConflict(projectId: string, memoryAKey: string, memoryBKey: string, reason: string): string {
+    const { randomUUID } = require('crypto') as { randomUUID: () => string }
+    const id = randomUUID()
+    this.db.prepare(`
+      INSERT INTO memory_conflicts (id, project_id, memory_a_key, memory_b_key, reason)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, projectId, memoryAKey, memoryBKey, reason)
+    return id
+  }
+
+  getConflict(conflictId: string): {
+    id: string
+    projectId: string
+    memoryAKey: string
+    memoryBKey: string
+    reason: string
+    resolved: boolean
+  } | null {
+    const row = this.db.prepare(
+      'SELECT * FROM memory_conflicts WHERE id = ?'
+    ).get(conflictId) as {
+      id: string; project_id: string; memory_a_key: string; memory_b_key: string; reason: string; resolved: number
+    } | undefined
+    if (!row) return null
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      memoryAKey: row.memory_a_key,
+      memoryBKey: row.memory_b_key,
+      reason: row.reason,
+      resolved: row.resolved === 1,
+    }
+  }
+
+  getUnresolvedConflicts(projectId: string): Array<{
+    id: string
+    memoryAKey: string
+    memoryBKey: string
+    reason: string
+    createdAt: string
+  }> {
+    const rows = this.db.prepare(`
+      SELECT id, memory_a_key, memory_b_key, reason, created_at
+      FROM memory_conflicts
+      WHERE project_id = ? AND resolved = 0
+      ORDER BY created_at DESC
+    `).all(projectId) as Array<{
+      id: string; memory_a_key: string; memory_b_key: string; reason: string; created_at: string
+    }>
+    return rows.map((r) => ({
+      id: r.id,
+      memoryAKey: r.memory_a_key,
+      memoryBKey: r.memory_b_key,
+      reason: r.reason,
+      createdAt: r.created_at,
+    }))
+  }
+
+  resolveConflict(
+    conflictId: string,
+    strategy: string,
+    mergedValue?: string,
+    resolvedBy?: string,
+  ): void {
+    this.db.prepare(`
+      UPDATE memory_conflicts
+      SET resolved = 1, resolution_strategy = ?, merged_value = ?, resolved_by = ?, resolved_at = datetime('now')
+      WHERE id = ?
+    `).run(strategy, mergedValue || null, resolvedBy || null, conflictId)
   }
 
   close(): void {
