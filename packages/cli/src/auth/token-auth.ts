@@ -21,11 +21,15 @@ export async function validateToken(
 
   const { data, error } = await supabase
     .from('api_tokens')
-    .select('user_id')
+    .select('user_id, expires_at')
     .eq('token_hash', hash)
     .single()
 
   if (error || !data) {
+    return { valid: false }
+  }
+
+  if (data.expires_at && new Date(data.expires_at) < new Date()) {
     return { valid: false }
   }
 

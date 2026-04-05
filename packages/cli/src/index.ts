@@ -9,7 +9,7 @@ import { dashboardCommand } from './commands/dashboard.js'
 import { indexCommand } from './commands/index.js'
 import { importCommand } from './commands/import.js'
 import { queryCommand } from './commands/query.js'
-import { tokenGenerateCommand, tokenListCommand } from './commands/token.js'
+import { tokenGenerateCommand, tokenListCommand, tokenRotateCommand } from './commands/token.js'
 import { snapshotCommand } from './commands/snapshot.js'
 import { checkCommand } from './commands/check.js'
 import { patternsDetectCommand, patternsPromoteCommand, patternsListCommand } from './commands/patterns.js'
@@ -123,6 +123,14 @@ tokenCmd
   .description('List API tokens')
   .option('-p, --project <slug>', 'Project slug')
   .action(tokenListCommand)
+
+tokenCmd
+  .command('rotate')
+  .description('Rotate an API token (generates a new token, invalidates the old one)')
+  .option('-n, --name <name>', 'Token name to rotate', 'default')
+  .option('--expires-in <days>', 'Set expiry in days from now (omit for non-expiring)')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(tokenRotateCommand)
 
 program
   .command('snapshot')
