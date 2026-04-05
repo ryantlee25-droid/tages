@@ -36,3 +36,8 @@ export const DecisionsSchema = z.object({})
 export const ContextSchema = z.object({
   filePath: z.string().min(1).describe('File path to get context for'),
 })
+
+export const SessionEndSchema = z.object({
+  summary: z.string().min(1).describe('Summary of what happened in this session'),
+  extractMemories: z.boolean().optional().describe('Auto-extract memories from the summary (default: true)'),
+})

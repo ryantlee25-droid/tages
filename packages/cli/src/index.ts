@@ -10,6 +10,9 @@ import { indexCommand } from './commands/index.js'
 import { importCommand } from './commands/import.js'
 import { queryCommand } from './commands/query.js'
 import { tokenGenerateCommand, tokenListCommand } from './commands/token.js'
+import { snapshotCommand } from './commands/snapshot.js'
+import { checkCommand } from './commands/check.js'
+import { patternsDetectCommand, patternsPromoteCommand, patternsListCommand } from './commands/patterns.js'
 
 const program = new Command()
 
@@ -104,5 +107,42 @@ tokenCmd
   .description('List API tokens')
   .option('-p, --project <slug>', 'Project slug')
   .action(tokenListCommand)
+
+program
+  .command('snapshot')
+  .description('Generate an architecture snapshot from the codebase')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('-d, --dir <path>', 'Directory to scan (defaults to cwd)')
+  .action(snapshotCommand)
+
+program
+  .command('check')
+  .description('Check memories against codebase — find stale or invalidated entries')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('--fix', 'Mark stale memories in the database')
+  .action(checkCommand)
+
+const patternsCmd = program
+  .command('patterns')
+  .description('Cross-project pattern library')
+
+patternsCmd
+  .command('detect')
+  .description('Find conventions shared across multiple projects')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(patternsDetectCommand)
+
+patternsCmd
+  .command('promote')
+  .description('Promote a memory to your pattern library')
+  .argument('<key>', 'Memory key to promote')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(patternsPromoteCommand)
+
+patternsCmd
+  .command('list')
+  .description('List your pattern library')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(patternsListCommand)
 
 program.parse()

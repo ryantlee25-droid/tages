@@ -18,7 +18,8 @@ import { handleContext } from './tools/context'
 import { handleStaleness } from './tools/staleness'
 import { handleConflicts } from './tools/conflicts'
 import { handleStats } from './tools/stats'
-import { RememberSchema, RecallSchema, ForgetSchema, ContextSchema } from './schemas'
+import { handleSessionEnd } from './tools/session-end'
+import { RememberSchema, RecallSchema, ForgetSchema, ContextSchema, SessionEndSchema } from './schemas'
 
 async function main() {
   const config = loadServerConfig()
@@ -163,6 +164,20 @@ async function main() {
     'Show memory usage statistics — counts by type, recall hit rate, agent sessions, most/least accessed',
     {},
     async () => handleStats(projectId, cache, sync),
+  )
+
+  server.tool(
+    'session_end',
+    'End the current session with a summary of what was built, decided, or learned — auto-extracts memories from the summary',
+    {
+      summary: SessionEndSchema.shape.summary,
+      extractMemories: SessionEndSchema.shape.extractMemories,
+    },
+    async (args) => {
+      const result = await handleSessionEnd(args, projectId, cache, sync)
+      await tracker.endSession()
+      return result
+    },
   )
 
   // Register resources

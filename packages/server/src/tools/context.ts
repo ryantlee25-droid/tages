@@ -1,6 +1,7 @@
 import type { Memory } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
+import { enrichFilePaths, formatFileContext } from './file-enrichment'
 
 export async function handleContext(
   args: { filePath: string },
@@ -12,7 +13,6 @@ export async function handleContext(
   let memories: Memory[]
 
   if (sync) {
-    // Try remote first — recall using file path as query
     const remote = await sync.remoteRecall(args.filePath, undefined, 10)
     if (remote && remote.length > 0) {
       memories = remote
@@ -33,17 +33,28 @@ export async function handleContext(
     }
   }
 
-  if (memories.length === 0) {
-    return {
-      content: [{ type: 'text', text: `No context found for "${args.filePath}".` }],
+  // Enrich with file metadata
+  const fileContexts = enrichFilePaths([args.filePath])
+  const fileInfo = formatFileContext(fileContexts)
+
+  const sections: string[] = []
+  sections.push(`## Context for ${args.filePath}`)
+  sections.push('')
+  sections.push('### File Info')
+  sections.push(fileInfo)
+
+  if (memories.length > 0) {
+    sections.push('')
+    sections.push(`### Related Memories (${memories.length})`)
+    for (const m of memories) {
+      sections.push(`- [${m.type}] **${m.key}**: ${m.value}`)
     }
+  } else {
+    sections.push('')
+    sections.push('No memories reference this file.')
   }
 
-  const lines = memories.map(m => `- [${m.type}] **${m.key}**: ${m.value}`)
   return {
-    content: [{
-      type: 'text',
-      text: `## Context for ${args.filePath}\n\n${lines.join('\n\n')}`,
-    }],
+    content: [{ type: 'text', text: sections.join('\n') }],
   }
 }
