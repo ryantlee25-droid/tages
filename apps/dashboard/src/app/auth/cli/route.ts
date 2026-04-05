@@ -6,11 +6,34 @@ import { createClient } from '@/lib/supabase/server'
  * The CLI opens the browser to this route with a redirect_uri.
  * After GitHub OAuth, this route redirects back to the CLI's local server
  * with the session tokens.
+ *
+ * Security: redirect_uri is restricted to localhost/127.0.0.1 to prevent
+ * open redirect attacks that could leak session tokens to external domains.
  */
+
+function isLocalRedirect(uri: string): boolean {
+  try {
+    const url = new URL(uri)
+    return (
+      url.protocol === 'http:' &&
+      (url.hostname === '127.0.0.1' || url.hostname === 'localhost')
+    )
+  } catch {
+    return false
+  }
+}
+
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)
   const redirectUri = searchParams.get('redirect_uri')
   const code = searchParams.get('code')
+
+  if (redirectUri && !isLocalRedirect(redirectUri)) {
+    return NextResponse.json(
+      { error: 'redirect_uri must be localhost or 127.0.0.1' },
+      { status: 400 },
+    )
+  }
 
   if (!redirectUri) {
     // Step 1: Redirect to GitHub OAuth with this route as callback

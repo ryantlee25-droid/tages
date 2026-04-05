@@ -8,6 +8,8 @@ import { loadServerConfig } from './config'
 import { SqliteCache } from './cache/sqlite'
 import { SupabaseSync } from './sync/supabase-sync'
 import { SessionTracker } from './tracking'
+import { forkBranch, mergeBranch, getBranchMemories, deleteBranch } from './branch/session-branch'
+import { computeDecayScore, shouldArchive } from './decay/scoring'
 import { registerResources } from './resources'
 import { handleRemember } from './tools/remember'
 import { handleRecall } from './tools/recall'
@@ -47,12 +49,19 @@ async function main() {
   // Initialize Supabase sync if configured
   let sync: SupabaseSync | null = null
   let supabaseClient = null
+  const walPath = cachePath.replace('.db', '-wal.db')
   if (config?.project.supabaseUrl && config?.project.supabaseAnonKey) {
     supabaseClient = createSupabaseClient(
       config.project.supabaseUrl,
       config.project.supabaseAnonKey,
     )
-    sync = new SupabaseSync(supabaseClient, cache, projectId)
+    sync = new SupabaseSync(supabaseClient, cache, projectId, walPath)
+
+    // T1: WAL recovery — replay any incomplete sync ops before hydration
+    const recovered = await sync.recoverWAL()
+    if (recovered > 0) {
+      console.error(`[tages] WAL recovery: replayed ${recovered} operations`)
+    }
 
     // Hydrate cache from Supabase
     const count = await sync.hydrate()
@@ -69,6 +78,31 @@ async function main() {
   // Initialize session tracker
   const tracker = new SessionTracker(supabaseClient, projectId)
   await tracker.startSession()
+
+  // T6: Periodic decay check — every 5 minutes, archive stale memories
+  const DECAY_INTERVAL_MS = 5 * 60 * 1000
+  const decayTimer = setInterval(() => {
+    try {
+      const staleMemories = cache.getStaleMemories(projectId, 180, 2)
+      let archived = 0
+      for (const mem of staleMemories) {
+        const accessInfo = cache.getAccessInfo(mem.id)
+        const score = computeDecayScore(mem, {
+          lastAccessedAt: accessInfo?.lastAccessedAt,
+          accessCount: accessInfo?.accessCount ?? 0,
+        })
+        if (shouldArchive(score)) {
+          cache.archiveMemory(mem.id)
+          archived++
+        }
+      }
+      if (archived > 0) {
+        console.error(`[tages] Decay check: archived ${archived} stale memories`)
+      }
+    } catch (err) {
+      console.error('[tages] Decay check error:', (err as Error).message)
+    }
+  }, DECAY_INTERVAL_MS)
 
   const server = new McpServer({
     name: 'tages',
@@ -90,6 +124,7 @@ async function main() {
       crossSystemRefs: RememberSchema.shape.crossSystemRefs,
       examples: RememberSchema.shape.examples,
       executionFlow: RememberSchema.shape.executionFlow,
+      force: RememberSchema.shape.force,
     },
     async (args) => {
       const result = await handleRemember(args, projectId, cache, sync)
@@ -304,6 +339,67 @@ async function main() {
     async () => handleMemoryGraph(projectId, cache, sync),
   )
 
+  // T7: Session branching tools
+  server.tool(
+    'fork_branch',
+    'Fork current memories into a session branch for experimentation. Branch writes won\'t affect main until merged.',
+    {
+      sessionId: z.string().min(1).describe('Unique session identifier for this branch'),
+    },
+    async (args) => {
+      const branch = forkBranch(args.sessionId, projectId, cache)
+      const count = getBranchMemories(args.sessionId, cache).length
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `Forked branch for session "${args.sessionId}" with ${count} memories. Branch ID: ${branch.id}`,
+        }],
+      }
+    },
+  )
+
+  server.tool(
+    'merge_branch',
+    'Merge a session branch back into main memory. Detects conflicts between branch and main changes.',
+    {
+      sessionId: z.string().min(1).describe('Session ID of the branch to merge'),
+      strategy: z.enum(['force', 'skip_conflicts']).describe('force = branch wins; skip_conflicts = skip conflicting keys'),
+    },
+    async (args) => {
+      const result = mergeBranch(args.sessionId, args.strategy, cache)
+      const conflictSummary = result.conflicts.length > 0
+        ? `\nConflicts (${result.conflicts.length}): ${result.conflicts.map(c => c.key).join(', ')}`
+        : ''
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `Merged branch for session "${args.sessionId}": ${result.merged} memories promoted.${conflictSummary}`,
+        }],
+      }
+    },
+  )
+
+  server.tool(
+    'list_branches',
+    'List memories in a session branch',
+    {
+      sessionId: z.string().min(1).describe('Session ID to inspect'),
+    },
+    async (args) => {
+      const mems = getBranchMemories(args.sessionId, cache)
+      if (mems.length === 0) {
+        return { content: [{ type: 'text' as const, text: `No branch found for session "${args.sessionId}".` }] }
+      }
+      const lines = mems.map((m, i) => `${i + 1}. [${m.type}] ${m.key}: ${m.value.slice(0, 60)}`)
+      return {
+        content: [{
+          type: 'text' as const,
+          text: `Branch memories for "${args.sessionId}" (${mems.length}):\n\n${lines.join('\n')}`,
+        }],
+      }
+    },
+  )
+
   // Register resources
   registerResources(server, cache, sync)
 
@@ -313,6 +409,7 @@ async function main() {
 
   // Cleanup on exit
   process.on('SIGINT', async () => {
+    clearInterval(decayTimer)
     await tracker.endSession()
     if (sync) {
       await sync.flush()

@@ -33,6 +33,7 @@ export const RememberSchema = z.object({
   crossSystemRefs: z.array(z.string()).optional().describe('Keys of related memories in other systems'),
   examples: z.array(MemoryExampleSchema).optional().describe('Concrete input/output examples'),
   executionFlow: ExecutionFlowSchema.optional().describe('Step-by-step execution pipeline (for execution type)'),
+  force: z.boolean().optional().default(false).describe('Override secret detection blocking'),
 })
 
 export const RecallSchema = z.object({
@@ -77,13 +78,14 @@ export const ContextualRecallSchema = z.object({
     currentFiles: z.array(z.string()).optional().describe('Currently open or relevant file paths'),
     agentName: z.string().optional().describe('Name of the requesting agent'),
     phase: z.string().optional().describe('Current phase (e.g., planning, implementation, review)'),
+    depth: z.number().int().min(0).max(2).default(0).optional().describe('Multi-hop graph traversal depth via crossSystemRefs (0=direct only, 1=one hop, 2=two hops)'),
   }).optional().describe('Execution context to filter results'),
   limit: z.number().int().min(1).max(50).default(5).describe('Max results'),
 })
 
 export const ResolveConflictSchema = z.object({
   conflictId: z.string().min(1).describe('ID of the conflict to resolve'),
-  strategy: z.enum(['keep_newer', 'keep_older', 'merge']).describe('Resolution strategy'),
+  strategy: z.enum(['keep_newer', 'keep_older', 'merge', 'auto_merge']).describe('Resolution strategy (auto_merge uses 3-way LCS merge)'),
   mergedValue: z.string().optional().describe('Merged content (required when strategy is "merge")'),
   resolvedBy: z.string().optional().describe('Agent or user resolving the conflict'),
 })

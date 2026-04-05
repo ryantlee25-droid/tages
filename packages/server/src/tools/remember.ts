@@ -2,7 +2,9 @@ import { randomUUID } from 'crypto'
 import type { Memory, MemoryExample, ExecutionFlow } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
-import { scanForSensitiveData, formatSafetyWarnings } from './safety'
+import { scanForSensitiveData, formatSafetyWarnings, hasHighSeverity } from './safety'
+import { computeFieldDiff } from '../diff/field-diff'
+import { tokenize } from '../search/tokenizer'
 
 export async function handleRemember(
   args: {
@@ -16,13 +18,22 @@ export async function handleRemember(
     crossSystemRefs?: string[]
     examples?: MemoryExample[]
     executionFlow?: ExecutionFlow
+    force?: boolean
   },
   projectId: string,
   cache: SqliteCache,
   sync: SupabaseSync | null,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
-  // Scan for secrets/PII
+  // Scan for secrets/PII — block high-severity unless force override
   const warnings = scanForSensitiveData(`${args.key} ${args.value}`)
+  if (hasHighSeverity(warnings) && !args.force) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Blocked: memory "${args.key}" contains detected secrets.${formatSafetyWarnings(warnings)}`,
+      }],
+    }
+  }
 
   const now = new Date().toISOString()
   const existing = cache.getByKey(projectId, args.key)
@@ -47,7 +58,34 @@ export async function handleRemember(
     updatedAt: now,
   }
 
+  // T5: Compute and store field-level diff before upsert
+  if (existing) {
+    const fieldChanges = computeFieldDiff(existing, memory)
+    if (fieldChanges.length > 0) {
+      // Get the latest version id (or use memory id as fallback)
+      const versions = cache.getVersions(projectId, args.key)
+      const versionId = versions.length > 0 ? `${memory.id}-v${versions[0].version + 1}` : `${memory.id}-v1`
+      for (const change of fieldChanges) {
+        cache.addFieldChange(
+          versionId,
+          memory.id,
+          projectId,
+          change.field,
+          change.oldValue,
+          change.newValue,
+          change.changeType as 'added' | 'removed' | 'modified',
+        )
+      }
+    }
+  }
+
   cache.upsertMemory(memory, true)
+
+  // T8: Tokenize and index for full-text search
+  const tokens = tokenize(`${memory.key} ${memory.value}`)
+  if (tokens.length > 0) {
+    cache.indexMemoryTokens(memory.id, projectId, tokens)
+  }
 
   // Try remote write immediately; cache is dirty if this fails
   if (sync) {

@@ -1,4 +1,6 @@
 import Database from 'better-sqlite3'
+import { chmodSync, existsSync } from 'fs'
+import { randomUUID as _randomUUID } from 'crypto'
 import type { Memory, MemoryType, MemorySource, MemoryStatus } from '@tages/shared'
 
 const SCHEMA = `
@@ -77,6 +79,8 @@ export class SqliteCache {
 
   constructor(dbPath: string) {
     this.db = new Database(dbPath)
+    // Restrict file permissions — cache contains proprietary codebase data
+    try { chmodSync(dbPath, 0o600) } catch { /* may fail on Windows */ }
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('synchronous = NORMAL')
     this.db.exec(SCHEMA)
@@ -125,10 +129,77 @@ export class SqliteCache {
       'ALTER TABLE memories ADD COLUMN examples TEXT',
       'ALTER TABLE memories ADD COLUMN execution_flow TEXT',
       'ALTER TABLE memories ADD COLUMN verified_at TEXT',
+      // T6: decay tracking
+      'ALTER TABLE memories ADD COLUMN last_accessed_at TEXT',
+      'ALTER TABLE memories ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0',
+      // T3: conflict base value
+      'ALTER TABLE memory_conflicts ADD COLUMN merge_base_value TEXT',
     ]
     for (const sql of upgrades) {
       try { this.db.exec(sql) } catch { /* already exists */ }
     }
+
+    // T5: field_changes table
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS field_changes (
+          id TEXT PRIMARY KEY,
+          version_id TEXT NOT NULL,
+          memory_id TEXT NOT NULL,
+          project_id TEXT NOT NULL,
+          field_name TEXT NOT NULL,
+          old_value TEXT,
+          new_value TEXT,
+          change_type TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS fc_version_id ON field_changes(version_id);
+        CREATE INDEX IF NOT EXISTS fc_memory_id ON field_changes(memory_id);
+      `)
+    } catch { /* already exists */ }
+
+    // T7: session branches
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_branches (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL UNIQUE,
+          project_id TEXT NOT NULL,
+          parent_branch TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS mb_session_id ON memory_branches(session_id);
+
+        CREATE TABLE IF NOT EXISTS branch_memories (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          project_id TEXT NOT NULL,
+          memory_key TEXT NOT NULL,
+          memory_data TEXT NOT NULL,
+          dirty INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE (session_id, memory_key)
+        );
+        CREATE INDEX IF NOT EXISTS bm_session_id ON branch_memories(session_id);
+      `)
+    } catch { /* already exists */ }
+
+    // T8: token index
+    try {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS token_index (
+          id TEXT PRIMARY KEY,
+          memory_id TEXT NOT NULL,
+          project_id TEXT NOT NULL,
+          token TEXT NOT NULL,
+          position INTEGER NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS ti_memory_id ON token_index(memory_id);
+        CREATE INDEX IF NOT EXISTS ti_project_token ON token_index(project_id, token);
+      `)
+    } catch { /* already exists */ }
   }
 
   upsertMemory(memory: Memory, dirty = true): void {
@@ -474,6 +545,279 @@ export class SqliteCache {
       SET resolved = 1, resolution_strategy = ?, merged_value = ?, resolved_by = ?, resolved_at = datetime('now')
       WHERE id = ?
     `).run(strategy, mergedValue || null, resolvedBy || null, conflictId)
+  }
+
+  // --- T2: Scored query for unified search ranking ---
+
+  /**
+   * Query memories returning both semantic and text scores for the ranker.
+   */
+  scoredQuery(
+    projectId: string,
+    query: string,
+    queryEmbedding: number[] | null,
+    type?: MemoryType,
+    limit = 5,
+  ): Array<{ memory: Memory; semanticScore: number; textScore: number }> {
+    const results: Array<{ memory: Memory; semanticScore: number; textScore: number }> = []
+    const seen = new Set<string>()
+
+    // Semantic pass
+    if (queryEmbedding) {
+      let sql = "SELECT * FROM memories WHERE project_id = ? AND status = 'live' AND embedding IS NOT NULL"
+      const params: unknown[] = [projectId]
+      if (type) { sql += ' AND type = ?'; params.push(type) }
+      const rows = this.db.prepare(sql).all(...params) as (SqliteMemoryRow & { embedding: string | null })[]
+      for (const row of rows) {
+        if (!row.embedding) continue
+        const emb = JSON.parse(row.embedding) as number[]
+        const sim = cosineSimilarity(queryEmbedding, emb)
+        if (sim > 0.3) {
+          seen.add(row.id)
+          results.push({ memory: rowToMemory(row), semanticScore: sim, textScore: 0 })
+        }
+      }
+    }
+
+    // Text pass
+    const pattern = `%${query}%`
+    let sql = `SELECT * FROM memories WHERE project_id = ? AND status = 'live' AND (key LIKE ? OR value LIKE ?)`
+    const params: unknown[] = [projectId, pattern, pattern]
+    if (type) { sql += ' AND type = ?'; params.push(type) }
+    sql += ` ORDER BY updated_at DESC LIMIT ?`
+    params.push(limit * 2)
+    const textRows = this.db.prepare(sql).all(...params) as SqliteMemoryRow[]
+    for (const row of textRows) {
+      if (seen.has(row.id)) {
+        // Boost existing semantic result with text score
+        const existing = results.find(r => r.memory.id === row.id)
+        if (existing) existing.textScore = 1.0
+      } else {
+        seen.add(row.id)
+        results.push({ memory: rowToMemory(row), semanticScore: 0, textScore: 1.0 })
+      }
+    }
+
+    return results
+  }
+
+  // --- T3: Conflict with base value ---
+
+  getConflictWithBase(conflictId: string): {
+    id: string
+    projectId: string
+    memoryAKey: string
+    memoryBKey: string
+    reason: string
+    resolved: boolean
+    mergeBaseValue: string | null
+  } | null {
+    const row = this.db.prepare(
+      'SELECT * FROM memory_conflicts WHERE id = ?'
+    ).get(conflictId) as {
+      id: string; project_id: string; memory_a_key: string; memory_b_key: string
+      reason: string; resolved: number; merge_base_value: string | null
+    } | undefined
+    if (!row) return null
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      memoryAKey: row.memory_a_key,
+      memoryBKey: row.memory_b_key,
+      reason: row.reason,
+      resolved: row.resolved === 1,
+      mergeBaseValue: row.merge_base_value || null,
+    }
+  }
+
+  setConflictBaseValue(conflictId: string, baseValue: string): void {
+    this.db.prepare(
+      'UPDATE memory_conflicts SET merge_base_value = ? WHERE id = ?'
+    ).run(baseValue, conflictId)
+  }
+
+  // --- T4: Batch getByKeys for multi-hop recall ---
+
+  getByKeys(projectId: string, keys: string[]): Memory[] {
+    if (keys.length === 0) return []
+    const placeholders = keys.map(() => '?').join(',')
+    const rows = this.db.prepare(
+      `SELECT * FROM memories WHERE project_id = ? AND key IN (${placeholders})`
+    ).all(projectId, ...keys) as SqliteMemoryRow[]
+    return rows.map(rowToMemory)
+  }
+
+  // --- T5: Field-level change tracking ---
+
+  addFieldChange(
+    versionId: string,
+    memoryId: string,
+    projectId: string,
+    fieldName: string,
+    oldValue: unknown,
+    newValue: unknown,
+    changeType: 'added' | 'removed' | 'modified',
+  ): void {
+    this.db.prepare(`
+      INSERT INTO field_changes (id, version_id, memory_id, project_id, field_name, old_value, new_value, change_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      _randomUUID(),
+      versionId,
+      memoryId,
+      projectId,
+      fieldName,
+      oldValue !== undefined && oldValue !== null ? JSON.stringify(oldValue) : null,
+      newValue !== undefined && newValue !== null ? JSON.stringify(newValue) : null,
+      changeType,
+    )
+  }
+
+  getFieldChanges(memoryId: string): Array<{
+    versionId: string
+    fieldName: string
+    oldValue: unknown
+    newValue: unknown
+    changeType: string
+    createdAt: string
+  }> {
+    const rows = this.db.prepare(`
+      SELECT version_id, field_name, old_value, new_value, change_type, created_at
+      FROM field_changes WHERE memory_id = ?
+      ORDER BY created_at DESC
+    `).all(memoryId) as Array<{
+      version_id: string; field_name: string; old_value: string | null
+      new_value: string | null; change_type: string; created_at: string
+    }>
+    return rows.map(r => ({
+      versionId: r.version_id,
+      fieldName: r.field_name,
+      oldValue: r.old_value ? JSON.parse(r.old_value) : null,
+      newValue: r.new_value ? JSON.parse(r.new_value) : null,
+      changeType: r.change_type,
+      createdAt: r.created_at,
+    }))
+  }
+
+  // --- T6: Access time tracking for decay ---
+
+  updateAccessTime(memoryId: string): void {
+    this.db.prepare(`
+      UPDATE memories SET last_accessed_at = datetime('now'), access_count = access_count + 1
+      WHERE id = ?
+    `).run(memoryId)
+  }
+
+  getAccessInfo(memoryId: string): { lastAccessedAt: string | null; accessCount: number } | null {
+    const row = this.db.prepare(
+      'SELECT last_accessed_at, access_count FROM memories WHERE id = ?'
+    ).get(memoryId) as { last_accessed_at: string | null; access_count: number } | undefined
+    if (!row) return null
+    return { lastAccessedAt: row.last_accessed_at, accessCount: row.access_count }
+  }
+
+  getStaleMemories(projectId: string, olderThanDays: number, maxAccessCount = 2): Memory[] {
+    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString()
+    const rows = this.db.prepare(`
+      SELECT * FROM memories
+      WHERE project_id = ? AND status = 'live'
+        AND updated_at < ?
+        AND (last_accessed_at IS NULL OR last_accessed_at < ?)
+        AND access_count <= ?
+    `).all(projectId, cutoff, cutoff, maxAccessCount) as SqliteMemoryRow[]
+    return rows.map(rowToMemory)
+  }
+
+  archiveMemory(memoryId: string): void {
+    this.db.prepare(
+      `UPDATE memories SET status = 'archived', dirty = 1, updated_at = datetime('now') WHERE id = ?`
+    ).run(memoryId)
+  }
+
+  // --- T7: Session branch operations ---
+
+  createBranch(branch: { id: string; sessionId: string; projectId: string; parentBranch: string | null; createdAt: string }): void {
+    this.db.prepare(`
+      INSERT OR REPLACE INTO memory_branches (id, session_id, project_id, parent_branch, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(branch.id, branch.sessionId, branch.projectId, branch.parentBranch || null, branch.createdAt)
+  }
+
+  upsertMemoryInBranch(sessionId: string, memory: Memory, dirty = true): void {
+    this.db.prepare(`
+      INSERT INTO branch_memories (id, session_id, project_id, memory_key, memory_data, dirty, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(session_id, memory_key) DO UPDATE SET
+        memory_data = excluded.memory_data,
+        dirty = excluded.dirty,
+        updated_at = datetime('now')
+    `).run(
+      _randomUUID(),
+      sessionId,
+      memory.projectId,
+      memory.key,
+      JSON.stringify(memory),
+      dirty ? 1 : 0,
+    )
+  }
+
+  getBranchMemories(sessionId: string): Memory[] {
+    const rows = this.db.prepare(
+      `SELECT memory_data FROM branch_memories WHERE session_id = ?`
+    ).all(sessionId) as Array<{ memory_data: string }>
+    return rows.map(r => JSON.parse(r.memory_data) as Memory)
+  }
+
+  deleteBranch(sessionId: string): void {
+    this.db.prepare('DELETE FROM branch_memories WHERE session_id = ?').run(sessionId)
+    this.db.prepare('DELETE FROM memory_branches WHERE session_id = ?').run(sessionId)
+  }
+
+  queryMemoriesInBranch(sessionId: string, query: string, type?: MemoryType, limit = 5): Memory[] {
+    const pattern = `%${query}%`
+    const rows = this.db.prepare(`
+      SELECT memory_data FROM branch_memories
+      WHERE session_id = ? AND (memory_key LIKE ? OR memory_data LIKE ?)
+      LIMIT ?
+    `).all(sessionId, pattern, pattern, limit) as Array<{ memory_data: string }>
+    let mems = rows.map(r => JSON.parse(r.memory_data) as Memory)
+    if (type) mems = mems.filter(m => m.type === type)
+    return mems.slice(0, limit)
+  }
+
+  // --- T8: Token index for full-text search ---
+
+  indexMemoryTokens(memoryId: string, projectId: string, tokens: string[]): void {
+    // Remove old token entries for this memory
+    this.db.prepare('DELETE FROM token_index WHERE memory_id = ?').run(memoryId)
+    const insert = this.db.prepare(`
+      INSERT INTO token_index (id, memory_id, project_id, token, position)
+      VALUES (?, ?, ?, ?, ?)
+    `)
+    const insertMany = this.db.transaction((tkns: string[]) => {
+      for (let i = 0; i < tkns.length; i++) {
+        insert.run(_randomUUID(), memoryId, projectId, tkns[i], i)
+      }
+    })
+    insertMany(tokens)
+  }
+
+  searchTokenIndex(projectId: string, tokens: string[], limit = 5): Array<{ memoryId: string; score: number }> {
+    if (tokens.length === 0) return []
+    const placeholders = tokens.map(() => '?').join(',')
+    const rows = this.db.prepare(`
+      SELECT memory_id, COUNT(*) as hit_count
+      FROM token_index
+      WHERE project_id = ? AND token IN (${placeholders})
+      GROUP BY memory_id
+      ORDER BY hit_count DESC
+      LIMIT ?
+    `).all(projectId, ...tokens, limit) as Array<{ memory_id: string; hit_count: number }>
+
+    return rows.map(r => ({
+      memoryId: r.memory_id,
+      score: r.hit_count / tokens.length,
+    }))
   }
 
   close(): void {
