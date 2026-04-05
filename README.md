@@ -146,6 +146,7 @@ pnpm test         # 58 vitest tests
 - **16 new test suites** (362 total tests passing)
 - **13 new Supabase migrations** (0018–0030)
 - **Bug fixes**: archive SQLite schema, enforcement overlap threshold, CLI type safety, dashboard CommandPalette props
+- **Auth audit log**: tracks login successes, failures, and token validation events with RLS
 
 ### 2026-04-05
 - **7 new MCP tools**: stats-detail, memory-history, contextual-recall, resolve-conflict/list-conflicts, suggestion-engine, import, memory-graph
