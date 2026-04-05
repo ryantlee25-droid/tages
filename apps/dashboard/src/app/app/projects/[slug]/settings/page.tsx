@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { isValidSlug } from '@/lib/validate-slug'
 import { notFound } from 'next/navigation'
 import { ProjectNav } from '@/components/project-nav'
 import { TeamMembers } from '@/components/team-members'
@@ -9,6 +10,9 @@ export default async function SettingsPage({
   params: Promise<{ slug: string }>
 }) {
   const { slug } = await params
+
+  if (!isValidSlug(slug)) notFound()
+
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 

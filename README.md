@@ -105,6 +105,20 @@ supabase/
   migrations/ 12 migrations (tables, RLS, pgvector, tracking)
 ```
 
+## Security Model
+
+Tages stores codebase knowledge (architecture, conventions, decisions) that may be proprietary. The security model is designed accordingly:
+
+- **Database**: Supabase with Row Level Security (RLS) — all tables enforce project membership checks
+- **Authentication**: Supabase Auth with GitHub OAuth; API tokens are SHA256-hashed before storage
+- **Secret detection**: Memories are scanned for API keys, credentials, and PII before storage. High-severity secrets (AWS keys, private keys, connection strings) are **blocked by default** — use `--force` to override
+- **Local cache**: SQLite files are restricted to owner-only permissions (`0600`)
+- **Dashboard**: CSP headers, rate limiting on auth/API endpoints, `X-Frame-Options: DENY`
+- **MCP transport**: Stdio — inherently trusted by the parent process (Claude Code, Cursor, etc). No network exposure. The trust boundary is the IDE process that spawns the server
+- **Multi-tenancy**: All queries filter by `project_id`; RLS enforces ownership at the database layer
+
+For SaaS deployments, review `supabase/migrations/0002_rls_policies.sql` and ensure your Supabase instance has RLS enabled on all tables.
+
 ## Setup Guides
 
 - [Quickstart](docs/quickstart.md)
@@ -126,10 +140,27 @@ pnpm test         # 58 vitest tests
 
 ## Release Notes
 
+### 2026-04-05 (v2)
+- **Advanced features**: analytics, archiving, branching, decay tracking, dedup, enforcement, federation, impact analysis, quality scoring, templates, multi-hop recall, three-way merge
+- **8 new CLI commands**: dedup, impact, risk, enforce, quality, templates, archive, federation
+- **16 new test suites** (362 total tests passing)
+- **13 new Supabase migrations** (0018–0030)
+- **Bug fixes**: archive SQLite schema, enforcement overlap threshold, CLI type safety, dashboard CommandPalette props
+- **Auth audit log**: tracks login successes, failures, and token validation events with RLS
+
 ### 2026-04-05
 - **7 new MCP tools**: stats-detail, memory-history, contextual-recall, resolve-conflict/list-conflicts, suggestion-engine, import, memory-graph
 - **Dashboard pages**: Execution viewer, pending queue, stats dashboard, conflict resolver, memory graph
 - **CLI commands**: pending, verify, import-memories, recall-context, suggest
+- **Security hardening**: 10 fixes across auth, data protection, and transport
+  - Open redirect fix in CLI auth route (localhost validation)
+  - Stripe API: customer_id lookup instead of email; demo mode requires explicit env flag
+  - CSP headers and rate limiting on auth/API endpoints
+  - Cache files restricted to owner-only permissions (0600)
+  - Config files restricted to owner-only permissions (0600)
+  - High-severity secrets now block storage by default (with `--force` override)
+  - Database: added stripe_customer_id column for safer payment lookups
+  - Security model documented in README
 - **Security fixes**: Cross-project conflict resolution auth, unbounded JSON.parse on import, missing project_id filter on pending queue verify/reject
 - **Test coverage**: 67 new vitest tests across 7 test suites
 - **Database**: 3 new migrations (memory versioning RPC, contextual recall table, conflict resolution table)

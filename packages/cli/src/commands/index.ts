@@ -89,6 +89,7 @@ export async function indexCommand(options: IndexOptions) {
         value: mem.value,
         type: mem.type as MemoryType,
         source: 'auto_index',
+        status: 'live',
         filePaths: mem.files_affected || [],
         tags: [],
         confidence: 0.7,

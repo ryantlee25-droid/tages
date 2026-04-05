@@ -45,6 +45,7 @@ export async function POST(request: Request) {
           user_id: userId,
           is_pro: true,
           pro_since: new Date().toISOString(),
+          stripe_customer_id: session.customer as string,
         })
       }
       break
@@ -52,23 +53,20 @@ export async function POST(request: Request) {
 
     case 'customer.subscription.deleted': {
       const subscription = event.data.object
-      // Find user by Stripe customer ID
       const customerId = subscription.customer as string
-      const customer = await stripe.customers.retrieve(customerId)
-      if (!customer.deleted && customer.email) {
-        // Look up user by email
-        const { data } = await supabase
-          .from('user_profiles')
-          .select('user_id')
-          .limit(1)
 
-        // In production, store stripe_customer_id in user_profiles for direct lookup
-        if (data?.[0]) {
-          await supabase
-            .from('user_profiles')
-            .update({ is_pro: false })
-            .eq('user_id', data[0].user_id)
-        }
+      // Look up user by stripe_customer_id (set during checkout)
+      const { data } = await supabase
+        .from('user_profiles')
+        .select('user_id')
+        .eq('stripe_customer_id', customerId)
+        .limit(1)
+
+      if (data?.[0]) {
+        await supabase
+          .from('user_profiles')
+          .update({ is_pro: false })
+          .eq('user_id', data[0].user_id)
       }
       break
     }

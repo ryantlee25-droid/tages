@@ -37,7 +37,7 @@ export async function initCommand(options: InitOptions) {
     }
 
     const projectPath = path.join(getProjectsDir(), `${slug}.json`)
-    fs.writeFileSync(projectPath, JSON.stringify(projectConfig, null, 2) + '\n')
+    fs.writeFileSync(projectPath, JSON.stringify(projectConfig, null, 2) + '\n', { mode: 0o600 })
 
     // Inject MCP config
     const { path: mcpPath, created } = injectMcpConfig({
@@ -76,7 +76,7 @@ export async function initCommand(options: InitOptions) {
     }
 
     const projectPath = path.join(getProjectsDir(), `${slug}.json`)
-    fs.writeFileSync(projectPath, JSON.stringify(projectConfig, null, 2) + '\n')
+    fs.writeFileSync(projectPath, JSON.stringify(projectConfig, null, 2) + '\n', { mode: 0o600 })
 
     // Inject MCP config
     const { path: mcpPath, created } = injectMcpConfig({

@@ -7,12 +7,24 @@ export class SessionTracker {
   private memoriesRecalled = 0
   private memoriesStored = 0
   private memoriesDeleted = 0
+  private activeBranchId: string | null = null
 
   constructor(
     private supabase: SupabaseClient | null,
     private projectId: string,
     private agentName: string = 'mcp-server',
   ) {}
+
+  /**
+   * Track the current branch context for this session (T7).
+   */
+  setBranchContext(branchId: string | null): void {
+    this.activeBranchId = branchId
+  }
+
+  getBranchContext(): string | null {
+    return this.activeBranchId
+  }
 
   async startSession(): Promise<void> {
     if (!this.supabase) return

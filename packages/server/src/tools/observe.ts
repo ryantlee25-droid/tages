@@ -3,6 +3,7 @@ import type { Memory, MemoryType } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
 import { scanForSensitiveData } from './safety'
+import { tokenize } from '../search/tokenizer'
 
 /**
  * Passive observation tool. Agents call this during work to report
@@ -93,6 +94,12 @@ export async function handleObserve(
   }
 
   cache.upsertMemory(memory, true)
+
+  // T8: Tokenize and index for full-text search
+  const tokens = tokenize(`${key} ${text}`)
+  if (tokens.length > 0) {
+    cache.indexMemoryTokens(memory.id, projectId, tokens)
+  }
 
   if (sync) {
     const ok = await sync.remoteInsert(memory)

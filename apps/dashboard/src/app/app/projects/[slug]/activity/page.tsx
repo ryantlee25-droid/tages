@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { isValidSlug } from '@/lib/validate-slug'
 import { notFound } from 'next/navigation'
 import { ActivityFeed } from '@/components/activity-feed'
 import { ProjectNav } from '@/components/project-nav'
@@ -9,6 +10,9 @@ export default async function ActivityPage({
   params: Promise<{ slug: string }>
 }) {
   const { slug } = await params
+
+  if (!isValidSlug(slug)) notFound()
+
   const supabase = await createClient()
 
   const { data: project } = await supabase

@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { isValidSlug } from '@/lib/validate-slug'
 import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(
@@ -6,6 +7,11 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> },
 ) {
   const { slug } = await params
+
+  if (!isValidSlug(slug)) {
+    return NextResponse.json({ error: 'Invalid slug format' }, { status: 400 })
+  }
+
   const supabase = await createClient()
 
   // Auth check
@@ -41,6 +47,18 @@ export async function GET(
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
+
+  // Fire-and-forget audit log — uses auth_audit_log (session-level event, not per-memory)
+  const rowCount = memories?.length ?? 0
+  void Promise.resolve(
+    supabase
+      .from('auth_audit_log')
+      .insert({
+        user_id: user.id,
+        event_type: 'login_success',
+        metadata: { action: 'export', project_id: project.id, row_count: rowCount, format: request.nextUrl.searchParams.get('format') || 'json' },
+      })
+  ).catch(() => {/* audit failure must not affect export */})
 
   const format = request.nextUrl.searchParams.get('format') || 'json'
 

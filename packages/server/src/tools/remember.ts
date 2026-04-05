@@ -2,7 +2,10 @@ import { randomUUID } from 'crypto'
 import type { Memory, MemoryExample, ExecutionFlow } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
-import { scanForSensitiveData, formatSafetyWarnings } from './safety'
+import { scanForSensitiveData, formatSafetyWarnings, hasHighSeverity } from './safety'
+import { getEncryptionKey, encryptValue } from '../crypto/encryption'
+import { computeFieldDiff } from '../diff/field-diff'
+import { tokenize } from '../search/tokenizer'
 
 export async function handleRemember(
   args: {
@@ -16,13 +19,22 @@ export async function handleRemember(
     crossSystemRefs?: string[]
     examples?: MemoryExample[]
     executionFlow?: ExecutionFlow
+    force?: boolean
   },
   projectId: string,
   cache: SqliteCache,
   sync: SupabaseSync | null,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
-  // Scan for secrets/PII
+  // Scan for secrets/PII — block high-severity unless force override
   const warnings = scanForSensitiveData(`${args.key} ${args.value}`)
+  if (hasHighSeverity(warnings) && !args.force) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Blocked: memory "${args.key}" contains detected secrets.${formatSafetyWarnings(warnings)}`,
+      }],
+    }
+  }
 
   const now = new Date().toISOString()
   const existing = cache.getByKey(projectId, args.key)
@@ -47,7 +59,44 @@ export async function handleRemember(
     updatedAt: now,
   }
 
+  // T5: Compute and store field-level diff before upsert
+  if (existing) {
+    const fieldChanges = computeFieldDiff(existing, memory)
+    if (fieldChanges.length > 0) {
+      // Get the latest version id (or use memory id as fallback)
+      const versions = cache.getVersions(projectId, args.key)
+      const versionId = versions.length > 0 ? `${memory.id}-v${versions[0].version + 1}` : `${memory.id}-v1`
+      for (const change of fieldChanges) {
+        cache.addFieldChange(
+          versionId,
+          memory.id,
+          projectId,
+          change.field,
+          change.oldValue,
+          change.newValue,
+          change.changeType as 'added' | 'removed' | 'modified',
+        )
+      }
+    }
+  }
+
+  // Capture plaintext for indexing before potential encryption
+  const plaintextForIndex = memory.value
+
+  // Encrypt value at rest if encryption key is configured
+  const encKey = getEncryptionKey()
+  if (encKey) {
+    memory.value = encryptValue(memory.value, encKey)
+    memory.encrypted = true
+  }
+
   cache.upsertMemory(memory, true)
+
+  // T8: Tokenize and index for full-text search (use plaintext, not ciphertext)
+  const tokens = tokenize(`${memory.key} ${plaintextForIndex}`)
+  if (tokens.length > 0) {
+    cache.indexMemoryTokens(memory.id, projectId, tokens)
+  }
 
   // Try remote write immediately; cache is dirty if this fails
   if (sync) {

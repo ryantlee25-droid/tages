@@ -9,10 +9,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Stripe is not configured yet — stub for demo
+  // Stripe not configured — reject unless TAGES_DEMO_MODE is explicitly enabled
   if (!process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_PRO_PRICE_ID) {
+    if (process.env.TAGES_DEMO_MODE !== 'true') {
+      return NextResponse.json(
+        { error: 'Billing is not configured. Set TAGES_DEMO_MODE=true to enable demo upgrades.' },
+        { status: 503 },
+      )
+    }
     const origin = new URL(request.url).origin
-    // For demo: auto-upgrade to Pro
     const adminClient = (await import('@supabase/supabase-js')).createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,

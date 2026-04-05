@@ -54,6 +54,7 @@ export interface Memory {
   verifiedAt?: string
   createdAt: string
   updatedAt: string
+  encrypted?: boolean
 }
 
 export interface Project {

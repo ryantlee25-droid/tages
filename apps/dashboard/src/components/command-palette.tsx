@@ -16,9 +16,9 @@ export function CommandPalette({
   projectId,
   onSelect,
 }: {
-  projectId: string
-  onSelect: (memory: Memory) => void
-}) {
+  projectId?: string
+  onSelect?: (memory: Memory) => void
+} = {}) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Memory[]>([])
@@ -41,7 +41,7 @@ export function CommandPalette({
 
   // Debounced search
   const search = useCallback(async (q: string) => {
-    if (!q.trim()) {
+    if (!q.trim() || !projectId) {
       setResults([])
       return
     }
@@ -92,7 +92,7 @@ export function CommandPalette({
           {results.map((mem) => (
             <button
               key={mem.id}
-              onClick={() => { onSelect(mem); setOpen(false) }}
+              onClick={() => { onSelect?.(mem); setOpen(false) }}
               className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-zinc-800"
             >
               <TypeBadge type={mem.type} />

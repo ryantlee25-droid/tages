@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { isValidSlug } from '@/lib/validate-slug'
 import { notFound } from 'next/navigation'
 import { StatsDashboard } from '@/components/stats-dashboard'
 import { ProjectNav } from '@/components/project-nav'
@@ -9,6 +10,9 @@ export default async function StatsPage({
   params: Promise<{ slug: string }>
 }) {
   const { slug } = await params
+
+  if (!isValidSlug(slug)) notFound()
+
   const supabase = await createClient()
 
   const { data: project } = await supabase

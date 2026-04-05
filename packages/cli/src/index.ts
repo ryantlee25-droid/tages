@@ -9,7 +9,7 @@ import { dashboardCommand } from './commands/dashboard.js'
 import { indexCommand } from './commands/index.js'
 import { importCommand } from './commands/import.js'
 import { queryCommand } from './commands/query.js'
-import { tokenGenerateCommand, tokenListCommand } from './commands/token.js'
+import { tokenGenerateCommand, tokenListCommand, tokenRotateCommand } from './commands/token.js'
 import { snapshotCommand } from './commands/snapshot.js'
 import { checkCommand } from './commands/check.js'
 import { patternsDetectCommand, patternsPromoteCommand, patternsListCommand } from './commands/patterns.js'
@@ -20,6 +20,14 @@ import { verifyCommand } from './commands/verify.js'
 import { recallContextCommand } from './commands/recall-context.js'
 import { suggestCommand } from './commands/suggest.js'
 import { importMemoriesCommand } from './commands/import-memories.js'
+import { dedupCommand } from './commands/dedup.js'
+import { impactCommand, riskCommand } from './commands/impact.js'
+import { enforceCommand, enforceCheckCommand } from './commands/enforce.js'
+import { qualityCommand } from './commands/quality.js'
+import { templatesListCommand, templatesMatchCommand, templatesApplyCommand } from './commands/templates-cmd.js'
+import { archiveListCommand, archiveStatsCommand } from './commands/archive.js'
+import { federateCommand, federationListCommand, federationImportCommand, federationOverridesCommand } from './commands/federation-cmd.js'
+import { analyticsSummaryCommand, analyticsSessionCommand, analyticsTrendsCommand } from './commands/analytics.js'
 
 const program = new Command()
 
@@ -116,6 +124,14 @@ tokenCmd
   .option('-p, --project <slug>', 'Project slug')
   .action(tokenListCommand)
 
+tokenCmd
+  .command('rotate')
+  .description('Rotate an API token (generates a new token, invalidates the old one)')
+  .option('-n, --name <name>', 'Token name to rotate', 'default')
+  .option('--expires-in <days>', 'Set expiry in days from now (omit for non-expiring)')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(tokenRotateCommand)
+
 program
   .command('snapshot')
   .description('Generate an architecture snapshot from the codebase')
@@ -197,5 +213,143 @@ patternsCmd
   .description('List your pattern library')
   .option('-p, --project <slug>', 'Project slug')
   .action(patternsListCommand)
+
+// XL1 — Deduplication
+program
+  .command('dedup')
+  .description('Detect near-duplicate memories and suggest merges')
+  .option('-t, --threshold <n>', 'Similarity threshold 0-1 (default 0.7)', '0.7')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(dedupCommand)
+
+// XL2 — Impact analysis
+program
+  .command('impact')
+  .description('Show the downstream impact of a memory')
+  .argument('<key>', 'Memory key to analyze')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(impactCommand)
+
+program
+  .command('risk')
+  .description('Show top 10 riskiest memories to change')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(riskCommand)
+
+// XL3 — Convention enforcement
+const enforceCmd = program
+  .command('enforce')
+  .description('Convention enforcement')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(enforceCommand)
+
+enforceCmd
+  .command('check')
+  .description('Check a memory against all conventions')
+  .argument('<key>', 'Memory key to check')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(enforceCheckCommand)
+
+// XL4 — Quality scoring
+program
+  .command('quality')
+  .description('Show memory quality score or project health')
+  .argument('[key]', 'Memory key (omit for project health)')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(qualityCommand)
+
+// XL5 — Templates
+const templatesCmd = program
+  .command('templates')
+  .description('Memory templates')
+
+templatesCmd
+  .command('list')
+  .description('List available memory templates')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(templatesListCommand)
+
+templatesCmd
+  .command('match')
+  .description('Find templates matching a file path')
+  .argument('<file>', 'File path to match')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(templatesMatchCommand)
+
+templatesCmd
+  .command('apply')
+  .description('Show how to apply a template')
+  .argument('<name>', 'Template ID')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(templatesApplyCommand)
+
+// XL6 — Archive
+const archiveCmd = program
+  .command('archive')
+  .description('Memory archival operations')
+
+archiveCmd
+  .command('list')
+  .description('List archived memories')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(archiveListCommand)
+
+archiveCmd
+  .command('stats')
+  .description('Archive statistics')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(archiveStatsCommand)
+
+// XL7 — Federation
+program
+  .command('federate')
+  .description('Promote a memory to the shared federated library')
+  .argument('<key>', 'Memory key to federate')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(federateCommand)
+
+const federationCmd = program
+  .command('federation')
+  .description('Federated memory library')
+
+federationCmd
+  .command('list')
+  .description('List federated memories')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(federationListCommand)
+
+federationCmd
+  .command('import')
+  .description('Import a federated memory')
+  .argument('<key>', 'Federated memory key')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(federationImportCommand)
+
+federationCmd
+  .command('overrides')
+  .description('Show local overrides of federated memories')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(federationOverridesCommand)
+
+// XL8 — Analytics
+const analyticsCmd = program
+  .command('analytics')
+  .description('Agent behavior analytics')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(analyticsSummaryCommand)
+
+analyticsCmd
+  .command('session')
+  .description('Replay a session timeline')
+  .argument('<id>', 'Session ID')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(analyticsSessionCommand)
+
+analyticsCmd
+  .command('trends')
+  .description('Show performance trends')
+  .option('--agent <name>', 'Filter by agent name')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(analyticsTrendsCommand)
 
 program.parse()

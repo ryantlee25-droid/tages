@@ -1,7 +1,8 @@
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
+import { threeWayMerge } from '../merge/three-way'
 
-type ResolutionStrategy = 'keep_newer' | 'keep_older' | 'merge'
+type ResolutionStrategy = 'keep_newer' | 'keep_older' | 'merge' | 'auto_merge'
 
 interface ConflictRecord {
   id: string
@@ -75,6 +76,40 @@ export async function handleResolveConflict(
     resolvedValue = olderMem.value
     keptKey = olderMem.key
     cache.deleteByKey(projectId, newerMem.key)
+  } else if (args.strategy === 'auto_merge') {
+    // 3-way merge: use stored base value if available, otherwise use older as base
+    const conflictWithBase = cache.getConflictWithBase(args.conflictId)
+    const baseValue = conflictWithBase?.mergeBaseValue
+    const base = baseValue ? { value: baseValue } : olderMem
+    const mergeResult = threeWayMerge(base, memA, memB)
+    resolvedValue = mergeResult.merged.value || newerMem.value
+    keptKey = newerMem.key
+
+    const mergedMemory = {
+      ...newerMem,
+      ...mergeResult.merged,
+      value: resolvedValue,
+      updatedAt: new Date().toISOString(),
+    }
+    cache.upsertMemory(mergedMemory)
+    cache.deleteByKey(projectId, olderMem.key)
+
+    const conflictNote = mergeResult.conflicts.length > 0
+      ? ` (${mergeResult.conflicts.length} field conflict(s): ${mergeResult.conflicts.join(', ')} — left side kept)`
+      : ' (clean merge)'
+
+    cache.resolveConflict(args.conflictId, 'auto_merge', resolvedValue, args.resolvedBy)
+    return {
+      content: [{
+        type: 'text',
+        text: [
+          `## Conflict Auto-Merged`,
+          `Strategy: auto_merge${conflictNote}`,
+          `Kept: ${keptKey}`,
+          `Value: ${resolvedValue.slice(0, 120)}${resolvedValue.length > 120 ? '...' : ''}`,
+        ].join('\n'),
+      }],
+    }
   } else {
     // merge
     if (!args.mergedValue) {

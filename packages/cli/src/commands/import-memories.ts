@@ -2,7 +2,9 @@ import * as fs from 'fs'
 import chalk from 'chalk'
 import ora from 'ora'
 import { getProjectsDir } from '../config/paths.js'
+// @ts-ignore — cross-package import; server must be built first
 import { SqliteCache } from '../../../server/src/cache/sqlite.js'
+// @ts-ignore — cross-package import; server must be built first
 import { handleImport } from '../../../server/src/tools/import.js'
 
 interface ImportMemoriesOptions {

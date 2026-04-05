@@ -1,17 +1,68 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Memory } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
+import { SyncWAL } from '../cache/sync-wal'
 
 const SYNC_INTERVAL_MS = 60_000
 
 export class SupabaseSync {
   private timer: ReturnType<typeof setInterval> | null = null
+  private wal: SyncWAL | null = null
 
   constructor(
     private supabase: SupabaseClient,
     private cache: SqliteCache,
     private projectId: string,
-  ) {}
+    walPath?: string,
+  ) {
+    if (walPath) {
+      this.wal = new SyncWAL(walPath)
+    }
+  }
+
+  /**
+   * Recover any incomplete WAL operations from a previous crash.
+   * Should be called on startup before hydration.
+   */
+  async recoverWAL(): Promise<number> {
+    if (!this.wal) return 0
+    const incomplete = this.wal.getIncomplete()
+    if (incomplete.length === 0) return 0
+
+    console.error(`[tages] WAL recovery: replaying ${incomplete.length} incomplete operations`)
+    let recovered = 0
+
+    for (const op of incomplete) {
+      try {
+        if (op.operation === 'upsert') {
+          const memory = JSON.parse(op.payload) as Memory
+          const { error } = await this.supabase
+            .from('memories')
+            .upsert(memoryToDbRow(memory), { onConflict: 'project_id,key' })
+          if (!error) {
+            this.wal.markComplete(op.id)
+            recovered++
+          }
+        } else if (op.operation === 'delete') {
+          const key = JSON.parse(op.payload) as string
+          const { error } = await this.supabase
+            .from('memories')
+            .delete()
+            .eq('project_id', op.projectId)
+            .eq('key', key)
+          if (!error) {
+            this.wal.markComplete(op.id)
+            recovered++
+          }
+        }
+      } catch (err) {
+        console.error(`[tages] WAL recovery failed for op ${op.id}:`, (err as Error).message)
+      }
+    }
+
+    console.error(`[tages] WAL recovery complete: ${recovered}/${incomplete.length} recovered`)
+    return recovered
+  }
 
   /**
    * Smart hydration: checks if anything changed since last sync.
@@ -102,6 +153,15 @@ export class SupabaseSync {
     const dirty = this.cache.getDirty()
     if (dirty.length === 0) return
 
+    // Log to WAL before remote call for crash safety
+    const walIds: string[] = []
+    if (this.wal) {
+      for (const mem of dirty) {
+        const walId = this.wal.logPending(mem.id, mem.projectId, 'upsert', memoryToDbRow(mem))
+        walIds.push(walId)
+      }
+    }
+
     try {
       const rows = dirty.map(memoryToDbRow)
       const { error } = await this.supabase
@@ -114,12 +174,20 @@ export class SupabaseSync {
       }
 
       this.cache.markSynced(dirty.map(m => m.id))
+
+      // Mark WAL entries complete after successful sync
+      if (this.wal) {
+        this.wal.markCompleteByMemoryIds(dirty.map(m => m.id))
+      }
     } catch (err) {
       console.error('[tages] Sync error:', (err as Error).message)
     }
   }
 
   async remoteInsert(memory: Memory): Promise<boolean> {
+    // Log to WAL before the remote call
+    const walId = this.wal?.logPending(memory.id, memory.projectId, 'upsert', memoryToDbRow(memory))
+
     try {
       const { error } = await this.supabase
         .from('memories')
@@ -129,6 +197,8 @@ export class SupabaseSync {
         console.error('[tages] Remote insert failed:', error.message)
         return false
       }
+
+      if (walId && this.wal) this.wal.markComplete(walId)
       return true
     } catch {
       return false

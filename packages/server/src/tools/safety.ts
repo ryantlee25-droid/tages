@@ -52,13 +52,21 @@ export function scanForSensitiveData(text: string): SafetyWarning[] {
   return warnings
 }
 
+export function hasHighSeverity(warnings: SafetyWarning[]): boolean {
+  return warnings.some(w => w.severity === 'high')
+}
+
 export function formatSafetyWarnings(warnings: SafetyWarning[]): string {
   if (warnings.length === 0) return ''
 
   const lines = warnings.map(w => {
-    const icon = w.severity === 'high' ? '⚠️' : '⚡'
+    const icon = w.severity === 'high' ? '🚫' : '⚡'
     return `${icon} Detected ${w.type}: ${w.name}`
   })
+
+  if (hasHighSeverity(warnings)) {
+    return `\n\nBlocked — secrets detected:\n${lines.join('\n')}\nRemove secrets from the value before storing. Use --force to override.`
+  }
 
   return `\n\nSafety warnings:\n${lines.join('\n')}\nThe memory was stored, but consider removing sensitive data.`
 }
