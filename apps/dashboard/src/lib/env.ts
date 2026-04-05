@@ -18,6 +18,9 @@ const OPTIONAL_VARS: Array<{ name: string; hint: string }> = [
 ]
 
 export function validateEnv(): void {
+  // Skip during build — env vars may not be available until runtime
+  if (process.env.NEXT_PHASE === 'phase-production-build') return
+
   for (const name of REQUIRED_VARS) {
     const value = process.env[name]
     if (!value || value.trim() === '') {

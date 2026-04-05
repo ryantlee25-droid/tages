@@ -50,17 +50,17 @@ export async function GET(
 
   // Fire-and-forget audit log — does not block or degrade the export response
   const rowCount = memories?.length ?? 0
-  void supabase
-    .from('memory_access_log')
-    .insert({
-      project_id: project.id,
-      agent_name: 'dashboard',
-      access_type: 'export',
-      query: `export:${rowCount}_rows:user:${user.id}`,
-      similarity: null,
-    })
-    .then(() => {/* intentionally ignored */})
-    .catch(() => {/* audit failure must not affect export */})
+  void Promise.resolve(
+    supabase
+      .from('memory_access_log')
+      .insert({
+        project_id: project.id,
+        agent_name: 'dashboard',
+        access_type: 'export',
+        query: `export:${rowCount}_rows:user:${user.id}`,
+        similarity: null,
+      })
+  ).catch(() => {/* audit failure must not affect export */})
 
   const format = request.nextUrl.searchParams.get('format') || 'json'
 
