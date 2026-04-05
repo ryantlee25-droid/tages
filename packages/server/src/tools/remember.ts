@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 import type { Memory } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
+import { scanForSensitiveData, formatSafetyWarnings } from './safety'
 
 export async function handleRemember(
   args: { key: string; value: string; type: string; filePaths?: string[]; tags?: string[] },
@@ -9,6 +10,9 @@ export async function handleRemember(
   cache: SqliteCache,
   sync: SupabaseSync | null,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  // Scan for secrets/PII
+  const warnings = scanForSensitiveData(`${args.key} ${args.value}`)
+
   const now = new Date().toISOString()
   const existing = cache.getByKey(projectId, args.key)
 
@@ -35,10 +39,12 @@ export async function handleRemember(
   }
 
   const action = existing ? 'Updated' : 'Stored'
+  const safetyNote = formatSafetyWarnings(warnings)
+
   return {
     content: [{
       type: 'text',
-      text: `${action} memory: "${args.key}" (${args.type})`,
+      text: `${action} memory: "${args.key}" (${args.type})${safetyNote}`,
     }],
   }
 }
