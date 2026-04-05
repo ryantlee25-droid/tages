@@ -9,6 +9,7 @@ import { dashboardCommand } from './commands/dashboard.js'
 import { indexCommand } from './commands/index.js'
 import { importCommand } from './commands/import.js'
 import { queryCommand } from './commands/query.js'
+import { tokenGenerateCommand, tokenListCommand } from './commands/token.js'
 
 const program = new Command()
 
@@ -86,5 +87,22 @@ program
   .argument('<path>', 'Path to the file')
   .option('-p, --project <slug>', 'Project slug')
   .action(importCommand)
+
+const tokenCmd = program
+  .command('token')
+  .description('Manage API tokens for CI/CD')
+
+tokenCmd
+  .command('generate')
+  .description('Generate a new API token')
+  .option('-n, --name <name>', 'Token name', 'default')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(tokenGenerateCommand)
+
+tokenCmd
+  .command('list')
+  .description('List API tokens')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(tokenListCommand)
 
 program.parse()

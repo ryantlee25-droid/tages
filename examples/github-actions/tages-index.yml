@@ -1,0 +1,27 @@
+name: Tages Auto-Index
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2  # Need HEAD~1 for diff
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Tages CLI
+        run: npm install -g tages
+
+      - name: Index latest commit
+        run: tages index --last-commit --token ${{ secrets.TAGES_API_TOKEN }}
+        env:
+          TAGES_SUPABASE_URL: ${{ secrets.TAGES_SUPABASE_URL }}
+          TAGES_SUPABASE_ANON_KEY: ${{ secrets.TAGES_SUPABASE_ANON_KEY }}
+          TAGES_PROJECT_ID: ${{ secrets.TAGES_PROJECT_ID }}

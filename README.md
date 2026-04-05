@@ -64,8 +64,13 @@ Plus 4 resources: `memory://project/{id}/conventions`, `architecture`, `decision
 
 ## Setup Guides
 
-- [Claude Code](docs/claude-code-setup.md)
 - [Quickstart](docs/quickstart.md)
+- [Claude Code](docs/claude-code-setup.md)
+- [Cursor](docs/cursor-setup.md)
+- [Codex](docs/codex-setup.md)
+- [Gemini](docs/gemini-setup.md)
+- [GitHub Actions](docs/github-actions.md)
+- [Self-Hosting](docs/self-hosting.md)
 
 ## Features
 
@@ -119,7 +124,44 @@ TAGES_SUPABASE_ANON_KEY=your-supabase-anon-key
 TAGES_PROJECT_ID=your-project-id
 ```
 
+For Stripe (dashboard only):
+```
+STRIPE_SECRET_KEY=sk_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_PRO_PRICE_ID=price_...
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+```
+
+## Contributing
+
+PRs welcome! See [PUBLISHING.md](PUBLISHING.md) for release process.
+
+```bash
+git clone https://github.com/ryantlee25-droid/tages.git
+cd tages
+pnpm install
+pnpm build
+pnpm dev
+```
+
 ## Release Notes
+
+### 2026-04-04 — Week 3: Launch Prep
+- Landing page with hero, problem, how-it-works, pricing sections
+- Pro tier: team sharing, settings page, upgrade flow
+- Stripe integration: checkout, webhooks, billing portal
+- GitHub Actions auto-indexer with API token auth
+- npm publish prep (`files`, `prepublishOnly`)
+- OG image, robots.txt, sitemap, SEO
+- Product Hunt + HN launch drafts
+- Self-hosting guide
+
+### 2026-04-04 — Week 2: Intelligence
+- Git hook auto-indexer (Ollama → Claude Haiku → dumb fallback)
+- File importers (claude-md, architecture-md, lessons-md)
+- `tages query` with LLM-powered answers
+- Cmd+K search, decision timeline, activity feed
+- Multi-provider setup guides (Cursor, Codex, Gemini)
 
 ### 2026-04-04 — Week 1: Foundation
 - Monorepo scaffold (pnpm workspaces, TypeScript strict)

@@ -4,6 +4,7 @@ const TABS = [
   { key: 'memories', label: 'Memories', href: '' },
   { key: 'decisions', label: 'Decisions', href: '/decisions' },
   { key: 'activity', label: 'Activity', href: '/activity' },
+  { key: 'settings', label: 'Settings', href: '/settings' },
 ]
 
 export function ProjectNav({ slug, active }: { slug: string; active: string }) {
