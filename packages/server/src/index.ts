@@ -2,11 +2,11 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createSupabaseClient } from '@tages/shared'
-import { z } from 'zod'
 
 import { loadServerConfig } from './config'
 import { SqliteCache } from './cache/sqlite'
 import { SupabaseSync } from './sync/supabase-sync'
+import { SessionTracker } from './tracking'
 import { registerResources } from './resources'
 import { handleRemember } from './tools/remember'
 import { handleRecall } from './tools/recall'
@@ -15,6 +15,9 @@ import { handleConventions } from './tools/conventions'
 import { handleArchitecture } from './tools/architecture'
 import { handleDecisions } from './tools/decisions'
 import { handleContext } from './tools/context'
+import { handleStaleness } from './tools/staleness'
+import { handleConflicts } from './tools/conflicts'
+import { handleStats } from './tools/stats'
 import { RememberSchema, RecallSchema, ForgetSchema, ContextSchema } from './schemas'
 
 async function main() {
@@ -27,12 +30,13 @@ async function main() {
 
   // Initialize Supabase sync if configured
   let sync: SupabaseSync | null = null
+  let supabaseClient = null
   if (config?.project.supabaseUrl && config?.project.supabaseAnonKey) {
-    const supabase = createSupabaseClient(
+    supabaseClient = createSupabaseClient(
       config.project.supabaseUrl,
       config.project.supabaseAnonKey,
     )
-    sync = new SupabaseSync(supabase, cache, projectId)
+    sync = new SupabaseSync(supabaseClient, cache, projectId)
 
     // Hydrate cache from Supabase
     const count = await sync.hydrate()
@@ -45,6 +49,10 @@ async function main() {
   } else {
     console.error('[tages] No Supabase config found — running in local-only mode')
   }
+
+  // Initialize session tracker
+  const tracker = new SessionTracker(supabaseClient, projectId)
+  await tracker.startSession()
 
   const server = new McpServer({
     name: 'tages',
@@ -62,7 +70,13 @@ async function main() {
       filePaths: RememberSchema.shape.filePaths,
       tags: RememberSchema.shape.tags,
     },
-    async (args) => handleRemember(args, projectId, cache, sync),
+    async (args) => {
+      const result = await handleRemember(args, projectId, cache, sync)
+      // Track the memory creation
+      const mem = cache.getByKey(projectId, args.key)
+      if (mem) await tracker.logCreate(mem.id)
+      return result
+    },
   )
 
   server.tool(
@@ -73,7 +87,17 @@ async function main() {
       type: RecallSchema.shape.type,
       limit: RecallSchema.shape.limit,
     },
-    async (args) => handleRecall(args, projectId, cache, sync),
+    async (args) => {
+      const result = await handleRecall(args, projectId, cache, sync)
+      // Track recall access
+      const memories = cache.queryMemories(projectId, args.query, undefined, args.limit || 5)
+      await tracker.logRecall(
+        memories.map(m => m.id),
+        args.query,
+        [], // similarities not available from cache
+      )
+      return result
+    },
   )
 
   server.tool(
@@ -82,7 +106,12 @@ async function main() {
     {
       key: ForgetSchema.shape.key,
     },
-    async (args) => handleForget(args, projectId, cache, sync),
+    async (args) => {
+      const mem = cache.getByKey(projectId, args.key)
+      const result = await handleForget(args, projectId, cache, sync)
+      if (mem) await tracker.logDelete(mem.id)
+      return result
+    },
   )
 
   server.tool(
@@ -115,6 +144,27 @@ async function main() {
     async (args) => handleContext(args, projectId, cache, sync),
   )
 
+  server.tool(
+    'staleness',
+    'Check for stale memories that may be outdated or no longer relevant',
+    {},
+    async () => handleStaleness(projectId, cache, sync),
+  )
+
+  server.tool(
+    'conflicts',
+    'Detect potential conflicts between memories — overlapping or contradictory entries',
+    {},
+    async () => handleConflicts(projectId, cache, sync),
+  )
+
+  server.tool(
+    'stats',
+    'Show memory usage statistics — counts by type, recall hit rate, agent sessions, most/least accessed',
+    {},
+    async () => handleStats(projectId, cache, sync),
+  )
+
   // Register resources
   registerResources(server, cache, sync)
 
@@ -124,6 +174,7 @@ async function main() {
 
   // Cleanup on exit
   process.on('SIGINT', async () => {
+    await tracker.endSession()
     if (sync) {
       await sync.flush()
       sync.stopSync()
