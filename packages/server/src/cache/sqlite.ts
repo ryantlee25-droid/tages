@@ -16,13 +16,20 @@ CREATE TABLE IF NOT EXISTS memories (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   synced_at TEXT,
-  dirty INTEGER NOT NULL DEFAULT 0
+  dirty INTEGER NOT NULL DEFAULT 0,
+  embedding TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS memories_project_key ON memories(project_id, key);
 CREATE INDEX IF NOT EXISTS memories_project_id ON memories(project_id);
 CREATE INDEX IF NOT EXISTS memories_type ON memories(project_id, type);
 CREATE INDEX IF NOT EXISTS memories_dirty ON memories(dirty) WHERE dirty = 1;
+
+CREATE TABLE IF NOT EXISTS sync_meta (
+  project_id TEXT PRIMARY KEY,
+  last_synced_at TEXT,
+  memory_count INTEGER NOT NULL DEFAULT 0
+);
 `
 
 export class SqliteCache {
@@ -33,6 +40,8 @@ export class SqliteCache {
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('synchronous = NORMAL')
     this.db.exec(SCHEMA)
+    // Add embedding column if missing (upgrade path)
+    try { this.db.exec('ALTER TABLE memories ADD COLUMN embedding TEXT') } catch { /* already exists */ }
   }
 
   upsertMemory(memory: Memory, dirty = true): void {
@@ -68,8 +77,42 @@ export class SqliteCache {
     )
   }
 
+  upsertMemoryWithEmbedding(memory: Memory, embedding: number[], dirty = true): void {
+    this.upsertMemory(memory, dirty)
+    this.db.prepare(
+      'UPDATE memories SET embedding = ? WHERE id = ?'
+    ).run(JSON.stringify(embedding), memory.id)
+  }
+
+  /**
+   * Semantic search using local cosine similarity on cached embeddings.
+   * No network call needed — runs entirely from SQLite.
+   */
+  semanticQuery(projectId: string, queryEmbedding: number[], type?: MemoryType, limit = 5): Memory[] {
+    // Get all memories with embeddings for this project
+    let sql = 'SELECT * FROM memories WHERE project_id = ? AND embedding IS NOT NULL'
+    const params: unknown[] = [projectId]
+    if (type) {
+      sql += ' AND type = ?'
+      params.push(type)
+    }
+
+    const rows = this.db.prepare(sql).all(...params) as (SqliteMemoryRow & { embedding: string | null })[]
+
+    // Score by cosine similarity
+    const scored: Array<{ row: SqliteMemoryRow; sim: number }> = []
+    for (const row of rows) {
+      if (!row.embedding) continue
+      const emb = JSON.parse(row.embedding) as number[]
+      const sim = cosineSimilarity(queryEmbedding, emb)
+      if (sim > 0.3) scored.push({ row, sim })
+    }
+    scored.sort((a, b) => b.sim - a.sim)
+
+    return scored.slice(0, limit).map(s => rowToMemory(s.row))
+  }
+
   queryMemories(projectId: string, query: string, type?: MemoryType, limit = 5): Memory[] {
-    // SQLite fallback: LIKE-based search (no trigram)
     const pattern = `%${query}%`
     let sql = `
       SELECT * FROM memories
@@ -150,6 +193,32 @@ export class SqliteCache {
     upsert(memories)
   }
 
+  // --- Sync metadata ---
+
+  getLastSyncedAt(projectId: string): string | null {
+    const row = this.db.prepare(
+      'SELECT last_synced_at FROM sync_meta WHERE project_id = ?'
+    ).get(projectId) as { last_synced_at: string | null } | undefined
+    return row?.last_synced_at || null
+  }
+
+  setLastSyncedAt(projectId: string, timestamp: string, count: number): void {
+    this.db.prepare(`
+      INSERT INTO sync_meta (project_id, last_synced_at, memory_count)
+      VALUES (?, ?, ?)
+      ON CONFLICT(project_id) DO UPDATE SET
+        last_synced_at = excluded.last_synced_at,
+        memory_count = excluded.memory_count
+    `).run(projectId, timestamp, count)
+  }
+
+  getMemoryCount(projectId: string): number {
+    const row = this.db.prepare(
+      'SELECT COUNT(*) as cnt FROM memories WHERE project_id = ?'
+    ).get(projectId) as { cnt: number }
+    return row.cnt
+  }
+
   close(): void {
     this.db.close()
   }
@@ -187,4 +256,16 @@ function rowToMemory(row: SqliteMemoryRow): Memory {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
+}
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  const len = Math.min(a.length, b.length)
+  let dot = 0, magA = 0, magB = 0
+  for (let i = 0; i < len; i++) {
+    dot += a[i] * b[i]
+    magA += a[i] * a[i]
+    magB += b[i] * b[i]
+  }
+  const denom = Math.sqrt(magA) * Math.sqrt(magB)
+  return denom === 0 ? 0 : dot / denom
 }

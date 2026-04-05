@@ -13,8 +13,56 @@ export class SupabaseSync {
     private projectId: string,
   ) {}
 
+  /**
+   * Smart hydration: checks if anything changed since last sync.
+   * If no changes, skips the full pull — reads from local SQLite cache.
+   * Returns number of memories synced (0 = cache was current).
+   */
   async hydrate(): Promise<number> {
     try {
+      const lastSynced = this.cache.getLastSyncedAt(this.projectId)
+      const localCount = this.cache.getMemoryCount(this.projectId)
+
+      // If we have a local cache, check if anything changed
+      if (lastSynced && localCount > 0) {
+        const { count, error: countError } = await this.supabase
+          .from('memories')
+          .select('*', { count: 'exact', head: true })
+          .eq('project_id', this.projectId)
+          .gt('updated_at', lastSynced)
+
+        if (!countError && count === 0) {
+          // Also verify total count matches (catches deletes)
+          const { count: totalCount } = await this.supabase
+            .from('memories')
+            .select('*', { count: 'exact', head: true })
+            .eq('project_id', this.projectId)
+
+          if (totalCount === localCount) {
+            console.error(`[tages] Cache is current (${localCount} memories, last sync: ${lastSynced})`)
+            return 0
+          }
+        }
+
+        // Delta sync: only pull changed memories
+        if (!countError && count !== null && count > 0 && count < localCount) {
+          console.error(`[tages] Delta sync: ${count} memories changed since ${lastSynced}`)
+          const { data } = await this.supabase
+            .from('memories')
+            .select('*')
+            .eq('project_id', this.projectId)
+            .gt('updated_at', lastSynced)
+
+          if (data && data.length > 0) {
+            const memories: Memory[] = data.map(dbRowToMemory)
+            this.cache.hydrateFromRemote(memories)
+            this.cache.setLastSyncedAt(this.projectId, new Date().toISOString(), this.cache.getMemoryCount(this.projectId))
+            return memories.length
+          }
+        }
+      }
+
+      // Full hydration (first run or cache invalid)
       const { data, error } = await this.supabase
         .from('memories')
         .select('*')
@@ -28,6 +76,7 @@ export class SupabaseSync {
       if (data && data.length > 0) {
         const memories: Memory[] = data.map(dbRowToMemory)
         this.cache.hydrateFromRemote(memories)
+        this.cache.setLastSyncedAt(this.projectId, new Date().toISOString(), memories.length)
         return memories.length
       }
       return 0

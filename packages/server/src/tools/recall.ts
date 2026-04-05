@@ -11,42 +11,59 @@ export async function handleRecall(
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const limit = args.limit || 5
 
-  // Try hybrid search: trigram + vector
-  if (sync) {
-    // Generate embedding for the query
-    const embedding = await generateEmbedding(args.query)
+  // Generate embedding for semantic search (works locally via Ollama)
+  const embedding = await generateEmbedding(args.query)
 
+  // Try local semantic search first (sub-10ms, no network)
+  if (embedding) {
+    const localSemantic = cache.semanticQuery(
+      projectId, embedding, args.type as MemoryType | undefined, limit,
+    )
+    const localLike = cache.queryMemories(
+      projectId, args.query, args.type as MemoryType | undefined, limit,
+    )
+
+    // Merge and deduplicate
+    const seen = new Set<string>()
+    const merged: Memory[] = []
+    for (const m of localSemantic) {
+      if (!seen.has(m.id)) { seen.add(m.id); merged.push(m) }
+    }
+    for (const m of localLike) {
+      if (!seen.has(m.id)) { seen.add(m.id); merged.push(m) }
+    }
+
+    if (merged.length > 0) {
+      return formatResults(merged.slice(0, limit), args.query, 'local (cached)')
+    }
+  }
+
+  // If local cache is empty, try remote
+  if (sync) {
     if (embedding) {
-      // Use hybrid recall (trigram + semantic)
       const results = await sync.remoteHybridRecall(args.query, embedding, args.type, limit)
       if (results && results.length > 0) {
-        return formatResults(results, args.query, true)
+        return formatResults(results, args.query, 'remote (hybrid)')
       }
     }
 
-    // Fallback to trigram-only if embedding failed
     const results = await sync.remoteRecall(args.query, args.type, limit)
     if (results && results.length > 0) {
-      return formatResults(results, args.query, false)
+      return formatResults(results, args.query, 'remote (trigram)')
     }
-
-    console.error('[tages] Falling back to SQLite cache for recall')
   }
 
-  // Fallback to SQLite LIKE search
+  // Last fallback: SQLite LIKE search without embeddings
   const results = cache.queryMemories(
-    projectId,
-    args.query,
-    args.type as MemoryType | undefined,
-    limit,
+    projectId, args.query, args.type as MemoryType | undefined, limit,
   )
-  return formatResults(results, args.query, false)
+  return formatResults(results, args.query, 'local (text match)')
 }
 
 function formatResults(
   memories: Memory[],
   query: string,
-  hybrid: boolean,
+  method: string,
 ): { content: Array<{ type: 'text'; text: string }> } {
   if (memories.length === 0) {
     return {
@@ -54,7 +71,6 @@ function formatResults(
     }
   }
 
-  const method = hybrid ? ' (hybrid: trigram + semantic)' : ''
   const lines = memories.map((m, i) => {
     const files = m.filePaths?.length ? `\n   Files: ${m.filePaths.join(', ')}` : ''
     const tags = m.tags?.length ? `\n   Tags: ${m.tags.join(', ')}` : ''
@@ -64,7 +80,7 @@ function formatResults(
   return {
     content: [{
       type: 'text',
-      text: `Found ${memories.length} memories for "${query}"${method}:\n\n${lines.join('\n\n')}`,
+      text: `Found ${memories.length} memories for "${query}" (${method}):\n\n${lines.join('\n\n')}`,
     }],
   }
 }
