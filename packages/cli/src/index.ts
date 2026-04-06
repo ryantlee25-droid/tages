@@ -32,6 +32,8 @@ import { analyticsSummaryCommand, analyticsSessionCommand, analyticsTrendsComman
 import { migrateCommand } from './commands/migrate.js'
 import { sessionWrapCommand } from './commands/session-wrap.js'
 import { briefCommand } from './commands/brief.js'
+import { auditCommand } from './commands/audit.js'
+import { sharpenCommand } from './commands/sharpen.js'
 
 const program = new Command()
 
@@ -370,14 +372,6 @@ program
   .action(migrateCommand)
 
 program
-  .command('session-wrap')
-  .description('End-of-session wrap-up: extract and persist codebase learnings')
-  .option('--non-interactive', 'Read from pending-session-notes.txt (for hooks)')
-  .option('--summary <text>', 'Provide summary directly (skip interactive prompt)')
-  .option('-p, --project <slug>', 'Project slug')
-  .action(sessionWrapCommand)
-
-program
   .command('brief')
   .description('Generate a cached project brief for system prompt injection. Skips regeneration if the local file is fresh and no git changes detected.')
   .option('-p, --project <slug>', 'Project slug')
@@ -387,5 +381,31 @@ program
   .option('-f, --force', 'Force regeneration even if cached brief is fresh')
   .option('--check', 'Check mode: output file path for hook consumption')
   .action(briefCommand)
+
+// Memory Quality Flywheel
+program
+  .command('audit')
+  .description('Audit project memory coverage: type distribution, brief-critical gaps, and imperative phrasing ratio')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('--json', 'Output raw AuditResult JSON')
+  .action(auditCommand)
+
+program
+  .command('sharpen')
+  .description('Rewrite a memory (or all candidates) into imperative form using Claude Haiku')
+  .argument('[key]', 'Memory key to sharpen (omit with --all to sharpen all candidates)')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('--all', 'Sharpen all un-sharpened convention/anti_pattern/lesson memories')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .action(sharpenCommand)
+
+program
+  .command('session-wrap')
+  .description('End-of-session wrap-up: extract and persist codebase learnings')
+  .option('--non-interactive', 'Read from pending-session-notes.txt (for hooks)')
+  .option('--summary <text>', 'Provide summary directly (skip interactive prompt)')
+  .option('--refresh-brief', 'Delete cached brief after extraction so next `tages brief` regenerates')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(sessionWrapCommand)
 
 program.parse()

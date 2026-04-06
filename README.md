@@ -137,6 +137,29 @@ pnpm test         # 372 vitest tests
 
 ## Release Notes
 
+### 2026-04-06 (Memory Quality Flywheel: audit + sharpen + brief-refresh)
+
+**3 new features**
+
+1. **`tages audit`** — Audit project memory coverage: type distribution table, brief-critical coverage score (0-100), imperative phrasing ratio, and actionable suggestions. Also available as MCP tool `memory_audit`.
+
+2. **`tages sharpen [key]` / `tages sharpen --all`** — Rewrite memories into imperative form (ALWAYS/NEVER/MUST/DO NOT) using Claude Haiku. Shows before/after diff with confirmation prompt (`--yes` to skip). Also available as MCP tool `sharpen_memory` (with `confirmed` flag for preview vs apply).
+
+3. **`tages session-wrap --refresh-brief`** — After extracting memories, automatically invalidates the cached brief so the next `tages brief` regenerates from fresh data. New MCP tool `post_session` combines `session_end` + brief regeneration in one call.
+
+**CLI commands table additions:**
+
+| Command | Description |
+|---------|-------------|
+| `tages audit` | Audit memory type coverage and quality score |
+| `tages audit --json` | Output raw AuditResult JSON |
+| `tages sharpen <key>` | Rewrite one memory into imperative form |
+| `tages sharpen --all` | Rewrite all un-sharpened convention/anti_pattern/lesson candidates |
+| `tages sharpen --all --yes` | Same, batch without confirmation |
+| `tages session-wrap --refresh-brief` | Invalidate brief after session extraction |
+
+---
+
 ### 2026-04-06 (Wave 2: High-severity fixes from E2E evaluation)
 
 **5 critical bugs fixed**

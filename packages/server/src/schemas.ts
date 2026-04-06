@@ -223,3 +223,18 @@ export const ImportClaudeMdSchema = z.object({
   content: z.string().min(1).max(512_000).describe('Raw CLAUDE.md file content'),
   strategy: z.enum(['skip', 'overwrite']).optional().default('skip').describe('How to handle existing memories with the same key'),
 })
+
+// Memory Quality Flywheel — F1: memory_audit
+export const MemoryAuditSchema = z.object({})
+
+// Memory Quality Flywheel — F2: sharpen_memory
+export const SharpenMemorySchema = z.object({
+  key: z.string().min(1).describe('Key of the memory to rewrite in imperative form'),
+  confirmed: z.boolean().optional().default(false).describe('If false (default), returns a preview without mutating. If true, applies the rewrite.'),
+})
+
+// Memory Quality Flywheel — F3: post_session
+export const PostSessionSchema = z.object({
+  summary: z.string().min(1).describe('Summary of what happened in this session'),
+  refreshBrief: z.boolean().optional().default(false).describe('If true, regenerates the project brief after extracting memories and returns it as text'),
+})

@@ -1,4 +1,5 @@
 import * as fs from 'fs'
+import * as path from 'path'
 import * as readline from 'readline'
 import chalk from 'chalk'
 import Database from 'better-sqlite3'
@@ -12,6 +13,19 @@ interface SessionWrapOptions {
   nonInteractive?: boolean
   summary?: string
   project?: string
+  refreshBrief?: boolean
+}
+
+/**
+ * Find the project root by walking up from cwd looking for .git.
+ */
+function findProjectRoot(): string {
+  let dir = process.cwd()
+  while (dir !== path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, '.git'))) return dir
+    dir = path.dirname(dir)
+  }
+  return process.cwd()
 }
 
 const PENDING_FILE = () => `${getConfigDir()}/pending-session-notes.txt`
@@ -113,6 +127,37 @@ export async function sessionWrapCommand(options: SessionWrapOptions) {
         '[]', '["session-extract"]', 0.8, 'live', now, now)
   }
   db.close()
+
+  // Brief invalidation: if memories were extracted, delete the cached brief so the next
+  // `tages brief` call regenerates from fresh data.
+  if (extracted.length > 0) {
+    const projectRoot = findProjectRoot()
+    const briefPath = path.join(projectRoot, '.tages', 'brief.md')
+    if (fs.existsSync(briefPath)) {
+      try {
+        fs.unlinkSync(briefPath)
+        if (!options.nonInteractive) {
+          console.log(chalk.dim('  Invalidated cached brief (will regenerate on next `tages brief`).'))
+        }
+      } catch {
+        // Non-fatal — brief will just be served stale until it expires naturally
+      }
+    }
+
+    // --refresh-brief: immediately regenerate the brief
+    if (options.refreshBrief && config.supabaseUrl && config.supabaseAnonKey) {
+      try {
+        // Dynamically import briefCommand to avoid circular dep at module load time
+        // @ts-ignore — cross-package import
+        const { briefCommand } = await import('./brief.js') as { briefCommand: (opts: Record<string, unknown>) => Promise<void> }
+        await briefCommand({ project: options.project, force: true })
+      } catch {
+        if (!options.nonInteractive) {
+          console.log(chalk.yellow('  Could not regenerate brief automatically. Run `tages brief --force` manually.'))
+        }
+      }
+    }
+  }
 
   // Print results
   if (!options.nonInteractive) {

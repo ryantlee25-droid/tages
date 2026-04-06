@@ -45,6 +45,9 @@ import { handleFileRecall } from './tools/file-recall'
 import { globalSessionRecorder } from './analytics/session-recorder'
 import { handlePreCheck } from './tools/pre-check'
 import { handleBrief } from './tools/brief'
+import { handleMemoryAudit } from './tools/audit'
+import { handleSharpenMemory } from './tools/sharpen'
+import { handlePostSession } from './tools/post-session'
 import {
   RememberSchema, RecallSchema, ForgetSchema, ContextSchema, SessionEndSchema, VerifyMemorySchema,
   MemoryHistorySchema, ContextualRecallSchema, ResolveConflictSchema, ImportSchema,
@@ -53,6 +56,7 @@ import {
   AutoArchiveSchema, PromoteSchema, ImportFederatedSchema, ListFederatedSchema,
   SessionReplaySchema, AgentMetricsSchema, TrendsSchema, CheckConventionSchema, PreCheckSchema,
   FileRecallSchema, ImportClaudeMdSchema, BriefSchema,
+  MemoryAuditSchema, SharpenMemorySchema, PostSessionSchema,
 } from './schemas'
 
 async function main() {
@@ -660,6 +664,36 @@ async function main() {
       strategy: ImportClaudeMdSchema.shape.strategy,
     },
     async (args) => handleImportClaudeMd({ ...args, projectId }, cache, sync),
+  )
+
+  // Memory Quality Flywheel — F1: memory_audit
+  server.tool(
+    'memory_audit',
+    'Audit project memory coverage and quality: type distribution, brief-critical coverage score, imperative phrasing ratio, and actionable suggestions.',
+    {},
+    async () => handleMemoryAudit({} as never, projectId, cache),
+  )
+
+  // Memory Quality Flywheel — F2: sharpen_memory
+  server.tool(
+    'sharpen_memory',
+    'Rewrite a memory value into imperative form (ALWAYS/NEVER/MUST/DO NOT) using Claude Haiku. Returns a before/after preview unless confirmed=true.',
+    {
+      key: SharpenMemorySchema.shape.key,
+      confirmed: SharpenMemorySchema.shape.confirmed,
+    },
+    async (args) => handleSharpenMemory(args, projectId, cache, sync),
+  )
+
+  // Memory Quality Flywheel — F3: post_session
+  server.tool(
+    'post_session',
+    'End-of-session tool: extract memories from a session summary, optionally regenerate the project brief. Combines session_end + brief regeneration in one call.',
+    {
+      summary: PostSessionSchema.shape.summary,
+      refreshBrief: PostSessionSchema.shape.refreshBrief,
+    },
+    async (args) => handlePostSession(args, projectId, cache, sync),
   )
 
   // Register resources
