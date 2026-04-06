@@ -1,0 +1,51 @@
+version: 2
+
+updates:
+  # npm ecosystem — pnpm monorepo (packages/server, packages/cli,
+  # packages/shared, apps/dashboard)
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - security
+    ignore:
+      # Suppress non-security minor/patch bumps for stable runtime deps.
+      # These libraries have stable APIs and non-security updates rarely
+      # require immediate action — review them on your own cadence.
+      - dependency-name: "@modelcontextprotocol/sdk"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+      - dependency-name: "@supabase/supabase-js"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+      - dependency-name: "better-sqlite3"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+      - dependency-name: "next"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+      - dependency-name: "commander"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+      - dependency-name: "zod"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+
+  # GitHub Actions ecosystem — keep action versions current
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - security

@@ -1,0 +1,55 @@
+# SBOM (Software Bill of Materials) Generation
+#
+# Runs on every release tag push (v*). Generates a CycloneDX JSON SBOM
+# covering all packages in the tages pnpm monorepo:
+#   - packages/server  (@tages/server — MCP server)
+#   - packages/cli     (tages — CLI)
+#   - packages/shared  (@tages/shared — shared types)
+#   - apps/dashboard   (Next.js dashboard)
+#
+# The SBOM is uploaded directly as a GitHub release asset so consumers
+# can audit the dependency tree for any tagged release.
+
+name: SBOM
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  sbom:
+    name: Generate and upload SBOM
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          format: cyclonedx-json
+          output-file: sbom.cyclonedx.json
+
+      - name: Upload SBOM as release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: sbom.cyclonedx.json
