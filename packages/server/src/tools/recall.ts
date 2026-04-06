@@ -6,6 +6,7 @@ import { rankResults, asTextResults } from '../search/ranker'
 import type { ScoredMemory } from '../search/ranker'
 import { computeDecayScore, shouldArchive } from '../decay/scoring'
 import { getEncryptionKey, decryptValue } from '../crypto/encryption'
+import { budgetedResults } from '../search/token-budget'
 
 function decryptMemories(memories: Memory[]): Memory[] {
   const encKey = getEncryptionKey()
@@ -14,7 +15,7 @@ function decryptMemories(memories: Memory[]): Memory[] {
 }
 
 export async function handleRecall(
-  args: { query: string; type?: string; limit?: number },
+  args: { query: string; type?: string; limit?: number; maxTokens?: number },
   projectId: string,
   cache: SqliteCache,
   sync: SupabaseSync | null,
@@ -56,7 +57,11 @@ export async function handleRecall(
     })
 
     const ranked = rankResults(decayAdjusted)
-    return formatResults(decryptMemories(ranked.slice(0, limit)), args.query, 'local (ranked)')
+    let sliced = decryptMemories(ranked.slice(0, limit))
+    if (args.maxTokens !== undefined) {
+      sliced = budgetedResults(sliced, args.maxTokens, formatMemory)
+    }
+    return formatResults(sliced, args.query, 'local (ranked)')
   }
 
   // If local cache is empty, try remote
@@ -64,13 +69,21 @@ export async function handleRecall(
     if (embedding) {
       const results = await sync.remoteHybridRecall(args.query, embedding, args.type, limit)
       if (results && results.length > 0) {
-        return formatResults(decryptMemories(results), args.query, 'remote (hybrid)')
+        let trimmed = decryptMemories(results)
+        if (args.maxTokens !== undefined) {
+          trimmed = budgetedResults(trimmed, args.maxTokens, formatMemory)
+        }
+        return formatResults(trimmed, args.query, 'remote (hybrid)')
       }
     }
 
     const results = await sync.remoteRecall(args.query, args.type, limit)
     if (results && results.length > 0) {
-      return formatResults(decryptMemories(results), args.query, 'remote (trigram)')
+      let trimmed = decryptMemories(results)
+      if (args.maxTokens !== undefined) {
+        trimmed = budgetedResults(trimmed, args.maxTokens, formatMemory)
+      }
+      return formatResults(trimmed, args.query, 'remote (trigram)')
     }
   }
 
@@ -79,7 +92,29 @@ export async function handleRecall(
     projectId, args.query, args.type as MemoryType | undefined, limit,
   )
   const ranked = rankResults(asTextResults(fallback))
-  return formatResults(decryptMemories(ranked.slice(0, limit)), args.query, 'local (text match)')
+  let sliced = decryptMemories(ranked.slice(0, limit))
+  if (args.maxTokens !== undefined) {
+    sliced = budgetedResults(sliced, args.maxTokens, formatMemory)
+  }
+  return formatResults(sliced, args.query, 'local (text match)')
+}
+
+// Format a single memory to a string — used for token estimation
+function formatMemory(m: Memory): string {
+  const parts = [`[${m.type}] ${m.key}`, `   ${m.value}`]
+  if (m.filePaths?.length) parts.push(`   Files: ${m.filePaths.join(', ')}`)
+  if (m.conditions?.length) parts.push(`   When: ${m.conditions.join('; ')}`)
+  if (m.crossSystemRefs?.length) parts.push(`   Related: ${m.crossSystemRefs.join(', ')}`)
+  if (m.executionFlow) {
+    parts.push(`   Flow: ${m.executionFlow.trigger} → ${m.executionFlow.steps.join(' → ')}`)
+  }
+  if (m.examples?.length) {
+    for (const ex of m.examples.slice(0, 2)) {
+      parts.push(`   Example: ${ex.input} → ${ex.output}${ex.note ? ` (${ex.note})` : ''}`)
+    }
+  }
+  if (m.tags?.length) parts.push(`   Tags: ${m.tags.join(', ')}`)
+  return parts.join('\n')
 }
 
 function formatResults(
