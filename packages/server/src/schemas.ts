@@ -212,6 +212,12 @@ export const PreCheckSchema = z.object({
   filePaths: z.array(z.string()).optional().describe('File paths you plan to edit'),
 })
 
+// project_brief — Token-budgeted context injection
+export const BriefSchema = z.object({
+  task: z.string().optional().describe('Description of the current task — used to prioritize relevant memories'),
+  budget: z.number().int().min(500).max(10000).optional().default(3000).describe('Max estimated tokens for the brief (default 3000)'),
+})
+
 // CLAUDE.md import
 export const ImportClaudeMdSchema = z.object({
   content: z.string().min(1).max(512_000).describe('Raw CLAUDE.md file content'),

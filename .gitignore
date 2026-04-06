@@ -10,3 +10,4 @@ dist/
 !.claude/commands/
 packages/server/coverage/
 supabase/.temp/
+.tages/

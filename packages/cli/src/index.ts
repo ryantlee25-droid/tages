@@ -31,6 +31,7 @@ import { federateCommand, federationListCommand, federationImportCommand, federa
 import { analyticsSummaryCommand, analyticsSessionCommand, analyticsTrendsCommand } from './commands/analytics.js'
 import { migrateCommand } from './commands/migrate.js'
 import { sessionWrapCommand } from './commands/session-wrap.js'
+import { briefCommand } from './commands/brief.js'
 
 const program = new Command()
 
@@ -375,5 +376,16 @@ program
   .option('--summary <text>', 'Provide summary directly (skip interactive prompt)')
   .option('-p, --project <slug>', 'Project slug')
   .action(sessionWrapCommand)
+
+program
+  .command('brief')
+  .description('Generate a cached project brief for system prompt injection. Skips regeneration if the local file is fresh and no git changes detected.')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('-t, --task <description>', 'Current task description (prioritizes relevant memories)')
+  .option('-b, --budget <tokens>', 'Max estimated tokens (default 3000)')
+  .option('-o, --output <path>', 'Output file path (default .tages/brief.md)')
+  .option('-f, --force', 'Force regeneration even if cached brief is fresh')
+  .option('--check', 'Check mode: output file path for hook consumption')
+  .action(briefCommand)
 
 program.parse()

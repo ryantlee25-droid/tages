@@ -44,6 +44,7 @@ import { handleSessionReplay, handleAgentMetrics, handleTrends } from './tools/a
 import { handleFileRecall } from './tools/file-recall'
 import { globalSessionRecorder } from './analytics/session-recorder'
 import { handlePreCheck } from './tools/pre-check'
+import { handleBrief } from './tools/brief'
 import {
   RememberSchema, RecallSchema, ForgetSchema, ContextSchema, SessionEndSchema, VerifyMemorySchema,
   MemoryHistorySchema, ContextualRecallSchema, ResolveConflictSchema, ImportSchema,
@@ -51,7 +52,7 @@ import {
   MatchTemplatesSchema, ApplyTemplateSchema, ArchiveSchema, RestoreSchema, ListArchivedSchema,
   AutoArchiveSchema, PromoteSchema, ImportFederatedSchema, ListFederatedSchema,
   SessionReplaySchema, AgentMetricsSchema, TrendsSchema, CheckConventionSchema, PreCheckSchema,
-  FileRecallSchema, ImportClaudeMdSchema,
+  FileRecallSchema, ImportClaudeMdSchema, BriefSchema,
 } from './schemas'
 
 async function main() {
@@ -637,6 +638,17 @@ async function main() {
       limit: FileRecallSchema.shape.limit,
     },
     async (args) => handleFileRecall(args, projectId, cache),
+  )
+
+  // Project brief — token-budgeted context for system prompt injection
+  server.tool(
+    'project_brief',
+    'Generate a token-budgeted project brief for system prompt injection. Returns gotchas, conventions, architecture, and decisions — prioritized by importance. Use this ONCE at session start instead of calling recall/conventions/architecture individually.',
+    {
+      task: BriefSchema.shape.task,
+      budget: BriefSchema.shape.budget,
+    },
+    async (args) => handleBrief(args, projectId, cache, sync),
   )
 
   // CLAUDE.md import
