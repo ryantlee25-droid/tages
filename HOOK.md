@@ -1,32 +1,34 @@
-# HOOK.md — G2-T9 Auth Failure Audit Logging
+# HOOK.md — Howler A: G3-T13 Public /security page
+
+## Task
+Create a public `/security` marketing page for Tages dashboard.
+
+## Files Owned
+- `apps/dashboard/src/app/(marketing)/security/page.tsx` — CREATE
+- `apps/dashboard/src/components/marketing/security-page.tsx` — CREATE
+- `apps/dashboard/src/app/sitemap.ts` — MODIFY
 
 ## Status: in-progress
 
-## Assignment
-Create auth audit log table and wire it into auth flows.
-
-## Files Owned
-- `supabase/migrations/0033_auth_audit_log.sql` (create)
-- `apps/dashboard/src/app/auth/cli/route.ts` (modify)
-- `packages/cli/src/auth/token-auth.ts` (modify)
-
-## Findings
-- `0032_token_expiry.sql` does not exist — `expires_at` column may not be present yet
-- `api_tokens` table has: id, user_id, token_hash, name, created_at, last_used
-- `validateToken` in token-auth.ts currently only selects `user_id` — need to also select `expires_at` for expiry check
-- `route.ts` uses `createClient()` from `@/lib/supabase/server` — will use same client for audit inserts
-- Audit inserts must be fire-and-forget (no await blocking the auth flow)
-
-## Assumptions
-- `expires_at` may not exist on `api_tokens` yet; I will select it with `.maybeSingle()` pattern and handle null gracefully
-- Service role not available in route.ts context — using same anon/session client for audit inserts
-- `token_invalid` = hash lookup returns no row; `token_expired` = row found but expires_at is in the past
-
 ## Milestones
-- [x] Write HOOK.md
-- [x] Write migration 0033_auth_audit_log.sql
-- [x] Modify route.ts with audit logging
-- [x] Modify token-auth.ts with audit logging
+- [x] Read CONTRACT.md (not found — working from drop prompt + CLAUDE.md)
+- [x] Read homepage page.tsx for style reference
+- [x] Read hero.tsx for component pattern reference
+- [x] Read SECURITY.md for responsible disclosure content
+- [x] Read sitemap.ts for modification target
+- [x] Wrote HOOK.md
+- [ ] Create security-page.tsx component
+- [ ] Create security/page.tsx route
+- [ ] Modify sitemap.ts
+- [ ] Run pnpm typecheck
 - [ ] Commit
 
-## Status: complete — ready to commit
+## Assumptions
+- No CONTRACT.md found in worktree root — proceeding from drop prompt spec
+- Page is public (no auth check, no supabase.auth.getUser() call)
+- Claims verified against CLAUDE.md security section (matches drop prompt spec)
+- Following hero.tsx component pattern: named export, pure JSX, no async
+- sitemap base URL is https://tages.dev (confirmed from existing sitemap.ts)
+
+## Seams
+None — this is a pure CREATE task with one MODIFY on sitemap.ts. No integration points with other Howlers.
