@@ -185,6 +185,12 @@ export const ListFederatedSchema = z.object({
 
 export const ResolveOverridesSchema = z.object({})
 
+// File-path auto-recall
+export const FileRecallSchema = z.object({
+  filePaths: z.array(z.string()).min(1).describe('File paths currently being edited'),
+  limit: z.number().int().min(1).max(50).optional().default(10).describe('Max results'),
+})
+
 // XL8 — Analytics
 export const SessionReplaySchema = z.object({
   sessionId: z.string().min(1).describe('Session ID to replay'),

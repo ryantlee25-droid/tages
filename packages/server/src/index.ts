@@ -40,6 +40,7 @@ import { handleListTemplates, handleMatchTemplates, handleApplyTemplate } from '
 import { handleArchive, handleRestore, handleListArchived, handleArchiveStats, handleAutoArchive } from './tools/archive-manager'
 import { handlePromote, handleImportFederated, handleListFederated, handleResolveOverrides } from './tools/federation'
 import { handleSessionReplay, handleAgentMetrics, handleTrends } from './tools/analytics'
+import { handleFileRecall } from './tools/file-recall'
 import { globalSessionRecorder } from './analytics/session-recorder'
 import {
   RememberSchema, RecallSchema, ForgetSchema, ContextSchema, SessionEndSchema, VerifyMemorySchema,
@@ -48,6 +49,7 @@ import {
   MatchTemplatesSchema, ApplyTemplateSchema, ArchiveSchema, RestoreSchema, ListArchivedSchema,
   AutoArchiveSchema, PromoteSchema, ImportFederatedSchema, ListFederatedSchema,
   SessionReplaySchema, AgentMetricsSchema, TrendsSchema, CheckConventionSchema,
+  FileRecallSchema,
 } from './schemas'
 
 async function main() {
@@ -612,6 +614,16 @@ async function main() {
     'Detect performance trends across sessions — improvements and regressions',
     { agentName: TrendsSchema.shape.agentName },
     async (args) => handleTrends(args, projectId),
+  )
+
+  server.tool(
+    'file_recall',
+    'Find memories related to specific file paths — matches by exact path, directory prefix, or reverse prefix. Prioritises anti-pattern and convention memories.',
+    {
+      filePaths: FileRecallSchema.shape.filePaths,
+      limit: FileRecallSchema.shape.limit,
+    },
+    async (args) => handleFileRecall(args, projectId, cache),
   )
 
   // Register resources
