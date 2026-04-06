@@ -1,7 +1,8 @@
 import * as fs from 'fs'
 import chalk from 'chalk'
+import Database from 'better-sqlite3'
 import { createSupabaseClient } from '@tages/shared'
-import { getProjectsDir } from '../config/paths.js'
+import { getProjectsDir, getCacheDir } from '../config/paths.js'
 
 interface ForgetOptions {
   project?: string
@@ -26,6 +27,14 @@ export async function forgetCommand(key: string, options: ForgetOptions) {
       console.error(chalk.red(`Delete failed: ${error.message}`))
       process.exit(1)
     }
+  }
+
+  // Also delete from local SQLite cache
+  const dbPath = `${getCacheDir()}/${config.slug || config.projectId}.db`
+  if (fs.existsSync(dbPath)) {
+    const db = new Database(dbPath)
+    db.prepare('DELETE FROM memories WHERE project_id = ? AND key = ?').run(config.projectId, key)
+    db.close()
   }
 
   console.log(chalk.green('Deleted:'), `"${key}"`)
