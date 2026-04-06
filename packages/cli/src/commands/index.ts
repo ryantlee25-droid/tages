@@ -98,7 +98,6 @@ export async function indexCommand(options: IndexOptions) {
       }
 
       await supabase.from('memories').upsert({
-        id: memory.id,
         project_id: memory.projectId,
         key: memory.key,
         value: memory.value,
@@ -107,7 +106,7 @@ export async function indexCommand(options: IndexOptions) {
         file_paths: memory.filePaths,
         tags: memory.tags,
         confidence: memory.confidence,
-      }, { onConflict: 'project_id,key' })
+      }, { onConflict: 'project_id,key', ignoreDuplicates: false })
     }
   }
 

@@ -110,7 +110,6 @@ export async function migrateCommand(options: MigrateOptions) {
   spinner.start(`Uploading ${rows.length} memories...`)
 
   const records = rows.map(r => ({
-    id: r.id as string,
     project_id: projectId,
     key: r.key as string,
     value: r.value as string,

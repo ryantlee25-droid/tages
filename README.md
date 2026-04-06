@@ -139,6 +139,27 @@ pnpm test         # 372 vitest tests
 
 ### 2026-04-06
 
+**Bug fix: upsert id-swap causes FK violation on memory_versions**
+
+Root cause: Every upsert call across the codebase passed `id: randomUUID()` in the payload with `onConflict: 'project_id,key'`. When a key already existed, Supabase tried to overwrite the existing row's `id` with the new UUID, which violated the FK constraint from `memory_versions` (which references the old id).
+
+Fix: Remove `id` from all upsert payloads. On insert, Postgres generates an id via `gen_random_uuid()`. On conflict, the existing row's id is preserved. Migration 0037 already cleaned up orphaned versions from past occurrences, but the root cause was never fixed until now.
+
+Changes:
+- `packages/cli/src/commands/remember.ts` — removed id from upsert
+- `packages/cli/src/commands/import.ts` — removed id from upsert
+- `packages/cli/src/commands/index.ts` — removed id from upsert
+- `packages/cli/src/commands/snapshot.ts` — removed id from upsert (2 call sites)
+- `packages/cli/src/commands/migrate.ts` — removed id from upsert
+- `packages/server/src/sync/supabase-sync.ts` — strip id from memoryToDbRow before upsert (3 call sites)
+- `packages/cli/src/__tests__/remember.test.ts` — updated test to assert id is NOT in upsert payload
+
+All 493 tests passing (421 server + 72 CLI).
+
+---
+
+### 2026-04-06 (earlier)
+
 **Bug fixes & recall improvements**
 
 - Fixed `tages status` reporting 0 memories — was using unauthenticated Supabase client, now uses auth session matching `recall`, `remember`, `forget`
@@ -148,8 +169,6 @@ pnpm test         # 372 vitest tests
 - Added validation: query is required unless `--all` is set
 - Two new migrations: `0038_lower_recall_threshold.sql`, `0039_recall_ilike_fallback.sql` (already applied to production Supabase)
 - Updated test suite for new empty-query validation
-
-All 493 tests passing (421 server + 72 CLI).
 
 ## License
 

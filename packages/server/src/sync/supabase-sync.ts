@@ -36,9 +36,10 @@ export class SupabaseSync {
       try {
         if (op.operation === 'upsert') {
           const memory = JSON.parse(op.payload) as Memory
+          const { id: _id, ...rowWithoutId } = memoryToDbRow(memory)
           const { error } = await this.supabase
             .from('memories')
-            .upsert(memoryToDbRow(memory), { onConflict: 'project_id,key' })
+            .upsert(rowWithoutId, { onConflict: 'project_id,key' })
           if (!error) {
             this.wal.markComplete(op.id)
             recovered++
@@ -163,7 +164,10 @@ export class SupabaseSync {
     }
 
     try {
-      const rows = dirty.map(memoryToDbRow)
+      const rows = dirty.map(m => {
+        const { id: _id, ...rest } = memoryToDbRow(m)
+        return rest
+      })
       const { error } = await this.supabase
         .from('memories')
         .upsert(rows, { onConflict: 'project_id,key' })
@@ -189,9 +193,10 @@ export class SupabaseSync {
     const walId = this.wal?.logPending(memory.id, memory.projectId, 'upsert', memoryToDbRow(memory))
 
     try {
+      const { id: _id, ...rowWithoutId } = memoryToDbRow(memory)
       const { error } = await this.supabase
         .from('memories')
-        .upsert(memoryToDbRow(memory), { onConflict: 'project_id,key' })
+        .upsert(rowWithoutId, { onConflict: 'project_id,key' })
 
       if (error) {
         console.error('[tages] Remote insert failed:', error.message)

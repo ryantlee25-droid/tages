@@ -152,8 +152,9 @@ export async function importCommand(file: string, options: ImportOptions) {
       updatedAt: now,
     }
 
+    // Omit `id` from upsert — passing a new UUID on conflict overwrites
+    // the existing row's id, which violates FK from memory_versions.
     const { error } = await supabase.from('memories').upsert({
-      id: memory.id,
       project_id: memory.projectId,
       key: memory.key,
       value: memory.value,
@@ -163,7 +164,7 @@ export async function importCommand(file: string, options: ImportOptions) {
       file_paths: memory.filePaths,
       tags: memory.tags,
       confidence: memory.confidence,
-    }, { onConflict: 'project_id,key' })
+    }, { onConflict: 'project_id,key', ignoreDuplicates: false })
 
     if (error) {
       errors.push(`Failed to store "${key}": ${error.message}`)

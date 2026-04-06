@@ -66,8 +66,11 @@ describe('remember command', () => {
         type: 'convention',
         project_id: 'test-project-id',
       }),
-      { onConflict: 'project_id,key' },
+      { onConflict: 'project_id,key', ignoreDuplicates: false },
     )
+    // id must NOT be in the upsert payload (causes FK violation on memory_versions)
+    const payload = upsertCall.mock.calls[0][0]
+    expect(payload).not.toHaveProperty('id')
     expect(console_.logs.join('\n')).toContain('test-key')
   })
 

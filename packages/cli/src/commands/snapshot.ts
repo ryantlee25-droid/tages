@@ -119,7 +119,6 @@ export async function snapshotCommand(options: SnapshotOptions) {
     // Also store as architecture memories for quick access
     // Top-level summary
     await supabase.from('memories').upsert({
-      id: randomUUID(),
       project_id: config.projectId,
       key: 'auto-snapshot-summary',
       value: `${modules.length} modules, ${dependencies.length} dependencies, ${boundaries.length} boundaries. Top modules: ${modules.sort((a, b) => b.lineCount - a.lineCount).slice(0, 5).map(m => `${m.path} (${m.lineCount} lines)`).join(', ')}`,
@@ -128,12 +127,11 @@ export async function snapshotCommand(options: SnapshotOptions) {
       confidence: 1.0,
       file_paths: modules.map(m => m.path).slice(0, 20),
       tags: ['auto-snapshot'],
-    }, { onConflict: 'project_id,key' })
+    }, { onConflict: 'project_id,key', ignoreDuplicates: false })
 
     // Store each boundary as a memory
     for (const b of boundaries) {
       await supabase.from('memories').upsert({
-        id: randomUUID(),
         project_id: config.projectId,
         key: `boundary-${b.name}`,
         value: b.description,
@@ -142,7 +140,7 @@ export async function snapshotCommand(options: SnapshotOptions) {
         confidence: 1.0,
         file_paths: b.paths,
         tags: ['auto-snapshot', 'boundary'],
-      }, { onConflict: 'project_id,key' })
+      }, { onConflict: 'project_id,key', ignoreDuplicates: false })
     }
   }
 

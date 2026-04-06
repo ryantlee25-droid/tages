@@ -38,8 +38,11 @@ export async function rememberCommand(key: string, value: string, options: Remem
 
   if (config.supabaseUrl && config.supabaseAnonKey) {
     const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
+    // Do not pass `id` in the upsert — when onConflict matches, Supabase
+    // would try to overwrite the existing row's id with a new UUID, which
+    // violates the FK constraint from memory_versions. Omitting id lets
+    // Postgres keep the existing id on update and gen_random_uuid() on insert.
     const { error } = await supabase.from('memories').upsert({
-      id: memory.id,
       project_id: memory.projectId,
       key: memory.key,
       value: memory.value,
@@ -48,7 +51,7 @@ export async function rememberCommand(key: string, value: string, options: Remem
       file_paths: memory.filePaths,
       tags: memory.tags,
       confidence: memory.confidence,
-    }, { onConflict: 'project_id,key' })
+    }, { onConflict: 'project_id,key', ignoreDuplicates: false })
 
     if (error) {
       console.error(chalk.red(`Failed to store memory: ${error.message}`))
