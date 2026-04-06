@@ -22,15 +22,15 @@
     "@tages/shared": "workspace:*",
     "better-sqlite3": "^11.10.0",
     "chalk": "^5.4.0",
-    "commander": "^13.1.0",
+    "commander": "^14.0.3",
     "open": "^11.0.0",
-    "ora": "^8.2.0"
+    "ora": "^9.3.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.19.0",
     "tsx": "^4.21.0",
-    "typescript": "^5.8.0",
+    "typescript": "^6.0.2",
     "vitest": "^4.1.0"
   }
 }
