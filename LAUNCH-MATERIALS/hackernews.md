@@ -18,7 +18,7 @@ Stack: TypeScript monorepo (pnpm), MCP SDK, Supabase (Postgres + pg_trgm fuzzy s
 
 Self-hosting is fully supported — bring your own Supabase instance, no usage limits.
 
-Free tier: 1 project, 500 memories. Pro ($9/mo): unlimited + team sharing.
+Free tier: 1 project, 10,000 memories, full feature set including auto-indexing. Pro ($9/mo): unlimited projects + memories, team sharing, cloud sync.
 
 GitHub: https://github.com/ryantlee25-droid/tages
 

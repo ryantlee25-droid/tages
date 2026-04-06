@@ -81,7 +81,7 @@ Open http://localhost:3000.
 
 ## Limits
 
-Self-hosted Tages has no usage limits. The free-tier limits (1 project, 500 memories) are enforced via RLS policies that check the `user_profiles.is_pro` flag. To bypass:
+Self-hosted Tages has no usage limits. The free-tier limits (1 project, 10,000 memories) are enforced via RLS policies that check the `user_profiles.is_pro` flag. To bypass:
 
 ```sql
 -- Make yourself Pro

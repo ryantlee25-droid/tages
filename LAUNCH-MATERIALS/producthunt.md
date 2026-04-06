@@ -13,7 +13,7 @@ Every time I started a new Claude Code or Cursor session, the agent would re-dis
 
 Tages is an MCP server that sits between your codebase and your AI tools. It remembers everything — conventions, past decisions, architecture notes, lessons learned — and injects it into every new session automatically.
 
-It's open source, works with any MCP-compatible tool, and has a free tier that's genuinely useful (500 memories, no time limit). Pro is $9/mo for teams and unlimited usage. You can also self-host for free.
+It's open source, works with any MCP-compatible tool, and has a free tier that's genuinely useful (10,000 memories, all features including auto-indexing). Pro is $9/mo for teams, unlimited projects, and cloud sync. You can also self-host for free.
 
 I'd love your feedback on what memory types would be most useful for your workflow!
 
