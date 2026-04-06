@@ -146,7 +146,7 @@ export const MatchTemplatesSchema = z.object({
 
 export const ApplyTemplateSchema = z.object({
   templateId: z.string().min(1).describe('Template ID to apply'),
-  fields: z.record(z.string()).describe('Field values for the template'),
+  fields: z.record(z.string(), z.string()).describe('Field values for the template'),
   filePaths: z.array(z.string()).optional().describe('Related file paths'),
 })
 
