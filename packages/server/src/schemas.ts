@@ -41,6 +41,7 @@ export const RecallSchema = z.object({
   query: z.string().min(1).describe('Search query for fuzzy matching'),
   type: MemoryTypeSchema.optional().describe('Filter by memory type'),
   limit: z.number().int().min(1).max(50).default(5).describe('Max results'),
+  maxTokens: z.number().int().min(100).max(100_000).optional().describe('Maximum token budget for response (approx 4 chars per token). Results truncated to fit.'),
 })
 
 export const ForgetSchema = z.object({
@@ -82,6 +83,7 @@ export const ContextualRecallSchema = z.object({
     depth: z.number().int().min(0).max(2).default(0).optional().describe('Multi-hop graph traversal depth via crossSystemRefs (0=direct only, 1=one hop, 2=two hops)'),
   }).optional().describe('Execution context to filter results'),
   limit: z.number().int().min(1).max(50).default(5).describe('Max results'),
+  maxTokens: z.number().int().min(100).max(100_000).optional().describe('Maximum token budget for response (approx 4 chars per token). Results truncated to fit.'),
 })
 
 export const ResolveConflictSchema = z.object({

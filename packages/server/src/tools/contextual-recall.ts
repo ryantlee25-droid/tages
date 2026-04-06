@@ -3,6 +3,7 @@ import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
 import { expandRecall } from '../search/multi-hop'
 import { getEncryptionKey, decryptValue } from '../crypto/encryption'
+import { budgetedResults } from '../search/token-budget'
 
 interface RecallContext {
   currentFiles?: string[]
@@ -12,7 +13,7 @@ interface RecallContext {
 }
 
 export async function handleContextualRecall(
-  args: { query: string; context?: RecallContext; limit?: number },
+  args: { query: string; context?: RecallContext; limit?: number; maxTokens?: number },
   projectId: string,
   cache: SqliteCache,
   sync: SupabaseSync | null,
@@ -79,6 +80,16 @@ export async function handleContextualRecall(
     const allMemories = cache.getAllForProject(projectId).filter(m => m.status === 'live')
     const expanded = expandRecall(results, allMemories, depth)
     results = expanded.slice(0, limit)
+  }
+
+  // Apply token budget trimming if requested
+  if (args.maxTokens !== undefined) {
+    results = budgetedResults(results, args.maxTokens, (m) => {
+      const parts = [`[${m.type}] ${m.key}`, `   ${m.value}`]
+      if (m.conditions?.length) parts.push(`   When: ${m.conditions.join('; ')}`)
+      if (m.filePaths?.length) parts.push(`   Files: ${m.filePaths.join(', ')}`)
+      return parts.join('\n')
+    })
   }
 
   if (results.length === 0) {
