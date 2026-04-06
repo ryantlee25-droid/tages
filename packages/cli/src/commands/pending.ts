@@ -1,8 +1,7 @@
-import * as fs from 'fs'
 import chalk from 'chalk'
 import ora from 'ora'
-import { createSupabaseClient } from '@tages/shared'
-import { getProjectsDir } from '../config/paths.js'
+import { createAuthenticatedClient } from '../auth/session.js'
+import { loadProjectConfig } from '../config/project.js'
 
 interface PendingOptions {
   project?: string
@@ -21,7 +20,7 @@ export async function pendingCommand(options: PendingOptions) {
   }
 
   const spinner = ora('Loading pending memories...').start()
-  const supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey)
+  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
 
   const { data: memories, error } = await supabase
     .from('memories')
@@ -76,15 +75,3 @@ function getTypeColor(type: string) {
   return colors[type] || chalk.white
 }
 
-function loadProjectConfig(slug?: string) {
-  const dir = getProjectsDir()
-  if (!fs.existsSync(dir)) return null
-  if (slug) {
-    const p = `${dir}/${slug}.json`
-    if (!fs.existsSync(p)) return null
-    return JSON.parse(fs.readFileSync(p, 'utf-8'))
-  }
-  const files = fs.readdirSync(dir).filter((f: string) => f.endsWith('.json'))
-  if (files.length === 0) return null
-  return JSON.parse(fs.readFileSync(`${dir}/${files[0]}`, 'utf-8'))
-}

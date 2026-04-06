@@ -1,25 +1,11 @@
-import * as fs from 'fs'
 import chalk from 'chalk'
-import { createSupabaseClient } from '@tages/shared'
-import { getProjectsDir } from '../config/paths.js'
+import { createAuthenticatedClient } from '../auth/session.js'
+import { loadProjectConfig } from '../config/project.js'
 
 interface AnalyticsOptions {
   project?: string
   agent?: string
   limit?: string
-}
-
-function loadProjectConfig(slug?: string) {
-  const dir = getProjectsDir()
-  if (!fs.existsSync(dir)) return null
-  if (slug) {
-    const p = `${dir}/${slug}.json`
-    if (!fs.existsSync(p)) return null
-    return JSON.parse(fs.readFileSync(p, 'utf-8'))
-  }
-  const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'))
-  if (files.length === 0) return null
-  return JSON.parse(fs.readFileSync(`${dir}/${files[0]}`, 'utf-8'))
 }
 
 export async function analyticsSummaryCommand(options: AnalyticsOptions) {
@@ -34,7 +20,7 @@ export async function analyticsSummaryCommand(options: AnalyticsOptions) {
     process.exit(1)
   }
 
-  const supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey)
+  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
 
   const { data: sessions } = await supabase
     .from('agent_sessions')

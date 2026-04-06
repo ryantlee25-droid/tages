@@ -1,7 +1,8 @@
 import * as fs from 'fs'
 import chalk from 'chalk'
-import { createSupabaseClient } from '@tages/shared'
-import { getProjectsDir, getAuthPath } from '../config/paths.js'
+import { createAuthenticatedClient } from '../auth/session.js'
+import { getAuthPath } from '../config/paths.js'
+import { loadProjectConfig } from '../config/project.js'
 import { generateToken } from '../auth/token-auth.js'
 
 interface TokenOptions {
@@ -29,7 +30,7 @@ export async function tokenGenerateCommand(options: TokenOptions) {
   }
 
   const { token, hash } = generateToken()
-  const supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey)
+  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
 
   const { error } = await supabase.from('api_tokens').insert({
     user_id: auth.userId,
@@ -59,7 +60,7 @@ export async function tokenListCommand(options: TokenOptions) {
     process.exit(1)
   }
 
-  const supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey)
+  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
   const { data } = await supabase
     .from('api_tokens')
     .select('id, name, created_at, last_used')
@@ -94,7 +95,7 @@ export async function tokenRotateCommand(options: TokenRotateOptions) {
   }
 
   const tokenName = options.name || 'default'
-  const supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey)
+  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
 
   // Check that the token to rotate exists
   const { data: existing, error: fetchError } = await supabase
@@ -151,19 +152,6 @@ export async function tokenRotateCommand(options: TokenRotateOptions) {
   console.log(chalk.dim('  Save this token — it cannot be shown again.'))
   console.log(chalk.dim('  Use with: tages index --token <token>'))
   console.log(chalk.dim('  Or set: CBM_API_TOKEN=<token> in CI'))
-}
-
-function loadProjectConfig(slug?: string) {
-  const dir = getProjectsDir()
-  if (!fs.existsSync(dir)) return null
-  if (slug) {
-    const p = `${dir}/${slug}.json`
-    if (!fs.existsSync(p)) return null
-    return JSON.parse(fs.readFileSync(p, 'utf-8'))
-  }
-  const files = fs.readdirSync(dir).filter((f: string) => f.endsWith('.json'))
-  if (files.length === 0) return null
-  return JSON.parse(fs.readFileSync(`${dir}/${files[0]}`, 'utf-8'))
 }
 
 function loadAuth() {

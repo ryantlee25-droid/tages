@@ -137,6 +137,28 @@ pnpm test         # 372 vitest tests
 
 ## Release Notes
 
+### 2026-04-06 (auth fix)
+
+**Critical bug fix: RLS silent failure in 22 CLI commands**
+
+Root cause: 22 CLI commands used `createSupabaseClient` (unauthenticated anon key) instead of `createAuthenticatedClient`. With Row Level Security enabled, all queries silently returned 0 results. Commands appeared to work but returned no data — users thought their project was empty.
+
+Fix:
+- Created `packages/cli/src/config/project.ts` — shared `loadProjectConfig()` utility with try/catch for corrupt JSON (outputs friendly error instead of raw stack trace)
+- Updated 21 commands to import from the shared module instead of defining duplicate functions (eliminated 25+ duplicates)
+- Switched 21 commands from `createSupabaseClient` to `createAuthenticatedClient` — `init.ts` correctly kept unauthenticated since it runs before auth exists
+
+Impact: `tages export` now returns 31 memories (was 0), `tages quality` sees all memories, all commands now respect RLS.
+
+Changes:
+- CREATE `packages/cli/src/config/project.ts` — shared loadProjectConfig utility
+- MODIFY 21 command files in `packages/cli/src/commands/` — switch to createAuthenticatedClient + import shared loadProjectConfig
+- MODIFY `packages/cli/src/commands/index.ts` — export loadProjectConfig from shared module
+
+All 493 tests passing (421 server + 72 CLI).
+
+---
+
 ### 2026-04-06
 
 **New feature: `tages session-wrap` — end-of-session memory persistence**

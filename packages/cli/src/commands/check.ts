@@ -3,8 +3,8 @@ import * as path from 'path'
 import { createHash } from 'crypto'
 import chalk from 'chalk'
 import ora from 'ora'
-import { createSupabaseClient } from '@tages/shared'
-import { getProjectsDir } from '../config/paths.js'
+import { createAuthenticatedClient } from '../auth/session.js'
+import { loadProjectConfig } from '../config/project.js'
 import { execSync } from 'child_process'
 
 interface CheckOptions {
@@ -25,7 +25,7 @@ export async function checkCommand(options: CheckOptions) {
   }
 
   const spinner = ora('Checking memories against codebase...').start()
-  const supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey)
+  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
 
   // Get all memories with file_paths
   const { data: memories } = await supabase
@@ -120,15 +120,3 @@ export async function checkCommand(options: CheckOptions) {
   }
 }
 
-function loadProjectConfig(slug?: string) {
-  const dir = getProjectsDir()
-  if (!fs.existsSync(dir)) return null
-  if (slug) {
-    const p = `${dir}/${slug}.json`
-    if (!fs.existsSync(p)) return null
-    return JSON.parse(fs.readFileSync(p, 'utf-8'))
-  }
-  const files = fs.readdirSync(dir).filter((f: string) => f.endsWith('.json'))
-  if (files.length === 0) return null
-  return JSON.parse(fs.readFileSync(`${dir}/${files[0]}`, 'utf-8'))
-}

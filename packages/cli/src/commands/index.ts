@@ -2,9 +2,9 @@ import chalk from 'chalk'
 import ora from 'ora'
 import * as fs from 'fs'
 import { randomUUID } from 'crypto'
-import { createSupabaseClient } from '@tages/shared'
+import { createAuthenticatedClient } from '../auth/session.js'
 import type { Memory, MemoryType } from '@tages/shared'
-import { getProjectsDir } from '../config/paths.js'
+import { loadProjectConfig } from '../config/project.js'
 import { analyzeDiff, detectMode, getGitDiff, getCommitsSince } from '../indexer/diff-analyzer.js'
 import { installPostCommitHook } from '../indexer/install-hook.js'
 
@@ -78,7 +78,7 @@ export async function indexCommand(options: IndexOptions) {
   spinner.start(`Storing ${allMemories.length} memories...`)
 
   if (config.supabaseUrl && config.supabaseAnonKey) {
-    const supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey)
+    const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
     const now = new Date().toISOString()
 
     for (const mem of allMemories) {
@@ -117,15 +117,3 @@ export async function indexCommand(options: IndexOptions) {
   }
 }
 
-function loadProjectConfig(slug?: string) {
-  const dir = getProjectsDir()
-  if (!fs.existsSync(dir)) return null
-  if (slug) {
-    const p = `${dir}/${slug}.json`
-    if (!fs.existsSync(p)) return null
-    return JSON.parse(fs.readFileSync(p, 'utf-8'))
-  }
-  const files = fs.readdirSync(dir).filter((f: string) => f.endsWith('.json'))
-  if (files.length === 0) return null
-  return JSON.parse(fs.readFileSync(`${dir}/${files[0]}`, 'utf-8'))
-}

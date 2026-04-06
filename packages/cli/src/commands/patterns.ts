@@ -1,8 +1,9 @@
 import * as fs from 'fs'
 import chalk from 'chalk'
 import ora from 'ora'
-import { createSupabaseClient } from '@tages/shared'
-import { getProjectsDir, getAuthPath } from '../config/paths.js'
+import { createAuthenticatedClient } from '../auth/session.js'
+import { getAuthPath } from '../config/paths.js'
+import { loadProjectConfig } from '../config/project.js'
 
 interface PatternsOptions {
   project?: string
@@ -17,7 +18,7 @@ export async function patternsDetectCommand(options: PatternsOptions) {
   }
 
   const spinner = ora('Detecting shared patterns across projects...').start()
-  const supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey)
+  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
 
   const { data, error } = await supabase.rpc('detect_shared_patterns', {
     p_user_id: auth.userId,
@@ -52,7 +53,7 @@ export async function patternsPromoteCommand(key: string, options: PatternsOptio
     process.exit(1)
   }
 
-  const supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey)
+  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
 
   // Find the memory by key
   const { data: mem } = await supabase
@@ -91,7 +92,7 @@ export async function patternsListCommand(options: PatternsOptions) {
     process.exit(1)
   }
 
-  const supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey)
+  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
   const { data } = await supabase
     .from('pattern_library')
     .select('*')
@@ -111,19 +112,6 @@ export async function patternsListCommand(options: PatternsOptions) {
     if (projects) console.log(`    ${chalk.dim('Projects: ' + projects)}`)
     console.log()
   }
-}
-
-function loadProjectConfig(slug?: string) {
-  const dir = getProjectsDir()
-  if (!fs.existsSync(dir)) return null
-  if (slug) {
-    const p = `${dir}/${slug}.json`
-    if (!fs.existsSync(p)) return null
-    return JSON.parse(fs.readFileSync(p, 'utf-8'))
-  }
-  const files = fs.readdirSync(dir).filter((f: string) => f.endsWith('.json'))
-  if (files.length === 0) return null
-  return JSON.parse(fs.readFileSync(`${dir}/${files[0]}`, 'utf-8'))
 }
 
 function loadAuth() {

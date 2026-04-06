@@ -1,7 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import chalk from 'chalk'
-import { createSupabaseClient } from '@tages/shared'
+import { createAuthenticatedClient } from '../auth/session.js'
 import { getProjectsDir, getCachePath, getAuthPath } from '../config/paths.js'
 
 interface DoctorOptions {
@@ -52,7 +52,7 @@ export async function doctorCommand(options: DoctorOptions) {
   // 4. Supabase connectivity (if cloud mode)
   if (config.supabaseUrl && config.supabaseAnonKey) {
     try {
-      const supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey)
+      const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
       const { error } = await supabase.from('projects').select('id').limit(1)
       if (check('Supabase connection', !error, error ? error.message : config.supabaseUrl)) passed++
       else failed++

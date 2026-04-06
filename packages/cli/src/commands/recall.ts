@@ -2,7 +2,8 @@ import * as fs from 'fs'
 import chalk from 'chalk'
 import Database from 'better-sqlite3'
 import { createAuthenticatedClient } from '../auth/session.js'
-import { getProjectsDir, getCacheDir } from '../config/paths.js'
+import { loadProjectConfig } from '../config/project.js'
+import { getCacheDir } from '../config/paths.js'
 
 interface RecallOptions {
   type?: string
@@ -212,15 +213,3 @@ function getTypeColor(type: string) {
   return colors[type] || chalk.white
 }
 
-function loadProjectConfig(slug?: string) {
-  const dir = getProjectsDir()
-  if (!fs.existsSync(dir)) return null
-  if (slug) {
-    const p = `${dir}/${slug}.json`
-    if (!fs.existsSync(p)) return null
-    return JSON.parse(fs.readFileSync(p, 'utf-8'))
-  }
-  const files = fs.readdirSync(dir).filter(f => f.endsWith('.json'))
-  if (files.length === 0) return null
-  return JSON.parse(fs.readFileSync(`${dir}/${files[0]}`, 'utf-8'))
-}
