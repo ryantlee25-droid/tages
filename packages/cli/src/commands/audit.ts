@@ -1,7 +1,6 @@
 import chalk from 'chalk'
 import { createAuthenticatedClient } from '../auth/session.js'
 import { loadProjectConfig } from '../config/project.js'
-import type { AuditResult } from '../../../server/src/audit/memory-auditor.js'
 import type { Memory, MemoryType } from '@tages/shared'
 
 interface AuditOptions {
@@ -9,14 +8,59 @@ interface AuditOptions {
   json?: boolean
 }
 
+interface AuditResult {
+  typeCounts: Record<MemoryType, number>
+  missingTypes: MemoryType[]
+  briefCriticalCoverage: number
+  imperativeRatio: number
+  suggestions: string[]
+  score: number
+}
+
 const BRIEF_CRITICAL_TYPES: MemoryType[] = [
   'anti_pattern', 'lesson', 'pattern', 'execution', 'convention',
+]
+
+const ALL_TYPES: MemoryType[] = [
+  'convention', 'decision', 'architecture', 'entity', 'lesson',
+  'preference', 'pattern', 'execution', 'operational', 'environment', 'anti_pattern',
 ]
 
 const ALL_DISPLAY_ORDER: MemoryType[] = [
   'anti_pattern', 'lesson', 'pattern', 'execution', 'convention',
   'decision', 'architecture', 'entity', 'preference', 'operational', 'environment',
 ]
+
+const IMPERATIVE_WORDS = /\b(ALWAYS|NEVER|MUST|DO NOT|STOP|AVOID|REQUIRE|ENSURE|USE)\b/
+const IMPERATIVE_TYPES: MemoryType[] = ['convention', 'anti_pattern', 'lesson']
+
+function auditMemories(memories: Memory[]): AuditResult {
+  const typeCounts = {} as Record<MemoryType, number>
+  for (const t of ALL_TYPES) typeCounts[t] = 0
+  for (const m of memories) if (m.type in typeCounts) typeCounts[m.type as MemoryType]++
+
+  const missingTypes = ALL_TYPES.filter(t => typeCounts[t] === 0)
+  const coveredCritical = BRIEF_CRITICAL_TYPES.filter(t => typeCounts[t] > 0)
+  const briefCriticalCoverage = coveredCritical.length * 20
+
+  const imperativeCandidates = memories.filter(m => IMPERATIVE_TYPES.includes(m.type))
+  const imperativeCount = imperativeCandidates.filter(m => IMPERATIVE_WORDS.test(m.value)).length
+  const imperativeRatio = imperativeCandidates.length === 0 ? 0 : imperativeCount / imperativeCandidates.length
+  const score = Math.round(briefCriticalCoverage * 0.6 + imperativeRatio * 100 * 0.4)
+
+  const suggestions: string[] = []
+  const missingCritical = BRIEF_CRITICAL_TYPES.filter(t => typeCounts[t] === 0)
+  if (missingCritical.length > 0)
+    suggestions.push(`Add memories of type: ${missingCritical.join(', ')} — these are brief-critical and improve context quality by 20 pts each.`)
+  if (imperativeRatio < 0.5 && imperativeCandidates.length > 0) {
+    const nonImperative = imperativeCandidates.filter(m => !IMPERATIVE_WORDS.test(m.value)).length
+    suggestions.push(`${nonImperative} convention/anti_pattern/lesson memories lack imperative phrasing (ALWAYS/NEVER/MUST). Run \`tages sharpen --all\` to fix.`)
+  }
+  if (memories.length < 10) suggestions.push(`Only ${memories.length} memories stored. Aim for 10+ for meaningful briefs.`)
+  if (typeCounts.anti_pattern === 0) suggestions.push('No anti_pattern memories — add gotchas with `tages remember <key> <value> -t anti_pattern`.')
+
+  return { typeCounts, missingTypes, briefCriticalCoverage, imperativeRatio, suggestions, score }
+}
 
 export async function auditCommand(options: AuditOptions) {
   const config = loadProjectConfig(options.project)
@@ -29,9 +73,6 @@ export async function auditCommand(options: AuditOptions) {
     console.error(chalk.red('Audit requires Supabase connection (freshness matters for audit).'))
     process.exit(1)
   }
-
-  // @ts-ignore — cross-package import; server must be built first
-  const { auditMemories } = await import('../../../server/src/audit/memory-auditor.js') as { auditMemories: (memories: Memory[]) => AuditResult }
 
   const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
 
