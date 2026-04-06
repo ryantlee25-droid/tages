@@ -27,6 +27,30 @@ export async function createAuthenticatedClient(supabaseUrl: string, supabaseAno
         access_token: auth.accessToken,
         refresh_token: auth.refreshToken,
       })
+
+      // Verify the session is valid — setSession() does not fail if the access token is expired
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+
+      if (sessionError || !sessionData.session) {
+        // Access token is expired — attempt refresh using the stored refresh token
+        const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession({
+          refresh_token: auth.refreshToken,
+        })
+
+        if (refreshError || !refreshData.session) {
+          // Refresh token is also expired — user must re-authenticate
+          console.error('[tages] Session expired. Run `tages init` to re-authenticate.')
+          return supabase // Return unauthenticated client
+        }
+
+        // Persist the new tokens so subsequent commands don't need to refresh again
+        const updatedAuth = {
+          ...auth,
+          accessToken: refreshData.session.access_token,
+          refreshToken: refreshData.session.refresh_token,
+        }
+        fs.writeFileSync(authPath, JSON.stringify(updatedAuth, null, 2), { mode: 0o600 })
+      }
     }
   }
 
