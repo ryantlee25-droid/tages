@@ -29,6 +29,7 @@ import { templatesListCommand, templatesMatchCommand, templatesApplyCommand } fr
 import { archiveListCommand, archiveStatsCommand } from './commands/archive.js'
 import { federateCommand, federationListCommand, federationImportCommand, federationOverridesCommand } from './commands/federation-cmd.js'
 import { analyticsSummaryCommand, analyticsSessionCommand, analyticsTrendsCommand } from './commands/analytics.js'
+import { migrateCommand } from './commands/migrate.js'
 
 const program = new Command()
 
@@ -358,5 +359,11 @@ analyticsCmd
   .option('--agent <name>', 'Filter by agent name')
   .option('-p, --project <slug>', 'Project slug')
   .action(analyticsTrendsCommand)
+
+program
+  .command('migrate')
+  .description('Migrate a local-only project to cloud mode')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(migrateCommand)
 
 program.parse()

@@ -4,7 +4,7 @@
   "description": "CLI for Tages — persistent codebase memory for AI coding agents",
   "type": "module",
   "bin": {
-    "tages": "./dist/index.js"
+    "tages": "./dist/packages/cli/src/index.js"
   },
   "files": [
     "dist",

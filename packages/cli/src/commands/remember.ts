@@ -1,8 +1,8 @@
 import * as fs from 'fs'
 import chalk from 'chalk'
 import Database from 'better-sqlite3'
-import { createSupabaseClient } from '@tages/shared'
 import type { Memory, MemoryType } from '@tages/shared'
+import { createAuthenticatedClient } from '../auth/session.js'
 import { getProjectsDir, getCacheDir } from '../config/paths.js'
 import { randomUUID } from 'crypto'
 
@@ -37,7 +37,7 @@ export async function rememberCommand(key: string, value: string, options: Remem
   }
 
   if (config.supabaseUrl && config.supabaseAnonKey) {
-    const supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey)
+    const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
     const { error } = await supabase.from('memories').upsert({
       id: memory.id,
       project_id: memory.projectId,

@@ -1,7 +1,7 @@
 import * as fs from 'fs'
 import chalk from 'chalk'
 import Database from 'better-sqlite3'
-import { createSupabaseClient } from '@tages/shared'
+import { createAuthenticatedClient } from '../auth/session.js'
 import { getProjectsDir, getCacheDir } from '../config/paths.js'
 
 interface RecallOptions {
@@ -20,7 +20,7 @@ export async function recallCommand(query: string, options: RecallOptions) {
   const limit = options.limit ? parseInt(options.limit, 10) : 5
 
   if (config.supabaseUrl && config.supabaseAnonKey) {
-    const supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey)
+    const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
 
     // Hybrid search: run trigram + semantic in parallel, merge & deduplicate
     let data: Record<string, unknown>[] | null = null
