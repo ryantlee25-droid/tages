@@ -197,3 +197,9 @@ export const AgentMetricsSchema = z.object({
 export const TrendsSchema = z.object({
   agentName: z.string().optional().describe('Filter by agent name'),
 })
+
+// Task 7 — CLAUDE.md import
+export const ImportClaudeMdSchema = z.object({
+  content: z.string().min(1).max(512_000).describe('Raw CLAUDE.md file content'),
+  strategy: z.enum(['skip', 'overwrite']).optional().default('skip').describe('How to handle existing memories with the same key'),
+})
