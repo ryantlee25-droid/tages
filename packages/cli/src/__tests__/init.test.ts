@@ -27,6 +27,31 @@ vi.mock('../config/mcp-inject.js', () => ({
 // Mock open (browser launcher)
 vi.mock('open', () => ({ default: vi.fn() }))
 
+// Mock @tages/shared — createSupabaseClient for cloud init
+const mockSupabase = {
+  auth: {
+    setSession: vi.fn().mockResolvedValue({ data: { session: {} }, error: null }),
+  },
+  from: vi.fn().mockReturnValue({
+    select: vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+      }),
+    }),
+    insert: vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({
+          data: { id: 'mock-project-uuid' },
+          error: null,
+        }),
+      }),
+    }),
+  }),
+}
+vi.mock('@tages/shared', () => ({
+  createSupabaseClient: vi.fn(() => mockSupabase),
+}))
+
 let tempConfigDir: string
 let cleanupFn: () => void
 
@@ -145,9 +170,12 @@ describe('init command', () => {
     const auth = JSON.parse(fs.readFileSync(authPath, 'utf-8'))
     expect(auth.accessToken).toBe('mock-access')
 
-    // Project config should also be written
+    // Project config should be written with real Supabase creds
     const projectPath = path.join(tempConfigDir, 'projects', 'cloud-app.json')
     expect(fs.existsSync(projectPath)).toBe(true)
+    const config = JSON.parse(fs.readFileSync(projectPath, 'utf-8'))
+    expect(config.projectId).toBe('mock-project-uuid')
+    expect(config.supabaseUrl).toContain('supabase.co')
   })
 
   it('handles OAuth failure gracefully', async () => {
