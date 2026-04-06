@@ -123,11 +123,11 @@ export async function recallCommand(query: string, options: RecallOptions) {
     const queryLower = `%${query.toLowerCase()}%`
     let stmt
     if (options.type) {
-      stmt = db.prepare(`SELECT * FROM memories WHERE project_id = ? AND type = ? AND status = 'live' AND (LOWER(key) LIKE ? OR LOWER(value) LIKE ?) ORDER BY updated_at DESC LIMIT ?`)
-      stmt = stmt.bind(config.projectId, options.type, queryLower, queryLower, limit)
+      stmt = db.prepare(`SELECT * FROM memories WHERE project_id = ? AND type = ? AND status = 'live' AND (LOWER(key) LIKE ? OR LOWER(value) LIKE ? OR LOWER(type) LIKE ? OR LOWER(tags) LIKE ?) ORDER BY updated_at DESC LIMIT ?`)
+      stmt = stmt.bind(config.projectId, options.type, queryLower, queryLower, queryLower, queryLower, limit)
     } else {
-      stmt = db.prepare(`SELECT * FROM memories WHERE project_id = ? AND status = 'live' AND (LOWER(key) LIKE ? OR LOWER(value) LIKE ?) ORDER BY updated_at DESC LIMIT ?`)
-      stmt = stmt.bind(config.projectId, queryLower, queryLower, limit)
+      stmt = db.prepare(`SELECT * FROM memories WHERE project_id = ? AND status = 'live' AND (LOWER(key) LIKE ? OR LOWER(value) LIKE ? OR LOWER(type) LIKE ? OR LOWER(tags) LIKE ?) ORDER BY updated_at DESC LIMIT ?`)
+      stmt = stmt.bind(config.projectId, queryLower, queryLower, queryLower, queryLower, limit)
     }
     const rows = stmt.all() as Array<{ key: string; value: string; type: string }>
     db.close()
@@ -156,6 +156,9 @@ function getTypeColor(type: string) {
     lesson: chalk.cyan,
     preference: chalk.gray,
     pattern: chalk.white,
+    execution: chalk.red,
+    operational: chalk.yellowBright,
+    environment: chalk.blueBright,
   }
   return colors[type] || chalk.white
 }

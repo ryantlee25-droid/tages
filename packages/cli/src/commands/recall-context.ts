@@ -108,6 +108,8 @@ function getTypeColor(type: string) {
     preference: chalk.gray,
     pattern: chalk.white,
     execution: chalk.red,
+    operational: chalk.yellowBright,
+    environment: chalk.blueBright,
   }
   return colors[type] || chalk.white
 }

@@ -11,6 +11,8 @@ export type MemoryType =
   | 'preference'
   | 'pattern'
   | 'execution'
+  | 'operational'
+  | 'environment'
 
 export type MemorySource =
   | 'manual'
