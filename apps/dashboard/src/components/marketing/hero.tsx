@@ -30,7 +30,7 @@ export function Hero() {
       {/* Stats */}
       <div className="mt-12 flex gap-8 text-center">
         <div>
-          <p className="text-2xl font-bold text-white">13</p>
+          <p className="text-2xl font-bold text-white">55</p>
           <p className="text-xs text-zinc-500">MCP tools</p>
         </div>
         <div>
@@ -38,8 +38,8 @@ export function Hero() {
           <p className="text-xs text-zinc-500">local recall</p>
         </div>
         <div>
-          <p className="text-2xl font-bold text-white">+28%</p>
-          <p className="text-xs text-zinc-500">doc quality improvement</p>
+          <p className="text-2xl font-bold text-white">+14%</p>
+          <p className="text-xs text-zinc-500">agent quality improvement</p>
         </div>
       </div>
 
