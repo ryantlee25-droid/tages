@@ -3,7 +3,7 @@ import { z } from 'zod'
 export const MemoryTypeSchema = z.enum([
   'convention', 'decision', 'architecture',
   'entity', 'lesson', 'preference', 'pattern', 'execution',
-  'operational', 'environment',
+  'operational', 'environment', 'anti_pattern',
 ])
 
 export const MemorySourceSchema = z.enum([
@@ -196,4 +196,10 @@ export const AgentMetricsSchema = z.object({
 
 export const TrendsSchema = z.object({
   agentName: z.string().optional().describe('Filter by agent name'),
+})
+
+// pre_check — Pre-task gotcha check
+export const PreCheckSchema = z.object({
+  taskDescription: z.string().min(1).describe('Description of the task you are about to perform'),
+  filePaths: z.array(z.string()).optional().describe('File paths you plan to edit'),
 })

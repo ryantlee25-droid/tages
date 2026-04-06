@@ -41,13 +41,14 @@ import { handleArchive, handleRestore, handleListArchived, handleArchiveStats, h
 import { handlePromote, handleImportFederated, handleListFederated, handleResolveOverrides } from './tools/federation'
 import { handleSessionReplay, handleAgentMetrics, handleTrends } from './tools/analytics'
 import { globalSessionRecorder } from './analytics/session-recorder'
+import { handlePreCheck } from './tools/pre-check'
 import {
   RememberSchema, RecallSchema, ForgetSchema, ContextSchema, SessionEndSchema, VerifyMemorySchema,
   MemoryHistorySchema, ContextualRecallSchema, ResolveConflictSchema, ImportSchema,
   DedupSchema, ConsolidateSchema, ImpactAnalysisSchema, MemoryQualitySchema,
   MatchTemplatesSchema, ApplyTemplateSchema, ArchiveSchema, RestoreSchema, ListArchivedSchema,
   AutoArchiveSchema, PromoteSchema, ImportFederatedSchema, ListFederatedSchema,
-  SessionReplaySchema, AgentMetricsSchema, TrendsSchema, CheckConventionSchema,
+  SessionReplaySchema, AgentMetricsSchema, TrendsSchema, CheckConventionSchema, PreCheckSchema,
 } from './schemas'
 
 async function main() {
@@ -612,6 +613,17 @@ async function main() {
     'Detect performance trends across sessions — improvements and regressions',
     { agentName: TrendsSchema.shape.agentName },
     async (args) => handleTrends(args, projectId),
+  )
+
+  // pre_check — Pre-task gotcha check
+  server.tool(
+    'pre_check',
+    'Before starting a task, get a list of gotchas: anti-patterns to avoid, conventions to follow, and lessons learned from past experience',
+    {
+      taskDescription: PreCheckSchema.shape.taskDescription,
+      filePaths: PreCheckSchema.shape.filePaths,
+    },
+    async (args) => handlePreCheck(args, projectId, cache, sync),
   )
 
   // Register resources
