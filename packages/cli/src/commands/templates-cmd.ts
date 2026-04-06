@@ -1,12 +1,17 @@
 import chalk from 'chalk'
-// @ts-ignore — cross-package import; server must be built first
-import { BUILTIN_TEMPLATES } from '../../../server/src/templates/builtin-templates.js'
 
 interface TemplatesOptions {
   project?: string
 }
 
+async function getTemplates() {
+  // @ts-ignore — cross-package import; server must be built first
+  const { BUILTIN_TEMPLATES } = await import('../../../server/src/templates/builtin-templates.js')
+  return BUILTIN_TEMPLATES as Array<{ id: string; name: string; description: string; fields: Array<{ name: string; required: boolean; description: string }>; filePatterns: RegExp[] }>
+}
+
 export async function templatesListCommand(_options: TemplatesOptions) {
+  const BUILTIN_TEMPLATES = await getTemplates()
   console.log(chalk.bold('Available Memory Templates:\n'))
   for (const t of BUILTIN_TEMPLATES) {
     console.log(`  ${chalk.cyan(`[${t.id}]`)} ${chalk.bold(t.name)}`)
@@ -18,6 +23,7 @@ export async function templatesListCommand(_options: TemplatesOptions) {
 }
 
 export async function templatesMatchCommand(filePath: string, _options: TemplatesOptions) {
+  const BUILTIN_TEMPLATES = await getTemplates()
   console.log(chalk.bold(`Templates matching "${filePath}":\n`))
   const matches = BUILTIN_TEMPLATES.filter(t =>
     t.filePatterns.some(p => p.test(filePath))
@@ -33,6 +39,7 @@ export async function templatesMatchCommand(filePath: string, _options: Template
 }
 
 export async function templatesApplyCommand(name: string, _options: TemplatesOptions) {
+  const BUILTIN_TEMPLATES = await getTemplates()
   const template = BUILTIN_TEMPLATES.find(t => t.id === name)
   if (!template) {
     console.error(chalk.red(`Template "${name}" not found.`))

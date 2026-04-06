@@ -158,13 +158,13 @@ describe('recall command', () => {
     exitSpy.mockRestore()
   })
 
-  it('shows cloud-required message in local-only mode', async () => {
+  it('shows no-memories message in local-only mode', async () => {
     writeProjectConfig(tempConfigDir, TEST_LOCAL_CONFIG)
 
     await recallCommand('test', {})
 
     const output = console_.errors.join('\n') + console_.logs.join('\n')
-    expect(output).toContain('No Supabase config')
+    expect(output).toContain('No local memories yet')
   })
 
   it('deduplicates results from trigram and semantic searches', async () => {

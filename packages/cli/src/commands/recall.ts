@@ -1,7 +1,8 @@
 import * as fs from 'fs'
 import chalk from 'chalk'
+import Database from 'better-sqlite3'
 import { createSupabaseClient } from '@tages/shared'
-import { getProjectsDir } from '../config/paths.js'
+import { getProjectsDir, getCacheDir } from '../config/paths.js'
 
 interface RecallOptions {
   type?: string
@@ -112,8 +113,37 @@ export async function recallCommand(query: string, options: RecallOptions) {
       console.log()
     }
   } else {
-    console.error(chalk.yellow('No Supabase config — recall requires cloud connection.'))
-    console.log(chalk.dim('Run `tages init` to configure cloud sync.'))
+    // Local-only mode: use SQLite cache
+    const dbPath = `${getCacheDir()}/${config.slug || config.projectId}.db`
+    if (!fs.existsSync(dbPath)) {
+      console.log(chalk.dim('No local memories yet. Run `tages remember` to store your first memory.'))
+      return
+    }
+    const db = new Database(dbPath, { readonly: true })
+    const queryLower = `%${query.toLowerCase()}%`
+    let stmt
+    if (options.type) {
+      stmt = db.prepare(`SELECT * FROM memories WHERE project_id = ? AND type = ? AND status = 'live' AND (LOWER(key) LIKE ? OR LOWER(value) LIKE ?) ORDER BY updated_at DESC LIMIT ?`)
+      stmt = stmt.bind(config.projectId, options.type, queryLower, queryLower, limit)
+    } else {
+      stmt = db.prepare(`SELECT * FROM memories WHERE project_id = ? AND status = 'live' AND (LOWER(key) LIKE ? OR LOWER(value) LIKE ?) ORDER BY updated_at DESC LIMIT ?`)
+      stmt = stmt.bind(config.projectId, queryLower, queryLower, limit)
+    }
+    const rows = stmt.all() as Array<{ key: string; value: string; type: string }>
+    db.close()
+
+    if (rows.length === 0) {
+      console.log(chalk.dim(`No memories found matching "${query}".`))
+      return
+    }
+
+    console.log(chalk.bold(`Found ${rows.length} memories`) + chalk.dim(` (local SQLite):\n`))
+    for (const row of rows) {
+      const typeColor = getTypeColor(row.type)
+      console.log(`  ${typeColor(row.type.padEnd(12))} ${chalk.bold(row.key)}`)
+      console.log(`  ${chalk.dim('             ')}${row.value}`)
+      console.log()
+    }
   }
 }
 

@@ -1,8 +1,9 @@
 import * as fs from 'fs'
 import chalk from 'chalk'
+import Database from 'better-sqlite3'
 import { createSupabaseClient } from '@tages/shared'
 import type { Memory, MemoryType } from '@tages/shared'
-import { getProjectsDir } from '../config/paths.js'
+import { getProjectsDir, getCacheDir } from '../config/paths.js'
 import { randomUUID } from 'crypto'
 
 interface RememberOptions {
@@ -54,6 +55,26 @@ export async function rememberCommand(key: string, value: string, options: Remem
       process.exit(1)
     }
   }
+
+  // Always store to local SQLite cache
+  const cacheDir = getCacheDir()
+  if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true })
+  const dbPath = `${cacheDir}/${config.slug || config.projectId}.db`
+  const db = new Database(dbPath)
+  db.exec(`CREATE TABLE IF NOT EXISTS memories (
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
+    type TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manual', agent_name TEXT,
+    file_paths TEXT DEFAULT '[]', tags TEXT DEFAULT '[]', confidence REAL NOT NULL DEFAULT 1.0,
+    status TEXT NOT NULL DEFAULT 'live', conditions TEXT, phases TEXT, cross_system_refs TEXT,
+    examples TEXT, execution_flow TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    dirty INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(project_id, key)
+  )`)
+  db.prepare(`INSERT OR REPLACE INTO memories (id, project_id, key, value, type, source, file_paths, tags, confidence, status, created_at, updated_at, dirty)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`)
+    .run(memory.id, memory.projectId, memory.key, memory.value, memory.type, memory.source,
+      JSON.stringify(memory.filePaths), JSON.stringify(memory.tags), memory.confidence, memory.status, memory.createdAt, memory.updatedAt)
+  db.close()
 
   console.log(chalk.green('Stored:'), `"${key}" (${options.type})`)
 }
