@@ -6,6 +6,7 @@ dist/
 .turbo/
 .vercel/
 .claire/
-.claude/
+.claude/*
+!.claude/commands/
 packages/server/coverage/
 supabase/.temp/
