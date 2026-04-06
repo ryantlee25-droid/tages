@@ -24,5 +24,13 @@
     "agents"
   ],
   "author": "Ryan Lee",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ryantlee25-droid/tages.git"
+  },
+  "homepage": "https://github.com/ryantlee25-droid/tages",
+  "bugs": {
+    "url": "https://github.com/ryantlee25-droid/tages/issues"
+  }
 }
