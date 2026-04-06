@@ -137,6 +137,28 @@ pnpm test         # 372 vitest tests
 
 ## Release Notes
 
+### 2026-04-06 (Wave 2: High-severity fixes from E2E evaluation)
+
+**5 critical bugs fixed**
+
+1. **Templates ESM/CJS crash fixed** — `templates list` and `templates match` crashed with "exports is not defined" because server compiles to CJS but CLI is ESM. Fixed by using `createRequire` for CJS interop.
+   - File: `packages/cli/src/commands/templates-cmd.ts`
+
+2. **Session-wrap period splitting fixed** — `.split(/[.\n]/)` broke on file paths like `.ts`, truncating memory values. Changed to `.split(/\n|(?<=\.)\s+(?=[A-Z])/)` which only splits on sentence boundaries.
+   - Files: `packages/server/src/tools/session-extract.ts`, `packages/cli/src/commands/session-wrap.ts`
+
+3. **Token output fixed** — Removed false references to non-existent `--token` flag and legacy `CBM_API_TOKEN` env var. Updated to reference `TAGES_SERVICE_KEY` which is the actual env var.
+   - File: `packages/cli/src/commands/token.ts`
+
+4. **ProjectNav missing tabs fixed** — Added "Conflicts" and "Graph" tabs that had routes but no navigation links.
+   - File: `apps/dashboard/src/components/project-nav.tsx`
+
+5. **InviteMember broken flow** — Requires design decision about invite model. Not fixed in this commit.
+
+All 493 tests pass.
+
+---
+
 ### 2026-04-06 (auth fix)
 
 **Critical bug fix: RLS silent failure in 22 CLI commands**

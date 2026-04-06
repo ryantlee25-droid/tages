@@ -142,7 +142,7 @@ function extractMemoriesFromSummary(summary: string): ExtractedMemory[] {
   const extracted: ExtractedMemory[] = []
 
   const lines = summary
-    .split(/[.\n]/)
+    .split(/\n|(?<=\.)\s+(?=[A-Z])/)
     .map(l => l.trim())
     .filter(l => l.length > 10)
 

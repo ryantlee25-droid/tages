@@ -10,6 +10,8 @@ const TABS = [
   { key: 'activity', label: 'Activity', href: '/activity' },
   { key: 'pending', label: 'Pending', href: '/pending' },
   { key: 'execution', label: 'Execution', href: '/execution' },
+  { key: 'conflicts', label: 'Conflicts', href: '/conflicts' },
+  { key: 'graph', label: 'Graph', href: '/graph' },
   { key: 'stats', label: 'Stats', href: '/stats' },
   { key: 'settings', label: 'Settings', href: '/settings' },
 ]

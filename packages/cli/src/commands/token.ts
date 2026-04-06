@@ -49,8 +49,8 @@ export async function tokenGenerateCommand(options: TokenOptions) {
   console.log(chalk.bold(`  ${token}`))
   console.log()
   console.log(chalk.dim('  Save this token — it cannot be shown again.'))
-  console.log(chalk.dim('  Use with: tages index --token <token>'))
-  console.log(chalk.dim('  Or set: CBM_API_TOKEN=<token> in CI'))
+  console.log(chalk.dim('  Use with: TAGES_SERVICE_KEY=<token> tages index --last-commit'))
+  console.log(chalk.dim('  Or set: TAGES_SERVICE_KEY=<token> in CI'))
 }
 
 export async function tokenListCommand(options: TokenOptions) {
@@ -150,8 +150,8 @@ export async function tokenRotateCommand(options: TokenRotateOptions) {
     console.log(chalk.dim('  Expiry: none (non-expiring)'))
   }
   console.log(chalk.dim('  Save this token — it cannot be shown again.'))
-  console.log(chalk.dim('  Use with: tages index --token <token>'))
-  console.log(chalk.dim('  Or set: CBM_API_TOKEN=<token> in CI'))
+  console.log(chalk.dim('  Use with: TAGES_SERVICE_KEY=<token> tages index --last-commit'))
+  console.log(chalk.dim('  Or set: TAGES_SERVICE_KEY=<token> in CI'))
 }
 
 function loadAuth() {

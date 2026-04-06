@@ -5,9 +5,25 @@ interface TemplatesOptions {
 }
 
 async function getTemplates() {
-  // @ts-ignore — cross-package import; server must be built first
-  const { BUILTIN_TEMPLATES } = await import('../../../server/src/templates/builtin-templates.js')
-  return BUILTIN_TEMPLATES as Array<{ id: string; name: string; description: string; fields: Array<{ name: string; required: boolean; description: string }>; filePatterns: RegExp[] }>
+  // Server compiles to CJS but CLI is ESM — use createRequire for CJS interop
+  // CLI dist is at packages/cli/dist/packages/cli/src/commands/
+  // Server dist is at packages/server/dist/templates/
+  // Navigate up to monorepo root then into server/dist
+  const { createRequire } = await import('module')
+  const { fileURLToPath } = await import('url')
+  const { dirname, resolve } = await import('path')
+  const __dirname = dirname(fileURLToPath(import.meta.url))
+  // From cli/dist/packages/cli/src/commands → go up 7 levels to monorepo root
+  const monorepoRoot = resolve(__dirname, '..', '..', '..', '..', '..', '..', '..')
+  const serverTemplates = resolve(monorepoRoot, 'packages', 'server', 'dist', 'templates', 'builtin-templates.js')
+  const require = createRequire(import.meta.url)
+  try {
+    const { BUILTIN_TEMPLATES } = require(serverTemplates)
+    return BUILTIN_TEMPLATES as Array<{ id: string; name: string; description: string; fields: Array<{ name: string; required: boolean; description: string }>; filePatterns: RegExp[] }>
+  } catch {
+    console.error(chalk.red('Failed to load templates. Run `pnpm build` first.'))
+    process.exit(1)
+  }
 }
 
 export async function templatesListCommand(_options: TemplatesOptions) {
