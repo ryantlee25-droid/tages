@@ -13,6 +13,7 @@ export type MemoryType =
   | 'execution'
   | 'operational'
   | 'environment'
+  | 'anti_pattern'
 
 export type MemorySource =
   | 'manual'

@@ -30,6 +30,7 @@ import { handleContextualRecall } from './tools/contextual-recall'
 import { handleResolveConflict, handleListConflicts } from './tools/resolve-conflict'
 import { handleSuggestions } from './tools/suggestion-engine'
 import { handleImport } from './tools/import'
+import { handleImportClaudeMd } from './tools/import-claude-md'
 import { handleMemoryGraph } from './tools/memory-graph'
 import { QueryLog } from './cache/query-log'
 import { handleDetectDuplicates, handleConsolidate } from './tools/dedup'
@@ -40,14 +41,17 @@ import { handleListTemplates, handleMatchTemplates, handleApplyTemplate } from '
 import { handleArchive, handleRestore, handleListArchived, handleArchiveStats, handleAutoArchive } from './tools/archive-manager'
 import { handlePromote, handleImportFederated, handleListFederated, handleResolveOverrides } from './tools/federation'
 import { handleSessionReplay, handleAgentMetrics, handleTrends } from './tools/analytics'
+import { handleFileRecall } from './tools/file-recall'
 import { globalSessionRecorder } from './analytics/session-recorder'
+import { handlePreCheck } from './tools/pre-check'
 import {
   RememberSchema, RecallSchema, ForgetSchema, ContextSchema, SessionEndSchema, VerifyMemorySchema,
   MemoryHistorySchema, ContextualRecallSchema, ResolveConflictSchema, ImportSchema,
   DedupSchema, ConsolidateSchema, ImpactAnalysisSchema, MemoryQualitySchema,
   MatchTemplatesSchema, ApplyTemplateSchema, ArchiveSchema, RestoreSchema, ListArchivedSchema,
   AutoArchiveSchema, PromoteSchema, ImportFederatedSchema, ListFederatedSchema,
-  SessionReplaySchema, AgentMetricsSchema, TrendsSchema, CheckConventionSchema,
+  SessionReplaySchema, AgentMetricsSchema, TrendsSchema, CheckConventionSchema, PreCheckSchema,
+  FileRecallSchema, ImportClaudeMdSchema,
 } from './schemas'
 
 async function main() {
@@ -612,6 +616,38 @@ async function main() {
     'Detect performance trends across sessions — improvements and regressions',
     { agentName: TrendsSchema.shape.agentName },
     async (args) => handleTrends(args, projectId),
+  )
+
+  // pre_check — Pre-task gotcha check
+  server.tool(
+    'pre_check',
+    'Before starting a task, get a list of gotchas: anti-patterns to avoid, conventions to follow, and lessons learned from past experience',
+    {
+      taskDescription: PreCheckSchema.shape.taskDescription,
+      filePaths: PreCheckSchema.shape.filePaths,
+    },
+    async (args) => handlePreCheck(args, projectId, cache, sync),
+  )
+
+  server.tool(
+    'file_recall',
+    'Find memories related to specific file paths — matches by exact path, directory prefix, or reverse prefix. Prioritises anti-pattern and convention memories.',
+    {
+      filePaths: FileRecallSchema.shape.filePaths,
+      limit: FileRecallSchema.shape.limit,
+    },
+    async (args) => handleFileRecall(args, projectId, cache),
+  )
+
+  // CLAUDE.md import
+  server.tool(
+    'import_claude_md',
+    'Parse a CLAUDE.md file and auto-create memories from its sections. Conventions, architecture notes, decisions, and anti-patterns become typed memories.',
+    {
+      content: ImportClaudeMdSchema.shape.content,
+      strategy: ImportClaudeMdSchema.shape.strategy,
+    },
+    async (args) => handleImportClaudeMd({ ...args, projectId }, cache, sync),
   )
 
   // Register resources

@@ -74,6 +74,27 @@ describe('SqliteCache', () => {
       const dirty = cache.getDirty()
       expect(dirty.some(m => m.key === 'clean-test')).toBe(false)
     })
+
+    it('preserves the existing row id on conflict (no FK violation)', () => {
+      // Insert original memory and record its id
+      const original = makeMemory({ key: 'stable-id-key', value: 'first-value' })
+      cache.upsertMemory(original)
+      const stored = cache.getByKey(TEST_PROJECT, 'stable-id-key')
+      expect(stored).not.toBeNull()
+      const originalId = stored!.id
+
+      // Upsert the same project+key with a different id (as if a new UUID was generated)
+      const updated = makeMemory({ key: 'stable-id-key', value: 'second-value' })
+      // updated.id is a different UUID because makeMemory() calls randomUUID() each time
+      expect(updated.id).not.toBe(originalId)
+      cache.upsertMemory(updated)
+
+      // The value should be updated but the id must NOT change
+      const after = cache.getByKey(TEST_PROJECT, 'stable-id-key')
+      expect(after).not.toBeNull()
+      expect(after!.value).toBe('second-value')
+      expect(after!.id).toBe(originalId)
+    })
   })
 
   describe('queryMemories', () => {

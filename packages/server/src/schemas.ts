@@ -3,7 +3,7 @@ import { z } from 'zod'
 export const MemoryTypeSchema = z.enum([
   'convention', 'decision', 'architecture',
   'entity', 'lesson', 'preference', 'pattern', 'execution',
-  'operational', 'environment',
+  'operational', 'environment', 'anti_pattern',
 ])
 
 export const MemorySourceSchema = z.enum([
@@ -41,6 +41,7 @@ export const RecallSchema = z.object({
   query: z.string().min(1).describe('Search query for fuzzy matching'),
   type: MemoryTypeSchema.optional().describe('Filter by memory type'),
   limit: z.number().int().min(1).max(50).default(5).describe('Max results'),
+  maxTokens: z.number().int().min(100).max(100_000).optional().describe('Maximum token budget for response (approx 4 chars per token). Results truncated to fit.'),
 })
 
 export const ForgetSchema = z.object({
@@ -82,6 +83,7 @@ export const ContextualRecallSchema = z.object({
     depth: z.number().int().min(0).max(2).default(0).optional().describe('Multi-hop graph traversal depth via crossSystemRefs (0=direct only, 1=one hop, 2=two hops)'),
   }).optional().describe('Execution context to filter results'),
   limit: z.number().int().min(1).max(50).default(5).describe('Max results'),
+  maxTokens: z.number().int().min(100).max(100_000).optional().describe('Maximum token budget for response (approx 4 chars per token). Results truncated to fit.'),
 })
 
 export const ResolveConflictSchema = z.object({
@@ -185,6 +187,12 @@ export const ListFederatedSchema = z.object({
 
 export const ResolveOverridesSchema = z.object({})
 
+// File-path auto-recall
+export const FileRecallSchema = z.object({
+  filePaths: z.array(z.string()).min(1).describe('File paths currently being edited'),
+  limit: z.number().int().min(1).max(50).optional().default(10).describe('Max results'),
+})
+
 // XL8 — Analytics
 export const SessionReplaySchema = z.object({
   sessionId: z.string().min(1).describe('Session ID to replay'),
@@ -196,4 +204,16 @@ export const AgentMetricsSchema = z.object({
 
 export const TrendsSchema = z.object({
   agentName: z.string().optional().describe('Filter by agent name'),
+})
+
+// pre_check — Pre-task gotcha check
+export const PreCheckSchema = z.object({
+  taskDescription: z.string().min(1).describe('Description of the task you are about to perform'),
+  filePaths: z.array(z.string()).optional().describe('File paths you plan to edit'),
+})
+
+// CLAUDE.md import
+export const ImportClaudeMdSchema = z.object({
+  content: z.string().min(1).max(512_000).describe('Raw CLAUDE.md file content'),
+  strategy: z.enum(['skip', 'overwrite']).optional().default('skip').describe('How to handle existing memories with the same key'),
 })
