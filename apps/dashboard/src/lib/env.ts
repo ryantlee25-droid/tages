@@ -15,6 +15,14 @@ const OPTIONAL_VARS: Array<{ name: string; hint: string }> = [
     name: 'STRIPE_SECRET_KEY',
     hint: 'Stripe billing features will be unavailable.',
   },
+  {
+    name: 'SUPABASE_PROJECT_REF',
+    hint: 'SSO/SAML provider registration via Management API will be unavailable.',
+  },
+  {
+    name: 'SUPABASE_MANAGEMENT_API_KEY',
+    hint: 'SSO/SAML provider registration via Management API will be unavailable.',
+  },
 ]
 
 export function validateEnv(): void {

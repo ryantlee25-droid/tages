@@ -1,1 +1,8 @@
 pnpm typecheck
+
+# Secret scanning with gitleaks (graceful degradation)
+if command -v gitleaks &> /dev/null; then
+  gitleaks protect --staged --config .gitleaks.toml
+else
+  echo "\033[33m[warn] gitleaks not found — skipping secret scan. Install: https://github.com/gitleaks/gitleaks\033[0m"
+fi
