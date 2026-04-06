@@ -1,0 +1,19 @@
+title = "Tages gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allowlist for test fixtures and known-safe patterns"
+paths = [
+  '''.*/test.*''',
+  '''.*spec.*''',
+  '''.*\.example.*''',
+  '''docs/.*''',
+]
+regexes = [
+  '''EXAMPLE_''',
+  '''YOUR_.*_HERE''',
+  '''<.*>''',
+  '''placeholder''',
+]
