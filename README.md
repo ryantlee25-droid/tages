@@ -1,54 +1,22 @@
-<p align="center">
-  <strong style="color: #3BA3C7; font-size: 2em;">Tages</strong>
-</p>
+# Tages
 
-<p align="center">
-  <strong>Persistent codebase memory for AI coding agents.</strong><br/>
-  Your agents remember everything. Your codebase never gets re-explained.
-</p>
+**Persistent codebase memory for AI coding agents.**
 
-<p align="center">
-  <a href="https://dashboard-weld-nine-65.vercel.app">Live Demo</a> &middot;
-  <a href="docs/quickstart.md">Quickstart</a> &middot;
-  <a href="docs/self-hosting.md">Self-Host</a>
-</p>
+Your agents forget everything between sessions. Tages fixes that.
+
+Architectural decisions, naming conventions, module boundaries, past mistakes — remembered automatically, injected into every session, across every tool.
+
+### Why Tages?
+
+In A/B testing against a 30k+ LOC codebase, agents with Tages produced **68% higher quality documentation** with **zero hallucinations**, vs 8 fabricated systems without it. Independently validated by blind review (ChatGPT, Gemini). Neither reviewer knew which output used Tages. Both scored it significantly higher.
+
+Cost: ~$0.003 per session. Quality improvement: measurable and proven.
 
 ---
 
-## The Problem
-
-Every AI coding session starts from scratch. Your agent re-discovers the architecture, violates naming conventions, and suggests solutions you rejected last week. Context amnesia wastes hours and introduces bugs.
-
-## The Solution
-
-Tages is an MCP server that gives AI agents persistent memory about your codebase. Conventions, decisions, architecture, lessons learned — stored once, recalled automatically in every future session.
-
-```bash
-# Store a convention
-$ tages remember "api-errors" "Return { error, code, status }" --type convention
-
-# 3 weeks later, in a new session...
-$ tages recall "error handling"
-Found 1 memory (hybrid: trigram + semantic):
-  [convention] api-errors
-    Return { error, code, status }
-```
-
-## Results
-
-In A/B testing against a 30k LOC game codebase:
-
-| Metric | Without Tages | With Tages |
-|--------|--------------|------------|
-| Documentation quality | 4.9/10 | 8.3/10 |
-| Hallucinated systems | 8 fabrications | 0 fabrications |
-| Convention compliance | 17% | 100% |
-| Revision cycles needed | 3-4 | 0-1 |
-| Cost per session | — | $0.003 |
-
 ## Works With
 
-Claude Code · Cursor · Codex · Gemini · ChatGPT · anything that speaks MCP
+Claude Code, Cursor, ChatGPT, Codex, Gemini — anything that speaks MCP.
 
 ## Quick Start
 
@@ -58,6 +26,22 @@ tages init
 ```
 
 That's it. Your AI tools now remember your codebase.
+
+---
+
+## What Tages Knows That Source Code Cannot
+
+Source code tells agents **what** exists. Tages tells them **why** it was built, **how** to work with it, and **what not to do**.
+
+| Knowledge | Without Tages | With Tages |
+|-----------|--------------|------------|
+| "worldGen.ts was deleted on purpose" | Never mentioned | Documented as design decision |
+| "Message helpers exist because of 10 duplicates" | Described the functions | Explained the migration history |
+| "Hemorrhagic shock is the ONLY combo" | Described it | Documented the design constraint |
+| "CRT scanlines on inner div only" | Never mentioned | Documented with warning |
+| "Stats were rebalanced from Wits" | Never mentioned | Documented the history |
+
+---
 
 ## How It Works
 
@@ -78,46 +62,55 @@ That's it. Your AI tools now remember your codebase.
 
 ## Features
 
-**14 MCP tools** — remember, recall, forget, conventions, architecture, decisions, context, observe (auto-learn), session_end (auto-extract), staleness, conflicts, stats, plus browse resources
+- **MCP Server** — 7 tools + 4 resources, works with any MCP-compatible agent
+- **CLI** — `tages remember`, `tages recall`, `tages forget`, `tages import`
+- **Dashboard** — Browse, search, edit, and share memories. Dark mode. Real-time updates.
+- **Auto-indexing** — Git hook extracts decisions from commits using local LLM (Ollama) or Claude Haiku
+- **Import** — Seed from existing CLAUDE.md, ARCHITECTURE.md, LESSONS.md files
+- **Team sharing** — Multiple developers share one codebase memory (Pro)
+- **Local-first** — SQLite cache for sub-10ms queries. Works offline.
+- **Hybrid search** — pg_trgm trigram matching + pgvector semantic search
 
-**17 CLI commands** — init, remember, recall, forget, status, dashboard, index (git hooks), import, export, query (LLM-powered), snapshot (architecture graph), check (staleness), onboard (project briefing), patterns (cross-project library), token (CI/CD)
+## Pricing
 
-**Hybrid search** — pg_trgm trigram matching + pgvector semantic search via local Ollama embeddings. Queries like "status effects" find "conditions-system" even with zero keyword overlap.
+- **Free** — 1 project, 10,000 memories, full MCP server + CLI + dashboard + auto-indexing. Everything a solo dev needs.
+- **Pro ($9/mo)** — Unlimited projects + memories, team sharing, cloud sync across devices.
+- **Self-hosted** — Everything free forever. Bring your own Supabase.
 
-**Local-first** — SQLite cache with delta sync. First session hydrates from Supabase (~500ms). Every subsequent session reads from local cache (<10ms). Works offline.
+## Evidence
 
-**Auto-learning** — The `observe` tool lets agents report what they're doing; Tages silently extracts memories. The `session_end` tool auto-extracts decisions and conventions from session summaries.
+Tages has been tested, not just built.
 
-**Safety** — PII and secret scanner checks every memory before storage. Detects API keys, tokens, passwords, emails, SSNs. Warns but doesn't block.
+- **A/B test**: 68% quality improvement across 10 metrics on a 30k+ LOC codebase
+- **Hallucination reduction**: 8 fabricated systems (cold) -> 0 (warm)
+- **Blind review**: ChatGPT scored warm output 52% higher. Gemini scored it 75% higher. Neither knew which document used Tages.
+- **Cost**: $0.003 per session (1,200 tokens of injected context)
 
-**Dashboard** — Browse, search, edit memories. Cmd+K search. Decision timeline. Activity feed. Real-time updates via Supabase Realtime.
+Full test reports and raw outputs available in `test-ab/`.
 
 ## Architecture
 
 ```
 packages/
-  server/     MCP server (14 tools, 5 resources, stdio transport)
-  cli/        CLI (17 commands, npm global install)
+  server/     MCP server (30 tools, stdio transport)
+  cli/        CLI (29 commands, npm global install)
   shared/     TypeScript types + Supabase client
 apps/
   dashboard/  Next.js 16, Supabase Auth, Tailwind, dark mode
 supabase/
-  migrations/ 12 migrations (tables, RLS, pgvector, tracking)
+  migrations/ 34 migrations (tables, RLS, pgvector, RBAC, encryption)
 ```
 
-## Security Model
+## Security
 
-Tages stores codebase knowledge (architecture, conventions, decisions) that may be proprietary. The security model is designed accordingly:
-
-- **Database**: Supabase with Row Level Security (RLS) — all tables enforce project membership checks
-- **Authentication**: Supabase Auth with GitHub OAuth; API tokens are SHA256-hashed before storage
-- **Secret detection**: Memories are scanned for API keys, credentials, and PII before storage. High-severity secrets (AWS keys, private keys, connection strings) are **blocked by default** — use `--force` to override
-- **Local cache**: SQLite files are restricted to owner-only permissions (`0600`)
-- **Dashboard**: CSP headers, rate limiting on auth/API endpoints, `X-Frame-Options: DENY`
-- **MCP transport**: Stdio — inherently trusted by the parent process (Claude Code, Cursor, etc). No network exposure. The trust boundary is the IDE process that spawns the server
-- **Multi-tenancy**: All queries filter by `project_id`; RLS enforces ownership at the database layer
-
-For SaaS deployments, review `supabase/migrations/0002_rls_policies.sql` and ensure your Supabase instance has RLS enabled on all tables.
+- **Encryption at rest** — AES-256-GCM for memory values (opt-in via `TAGES_ENCRYPTION_KEY`)
+- **RBAC** — Owner/admin can write, member read-only
+- **Row Level Security** — All tables enforce project membership at the database layer
+- **Auth** — Supabase Auth with GitHub OAuth; API tokens SHA-256 hashed with expiration
+- **Secret detection** — Memories scanned for API keys, credentials, PII before storage
+- **Audit logging** — Auth events, exports, and token validation tracked
+- **Transport** — HSTS, CSP (no unsafe-eval in production), SameSite=Strict, rate limiting
+- **MCP transport** — Stdio, inherently trusted by parent process. No network exposure.
 
 ## Setup Guides
 
@@ -135,35 +128,12 @@ For SaaS deployments, review `supabase/migrations/0002_rls_policies.sql` and ens
 pnpm install
 pnpm build
 pnpm dev          # dashboard at localhost:3000
-pnpm test         # 58 vitest tests
+pnpm test         # 372 vitest tests
 ```
 
-## Release Notes
+## Named After
 
-### 2026-04-05 (v2)
-- **Advanced features**: analytics, archiving, branching, decay tracking, dedup, enforcement, federation, impact analysis, quality scoring, templates, multi-hop recall, three-way merge
-- **8 new CLI commands**: dedup, impact, risk, enforce, quality, templates, archive, federation
-- **16 new test suites** (362 total tests passing)
-- **13 new Supabase migrations** (0018–0030)
-- **Bug fixes**: archive SQLite schema, enforcement overlap threshold, CLI type safety, dashboard CommandPalette props
-- **Auth audit log**: tracks login successes, failures, and token validation events with RLS
-
-### 2026-04-05
-- **7 new MCP tools**: stats-detail, memory-history, contextual-recall, resolve-conflict/list-conflicts, suggestion-engine, import, memory-graph
-- **Dashboard pages**: Execution viewer, pending queue, stats dashboard, conflict resolver, memory graph
-- **CLI commands**: pending, verify, import-memories, recall-context, suggest
-- **Security hardening**: 10 fixes across auth, data protection, and transport
-  - Open redirect fix in CLI auth route (localhost validation)
-  - Stripe API: customer_id lookup instead of email; demo mode requires explicit env flag
-  - CSP headers and rate limiting on auth/API endpoints
-  - Cache files restricted to owner-only permissions (0600)
-  - Config files restricted to owner-only permissions (0600)
-  - High-severity secrets now block storage by default (with `--force` override)
-  - Database: added stripe_customer_id column for safer payment lookups
-  - Security model documented in README
-- **Security fixes**: Cross-project conflict resolution auth, unbounded JSON.parse on import, missing project_id filter on pending queue verify/reject
-- **Test coverage**: 67 new vitest tests across 7 test suites
-- **Database**: 3 new migrations (memory versioning RPC, contextual recall table, conflict resolution table)
+[Tages](https://en.wikipedia.org/wiki/Tages) — the Etruscan divine child who appeared from a furrow in the earth and dictated sacred knowledge to scribes before vanishing. The knowledge persisted long after the source was gone.
 
 ## License
 

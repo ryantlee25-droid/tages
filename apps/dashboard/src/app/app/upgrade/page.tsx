@@ -6,7 +6,7 @@ export default function UpgradePage() {
       <div className="max-w-md text-center">
         <h1 className="text-3xl font-bold text-white">Upgrade to Pro</h1>
         <p className="mt-3 text-zinc-400">
-          Unlimited projects, unlimited memories, team sharing, and auto-indexing.
+          Unlimited projects, unlimited memories, team sharing, and cloud sync across devices.
         </p>
         <div className="mt-6">
           <span className="text-4xl font-bold text-white">$9</span>
@@ -17,7 +17,7 @@ export default function UpgradePage() {
             'Unlimited projects',
             'Unlimited memories',
             'Team sharing',
-            'Git hook auto-indexing',
+            'Cloud sync across devices',
             'Priority support',
           ].map((f) => (
             <li key={f} className="flex items-center gap-2">
