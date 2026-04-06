@@ -46,11 +46,16 @@ export async function statusCommand(options: StatusOptions) {
       }
 
       const total = data.length
-      console.log(`  ${chalk.dim('Memories:')} ${total} total`)
+      const limit = 10000
+      const pct = Math.round((total / limit) * 100)
+      console.log(`  ${chalk.dim('Memories:')} ${total} / ${limit.toLocaleString()} (${pct}%)`)
       for (const [type, count] of Object.entries(counts).sort()) {
         console.log(`             ${type}: ${count}`)
       }
     }
+  } else {
+    console.log(`  ${chalk.dim('Sync:')}     ${chalk.yellow('Cloud sync unavailable. Local mode active.')}`)
+    console.log(`  ${chalk.dim('          Memories are stored locally.')}`)
   }
 
   console.log()

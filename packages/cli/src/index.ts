@@ -20,6 +20,7 @@ import { verifyCommand } from './commands/verify.js'
 import { recallContextCommand } from './commands/recall-context.js'
 import { suggestCommand } from './commands/suggest.js'
 import { importMemoriesCommand } from './commands/import-memories.js'
+import { doctorCommand } from './commands/doctor.js'
 import { dedupCommand } from './commands/dedup.js'
 import { impactCommand, riskCommand } from './commands/impact.js'
 import { enforceCommand, enforceCheckCommand } from './commands/enforce.js'
@@ -75,6 +76,12 @@ program
   .description('Show project memory status')
   .option('-p, --project <slug>', 'Project slug')
   .action(statusCommand)
+
+program
+  .command('doctor')
+  .description('Health check: verify MCP connection, database, git hooks')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(doctorCommand)
 
 program
   .command('dashboard')
