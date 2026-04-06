@@ -41,19 +41,17 @@ export function StatsDashboard({ projectId }: { projectId: string }) {
   const [stats, setStats] = useState<StatsData | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const supabase = createClient()
-
   useEffect(() => {
     async function load() {
-      const { data: memories } = await supabase
-        .from('memories')
-        .select('type, status, confidence, agent_name')
-        .eq('project_id', projectId)
+      const supabase = createClient()
 
-      if (!memories) {
-        setLoading(false)
-        return
-      }
+      const [memoriesResult, sessionsResult, qualityResult] = await Promise.all([
+        supabase.from('memories').select('type, status, confidence, agent_name').eq('project_id', projectId),
+        supabase.from('agent_sessions').select('recall_hits, recall_misses').eq('project_id', projectId),
+        supabase.from('quality_scores').select('score').eq('project_id', projectId),
+      ])
+
+      const memories = memoriesResult.data ?? []
 
       const total = memories.length
       const live = memories.filter((m) => m.status === 'live').length
@@ -93,35 +91,25 @@ export function StatsDashboard({ projectId }: { projectId: string }) {
         .slice(0, 5)
         .map(([name, count]) => ({ name, count }))
 
-      // Session metrics
-      const { data: sessions } = await supabase
-        .from('agent_sessions')
-        .select('recall_hits, recall_misses')
-        .eq('project_id', projectId)
-
-      const totalSessions = sessions?.length ?? 0
+      // Session metrics (from parallel fetch)
+      const sessions = sessionsResult.data ?? []
+      const totalSessions = sessions.length
       let recallHitRate: number | null = null
-      if (sessions && sessions.length > 0) {
+      if (sessions.length > 0) {
         const totalHits = sessions.reduce((s, r) => s + (r.recall_hits ?? 0), 0)
         const totalMisses = sessions.reduce((s, r) => s + (r.recall_misses ?? 0), 0)
         const totalRecalls = totalHits + totalMisses
         recallHitRate = totalRecalls > 0 ? Math.round((totalHits / totalRecalls) * 100) : null
       }
 
-      // Quality distribution from quality_scores
-      const { data: qualityRows } = await supabase
-        .from('quality_scores')
-        .select('score')
-        .eq('project_id', projectId)
-
+      // Quality distribution (from parallel fetch)
+      const qualityRows = qualityResult.data ?? []
       const qualityDistribution = { excellent: 0, good: 0, fair: 0, poor: 0 }
-      if (qualityRows) {
-        for (const q of qualityRows) {
-          if (q.score >= 80) qualityDistribution.excellent++
-          else if (q.score >= 60) qualityDistribution.good++
-          else if (q.score >= 40) qualityDistribution.fair++
-          else qualityDistribution.poor++
-        }
+      for (const q of qualityRows) {
+        if (q.score >= 80) qualityDistribution.excellent++
+        else if (q.score >= 60) qualityDistribution.good++
+        else if (q.score >= 40) qualityDistribution.fair++
+        else qualityDistribution.poor++
       }
 
       setStats({ total, live, pending, byType, confidenceBuckets, topAgents, recallHitRate, totalSessions, qualityDistribution })
@@ -181,10 +169,10 @@ export function StatsDashboard({ projectId }: { projectId: string }) {
         <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-5">
           <p className="text-xs text-zinc-500">Quality</p>
           <div className="mt-1 flex items-baseline gap-1.5">
-            <span className="text-sm text-green-400">{stats.qualityDistribution.excellent}e</span>
-            <span className="text-sm text-blue-400">{stats.qualityDistribution.good}g</span>
-            <span className="text-sm text-yellow-400">{stats.qualityDistribution.fair}f</span>
-            <span className="text-sm text-red-400">{stats.qualityDistribution.poor}p</span>
+            <span className="text-sm text-green-400" title="Excellent (80+)">{stats.qualityDistribution.excellent} exc</span>
+            <span className="text-sm text-blue-400" title="Good (60-79)">{stats.qualityDistribution.good} good</span>
+            <span className="text-sm text-yellow-400" title="Fair (40-59)">{stats.qualityDistribution.fair} fair</span>
+            <span className="text-sm text-red-400" title="Poor (<40)">{stats.qualityDistribution.poor} poor</span>
           </div>
         </div>
       </div>
