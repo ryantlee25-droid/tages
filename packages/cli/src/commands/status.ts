@@ -1,6 +1,6 @@
 import * as fs from 'fs'
 import chalk from 'chalk'
-import { createSupabaseClient } from '@tages/shared'
+import { createAuthenticatedClient } from '../auth/session.js'
 import { getProjectsDir, getCachePath } from '../config/paths.js'
 
 interface StatusOptions {
@@ -29,7 +29,7 @@ export async function statusCommand(options: StatusOptions) {
   }
 
   if (config.supabaseUrl && config.supabaseAnonKey) {
-    const supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey)
+    const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
 
     // Memory counts by type
     const { data, error } = await supabase

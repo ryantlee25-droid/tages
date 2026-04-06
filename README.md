@@ -135,6 +135,22 @@ pnpm test         # 372 vitest tests
 
 [Tages](https://en.wikipedia.org/wiki/Tages) — the Etruscan divine child who appeared from a furrow in the earth and dictated sacred knowledge to scribes before vanishing. The knowledge persisted long after the source was gone.
 
+## Release Notes
+
+### 2026-04-06
+
+**Bug fixes & recall improvements**
+
+- Fixed `tages status` reporting 0 memories — was using unauthenticated Supabase client, now uses auth session matching `recall`, `remember`, `forget`
+- Fixed `tages recall` returning incomplete results — lowered trigram similarity threshold from 0.3 → 0.15 and added ILIKE substring fallback for long values
+- Added `--all` flag and `*` query alias to list all memories without filtering
+- Made query argument optional when using `--all`
+- Added validation: query is required unless `--all` is set
+- Two new migrations: `0038_lower_recall_threshold.sql`, `0039_recall_ilike_fallback.sql` (already applied to production Supabase)
+- Updated test suite for new empty-query validation
+
+All 493 tests passing (421 server + 72 CLI).
+
 ## License
 
 MIT

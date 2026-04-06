@@ -90,17 +90,20 @@ describe('recall command', () => {
     expect(output).toContain('No memories found')
   })
 
-  it('handles empty query string', async () => {
+  it('rejects empty query without --all flag', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
-    mockRpc.mockResolvedValue({ data: [], error: null })
 
-    await recallCommand('', {})
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit called')
+    })
 
-    expect(mockRpc).toHaveBeenCalledWith('recall_memories', expect.objectContaining({
-      p_query: '',
-    }))
-    const output = console_.logs.join('\n')
-    expect(output).toContain('No memories found')
+    await expect(
+      recallCommand('', {}),
+    ).rejects.toThrow('process.exit called')
+
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(console_.errors.join('\n')).toContain('Provide a search query, or use --all')
+    exitSpy.mockRestore()
   })
 
   it('respects --limit option', async () => {

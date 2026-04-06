@@ -59,10 +59,11 @@ program
 program
   .command('recall')
   .description('Search codebase memories')
-  .argument('<query>', 'Search query')
+  .argument('[query]', 'Search query (use "*" or --all to list all)')
   .option('-t, --type <type>', 'Filter by type')
   .option('-l, --limit <n>', 'Max results', '5')
   .option('-p, --project <slug>', 'Project slug')
+  .option('-a, --all', 'List all memories (no search filter)')
   .action(recallCommand)
 
 program
