@@ -30,6 +30,7 @@ import { handleContextualRecall } from './tools/contextual-recall'
 import { handleResolveConflict, handleListConflicts } from './tools/resolve-conflict'
 import { handleSuggestions } from './tools/suggestion-engine'
 import { handleImport } from './tools/import'
+import { handleImportClaudeMd } from './tools/import-claude-md'
 import { handleMemoryGraph } from './tools/memory-graph'
 import { QueryLog } from './cache/query-log'
 import { handleDetectDuplicates, handleConsolidate } from './tools/dedup'
@@ -50,7 +51,7 @@ import {
   MatchTemplatesSchema, ApplyTemplateSchema, ArchiveSchema, RestoreSchema, ListArchivedSchema,
   AutoArchiveSchema, PromoteSchema, ImportFederatedSchema, ListFederatedSchema,
   SessionReplaySchema, AgentMetricsSchema, TrendsSchema, CheckConventionSchema, PreCheckSchema,
-  FileRecallSchema,
+  FileRecallSchema, ImportClaudeMdSchema,
 } from './schemas'
 
 async function main() {
@@ -636,6 +637,17 @@ async function main() {
       limit: FileRecallSchema.shape.limit,
     },
     async (args) => handleFileRecall(args, projectId, cache),
+  )
+
+  // CLAUDE.md import
+  server.tool(
+    'import_claude_md',
+    'Parse a CLAUDE.md file and auto-create memories from its sections. Conventions, architecture notes, decisions, and anti-patterns become typed memories.',
+    {
+      content: ImportClaudeMdSchema.shape.content,
+      strategy: ImportClaudeMdSchema.shape.strategy,
+    },
+    async (args) => handleImportClaudeMd({ ...args, projectId }, cache, sync),
   )
 
   // Register resources
