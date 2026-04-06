@@ -30,6 +30,7 @@ import { archiveListCommand, archiveStatsCommand } from './commands/archive.js'
 import { federateCommand, federationListCommand, federationImportCommand, federationOverridesCommand } from './commands/federation-cmd.js'
 import { analyticsSummaryCommand, analyticsSessionCommand, analyticsTrendsCommand } from './commands/analytics.js'
 import { migrateCommand } from './commands/migrate.js'
+import { sessionWrapCommand } from './commands/session-wrap.js'
 
 const program = new Command()
 
@@ -366,5 +367,13 @@ program
   .description('Migrate a local-only project to cloud mode')
   .option('-p, --project <slug>', 'Project slug')
   .action(migrateCommand)
+
+program
+  .command('session-wrap')
+  .description('End-of-session wrap-up: extract and persist codebase learnings')
+  .option('--non-interactive', 'Read from pending-session-notes.txt (for hooks)')
+  .option('--summary <text>', 'Provide summary directly (skip interactive prompt)')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(sessionWrapCommand)
 
 program.parse()

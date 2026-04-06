@@ -139,6 +139,32 @@ pnpm test         # 372 vitest tests
 
 ### 2026-04-06
 
+**New feature: `tages session-wrap` — end-of-session memory persistence**
+
+Gives users a smooth path to persist codebase learnings discovered during coding sessions.
+
+What was built:
+
+- **Extracted session memory extraction logic** into `packages/server/src/tools/session-extract.ts` — a reusable `extractMemoriesFromSummary()` function. Updated `session-end.ts` to import from it instead of inlining.
+- **New `tages session-wrap` CLI command** — two modes:
+  - Interactive (default): prompts for a multi-line session summary, extracts memories by keyword, stores to Supabase + SQLite
+  - Non-interactive (`--non-interactive`): reads `~/.config/tages/pending-session-notes.txt`, processes silently, deletes the file. Silent exit if no file exists (for hooks).
+  - Also supports `--summary <text>` for scripted use.
+- **Documentation** — added "End-of-session workflow" section to `docs/claude-code-setup.md` covering the workflow, what belongs in Tages vs local memory, manual usage, and Claude Code hook setup.
+
+Changes:
+- CREATE `packages/server/src/tools/session-extract.ts` — extracted memory extraction logic
+- MODIFY `packages/server/src/tools/session-end.ts` — imports from session-extract.ts
+- CREATE `packages/cli/src/commands/session-wrap.ts` — new CLI command
+- MODIFY `packages/cli/src/index.ts` — register session-wrap command + import
+- MODIFY `docs/claude-code-setup.md` — end-of-session workflow documentation
+
+All 493 tests pass (421 server + 72 CLI).
+
+---
+
+### 2026-04-06 (earlier)
+
 **Bug fix: upsert id-swap causes FK violation on memory_versions**
 
 Root cause: Every upsert call across the codebase passed `id: randomUUID()` in the payload with `onConflict: 'project_id,key'`. When a key already existed, Supabase tried to overwrite the existing row's `id` with the new UUID, which violated the FK constraint from `memory_versions` (which references the old id).
