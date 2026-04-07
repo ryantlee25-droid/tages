@@ -43,8 +43,8 @@ Claude Code, Cursor, Codex, Gemini — anything that speaks [MCP](https://modelc
 
 ## Features
 
-- **55 MCP tools** — remember, recall, audit, sharpen, import, federation, analytics, and more
-- **35 CLI commands** — full control from the terminal
+- **56 MCP tools** — remember, recall, audit, sharpen, import, federation, analytics, and more
+- **52 CLI commands** — full control from the terminal
 - **Web dashboard** — browse, search, and edit memories with dark-mode UI
 - **Auto-indexing** — git hooks extract decisions from commits via Ollama or Claude Haiku
 - **Import** — seed from existing CLAUDE.md, ARCHITECTURE.md, or JSON files
@@ -57,7 +57,7 @@ Claude Code, Cursor, Codex, Gemini — anything that speaks [MCP](https://modelc
 
 ## Benchmarks
 
-In three head-to-head tests, agents with Tages context scored **8.8/10 vs 7.7/10 without** — a +14% quality improvement at near-zero cost. The biggest gains were in convention compliance (+3 points) and integration correctness. Agents without memory consistently created orphaned code that didn't wire into existing subsystems.
+In five head-to-head benchmarks, agents with Tages context scored up to **9.1/10 vs 2.8/10 without** — quality deltas scaling from +1.0 on simple tasks to +6.3 on complex ones. The biggest gains were in convention compliance, integration wiring, and gotcha avoidance. Agents without memory consistently created orphaned code that didn't wire into existing subsystems.
 
 Full methodology and raw data: [docs/benchmarks.md](docs/benchmarks.md)
 
@@ -75,13 +75,13 @@ Full methodology and raw data: [docs/benchmarks.md](docs/benchmarks.md)
 
 ```
 packages/
-  server/     MCP server (55 tools, stdio transport, 445 tests)
-  cli/        CLI (35 commands, npm global install, 76 tests)
+  server/     MCP server (56 tools, stdio transport, 445 tests)
+  cli/        CLI (52 commands, npm global install, 76 tests)
   shared/     TypeScript types + Supabase client
 apps/
   dashboard/  Next.js 16, Supabase Auth, Tailwind, shadcn/ui
 supabase/
-  migrations/ 39 migrations (tables, RLS, pgvector, RBAC, encryption)
+  migrations/ 42 migrations (tables, RLS, pgvector, RBAC, encryption)
 ```
 
 ## Security

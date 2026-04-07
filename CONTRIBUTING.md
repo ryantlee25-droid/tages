@@ -16,11 +16,11 @@ pnpm test
 
 | Directory | Purpose |
 |-----------|---------|
-| `packages/server/` | MCP server (stdio transport, 55 tools) |
-| `packages/cli/` | CLI tool (commander.js, 35 commands) |
+| `packages/server/` | MCP server (stdio transport, 56 tools) |
+| `packages/cli/` | CLI tool (commander.js, 52 commands) |
 | `packages/shared/` | Shared types + Supabase client factory |
 | `apps/dashboard/` | Next.js 16 web dashboard |
-| `supabase/migrations/` | Postgres schema (39 migrations) |
+| `supabase/migrations/` | Postgres schema (42 migrations) |
 
 ## Code Standards
 

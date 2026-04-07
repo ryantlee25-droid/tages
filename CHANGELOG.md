@@ -6,8 +6,8 @@
 - **Memory Quality Flywheel** — `tages audit` scores memory coverage, `tages sharpen` rewrites to imperative form, `tages session-wrap --refresh-brief` auto-invalidates cached briefs
 - **Pre-flight brief injection** — `tages brief` generates a cached context document for system prompt injection with git-based staleness detection
 - **Session wrap** — `tages session-wrap` extracts and persists codebase learnings from coding sessions
-- **55 MCP tools** — core memory, analytics, quality scoring, deduplication, federation, archival, templates, impact analysis, convention enforcement
-- **35 CLI commands** — full control from the terminal
+- **56 MCP tools** — core memory, analytics, quality scoring, deduplication, federation, archival, templates, impact analysis, convention enforcement
+- **52 CLI commands** — full control from the terminal
 - **Web dashboard** — Next.js 16 with Supabase Auth, project browser, memory viewer, stats, graph visualization
 - **Security hardening** — RBAC, RLS on all tables, AES-256-GCM encryption, SHA-256 token hashing, PII/secret detection, audit logging
 

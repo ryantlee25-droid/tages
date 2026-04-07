@@ -13,14 +13,14 @@ Tages is an open-source MCP server + CLI + dashboard that gives AI coding agents
 ```
 packages/
   server/     # MCP server (@modelcontextprotocol/sdk, stdio transport)
-              # 30 MCP tools, 16 server modules, 30 test suites (372 tests)
-  cli/        # tages CLI (commander.js, 29 commands)
+              # 56 MCP tools, 16 server modules, 37 test suites (445 tests)
+  cli/        # tages CLI (commander.js, 52 commands)
   shared/     # Shared types + Supabase client factory
 apps/
   dashboard/  # Next.js 16 + Supabase Auth + Tailwind + shadcn/ui
               # Auth, project list, memory browser, stats, conflicts, graph
 supabase/
-  migrations/ # 33 Postgres migrations (schema, RLS, RPCs, indexes)
+  migrations/ # 42 Postgres migrations (schema, RLS, RPCs, indexes)
 ```
 
 ### Key Design Decisions
@@ -41,7 +41,7 @@ supabase/
 - **Secret/PII detection**: Blocks high-severity secrets, warns on PII before storage
 - **Auth audit logging**: Tracks login success/failure, token validation events
 - **Transport security**: HSTS, CSP (no unsafe-eval in production), SameSite=Strict cookies
-- **Input validation**: Zod schemas on all 30 MCP tools, URL slug validation, 1MB request limits
+- **Input validation**: Zod schemas on all 56 MCP tools, URL slug validation, 1MB request limits
 - **SECURITY.md**: Responsible disclosure policy at repo root
 
 ## Commands
@@ -50,7 +50,7 @@ supabase/
 pnpm install          # install all workspace deps
 pnpm build            # build all packages (server + cli + dashboard)
 pnpm dev              # start dashboard dev server (localhost:3000)
-pnpm test             # run all tests (372 vitest tests)
+pnpm test             # run all tests (521 vitest tests)
 pnpm typecheck        # tsc --noEmit across all packages
 pnpm --filter server test  # server tests only
 ```
@@ -71,7 +71,7 @@ Auth: `token rotate [--expires-in <days>]`
 - CLI output uses chalk for color, ora for spinners
 - Supabase `.from().insert()` returns PromiseLike not Promise — wrap with `Promise.resolve()` for `.catch()`
 - Cross-package CLI imports use `@ts-ignore` with expanded rootDir (`../../`)
-- Migrations use sequential numbers (0001-0033), cast TEXT params to `::uuid` for uuid columns
+- Migrations use sequential numbers (0001-0042), cast TEXT params to `::uuid` for uuid columns
 
 ## Current Status
 
