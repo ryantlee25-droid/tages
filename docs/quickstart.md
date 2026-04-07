@@ -1,35 +1,44 @@
 # Quickstart
 
-Get Tages running in under 5 minutes.
+## Fastest: MCP-Only (no install needed)
 
-## 1. Install
+Add Tages to Claude Code with one command:
+
+```bash
+claude mcp add tages -- npx -y @tages/server
+```
+
+That's it. Open a new Claude Code session and your agent can now `remember` and `recall` codebase context.
+
+> Memories are stored locally in SQLite. No account needed. No cloud sync.
+
+## Full Install (with CLI)
+
+For the full experience including CLI commands, dashboard, and cloud sync:
 
 ```bash
 npm install -g @tages/cli
-```
-
-## 2. Initialize
-
-```bash
 cd your-project
 tages init
 ```
 
-Follow the GitHub OAuth prompt in your browser.
+This sets up local mode by default. Add `--cloud` to enable GitHub OAuth and cloud sync.
 
-## 3. Store your first memory
+> **Free tier** includes 20 core MCP tools (remember, recall, forget, conventions, architecture, decisions, brief, pre-check, and more). Pro adds 36 advanced tools: federation, analytics, impact analysis, quality scoring, and templates. [Compare plans ->](https://tages.dev/pricing)
+
+## Store your first memory
 
 ```bash
 tages remember "api-error-format" "All API routes return { error, code, status }" --type convention
 ```
 
-## 4. Recall it
+## Recall it
 
 ```bash
 tages recall "error format"
 ```
 
-## 5. Use with Claude Code
+## Use with Claude Code
 
 Open Claude Code in your project. The MCP tools are already configured. Ask Claude to recall project conventions — it'll find what you stored.
 

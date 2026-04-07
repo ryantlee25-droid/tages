@@ -24,7 +24,18 @@ export async function handleRemember(
   projectId: string,
   cache: SqliteCache,
   sync: SupabaseSync | null,
+  plan?: string,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  // Check memory limit for free tier
+  if ((!plan || plan === 'free') && cache.countMemories(projectId) >= 10000) {
+    return {
+      content: [{
+        type: 'text',
+        text: 'Memory limit reached (10,000 on free tier). Upgrade to Pro for 50,000 memories: https://tages.dev/upgrade',
+      }],
+    }
+  }
+
   // Scan for secrets/PII — block high-severity unless force override
   const warnings = scanForSensitiveData(`${args.key} ${args.value}`)
   if (hasHighSeverity(warnings) && !args.force) {

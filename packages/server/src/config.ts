@@ -7,6 +7,7 @@ export interface ProjectConfig {
   slug: string
   supabaseUrl: string
   supabaseAnonKey: string
+  plan?: 'free' | 'pro' | 'team'
 }
 
 export interface ServerConfig {
@@ -35,7 +36,8 @@ export function loadProjectConfig(slug?: string): ProjectConfig | null {
   if (slug) {
     const configPath = getProjectConfigPath(slug)
     if (!fs.existsSync(configPath)) return null
-    return JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+    return { ...config, plan: config.plan || 'free' }
   }
 
   // Otherwise, try to detect from current directory or env
@@ -49,6 +51,7 @@ export function loadProjectConfig(slug?: string): ProjectConfig | null {
       slug: process.env.TAGES_PROJECT_SLUG || 'default',
       supabaseUrl: envUrl,
       supabaseAnonKey: envKey,
+      plan: (process.env.TAGES_PLAN as 'free' | 'pro' | 'team') || 'free',
     }
   }
 
@@ -60,7 +63,8 @@ export function loadProjectConfig(slug?: string): ProjectConfig | null {
   if (files.length === 0) return null
 
   // Use the first (or only) project
-  return JSON.parse(fs.readFileSync(path.join(projectsDir, files[0]), 'utf-8'))
+  const config = JSON.parse(fs.readFileSync(path.join(projectsDir, files[0]), 'utf-8'))
+  return { ...config, plan: config.plan || 'free' }
 }
 
 export function loadServerConfig(slug?: string): ServerConfig | null {

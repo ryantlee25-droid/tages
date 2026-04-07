@@ -819,6 +819,13 @@ export class SqliteCache {
     }))
   }
 
+  countMemories(projectId: string): number {
+    const row = this.db.prepare(
+      'SELECT COUNT(*) as count FROM memories WHERE project_id = ? AND status = ?'
+    ).get(projectId, 'live') as { count: number }
+    return row.count
+  }
+
   close(): void {
     this.db.close()
   }
