@@ -48,6 +48,8 @@ import { handleBrief } from './tools/brief'
 import { handleMemoryAudit } from './tools/audit'
 import { handleSharpenMemory } from './tools/sharpen'
 import { handlePostSession } from './tools/post-session'
+import { FREE_TOOLS } from './tier-config'
+import { gateCheck } from './tier-gate'
 import {
   RememberSchema, RecallSchema, ForgetSchema, ContextSchema, SessionEndSchema, VerifyMemorySchema,
   MemoryHistorySchema, ContextualRecallSchema, ResolveConflictSchema, ImportSchema,
@@ -67,6 +69,16 @@ async function main() {
   const cache = new SqliteCache(cachePath)
   const queryLog = new QueryLog(cachePath)
   const projectId = config?.project.projectId || 'local'
+  const plan = config?.project.plan
+
+  // Tier gate helper — wraps pro-only tool handlers
+  function withGate<T>(toolName: string, handler: (args: T) => Promise<{ content: Array<{ type: 'text'; text: string }> }>) {
+    return async (args: T) => {
+      const gate = gateCheck(plan, toolName)
+      if (gate) return gate
+      return handler(args)
+    }
+  }
 
   // Initialize Supabase sync if configured
   let sync: SupabaseSync | null = null
@@ -153,7 +165,7 @@ async function main() {
       force: RememberSchema.shape.force,
     },
     async (args) => {
-      const result = await handleRemember(args, projectId, cache, sync)
+      const result = await handleRemember(args, projectId, cache, sync, plan)
       // Track the memory creation
       const mem = cache.getByKey(projectId, args.key)
       if (mem) await tracker.logCreate(mem.id)
@@ -294,7 +306,7 @@ async function main() {
     'memory_stats_detail',
     'Detailed memory statistics — counts by type and status, average confidence, top 5 agents, and total count',
     {},
-    async () => handleStatsDetail(projectId, cache),
+    withGate('memory_stats_detail', async () => handleStatsDetail(projectId, cache)),
   )
 
   server.tool(
@@ -315,7 +327,7 @@ async function main() {
       context: ContextualRecallSchema.shape.context,
       limit: ContextualRecallSchema.shape.limit,
     },
-    async (args) => handleContextualRecall(args, projectId, cache, sync),
+    withGate('contextual_recall', async (args) => handleContextualRecall(args, projectId, cache, sync)),
   )
 
   server.tool(
@@ -327,21 +339,21 @@ async function main() {
       mergedValue: ResolveConflictSchema.shape.mergedValue,
       resolvedBy: ResolveConflictSchema.shape.resolvedBy,
     },
-    async (args) => handleResolveConflict(args, projectId, cache, sync),
+    withGate('resolve_conflict', async (args) => handleResolveConflict(args, projectId, cache, sync)),
   )
 
   server.tool(
     'list_conflicts',
     'List unresolved memory conflicts for this project',
     {},
-    async () => handleListConflicts(projectId, cache),
+    withGate('list_conflicts', async () => handleListConflicts(projectId, cache)),
   )
 
   server.tool(
     'suggestions',
     'Get suggestions for memories you should store, based on queries that returned no results',
     {},
-    async () => handleSuggestions(projectId, cache, queryLog),
+    withGate('suggestions', async () => handleSuggestions(projectId, cache, queryLog)),
   )
 
   server.tool(
@@ -362,7 +374,7 @@ async function main() {
     'memory_graph',
     'Build a relationship graph from crossSystemRefs and output as a Mermaid diagram',
     {},
-    async () => handleMemoryGraph(projectId, cache, sync),
+    withGate('memory_graph', async () => handleMemoryGraph(projectId, cache, sync)),
   )
 
   // T7: Session branching tools
@@ -372,7 +384,7 @@ async function main() {
     {
       sessionId: z.string().min(1).describe('Unique session identifier for this branch'),
     },
-    async (args) => {
+    withGate('fork_branch', async (args) => {
       const branch = forkBranch(args.sessionId, projectId, cache)
       const count = getBranchMemories(args.sessionId, cache).length
       return {
@@ -381,7 +393,7 @@ async function main() {
           text: `Forked branch for session "${args.sessionId}" with ${count} memories. Branch ID: ${branch.id}`,
         }],
       }
-    },
+    }),
   )
 
   server.tool(
@@ -391,7 +403,7 @@ async function main() {
       sessionId: z.string().min(1).describe('Session ID of the branch to merge'),
       strategy: z.enum(['force', 'skip_conflicts']).describe('force = branch wins; skip_conflicts = skip conflicting keys'),
     },
-    async (args) => {
+    withGate('merge_branch', async (args) => {
       const result = mergeBranch(args.sessionId, args.strategy, cache)
       const conflictSummary = result.conflicts.length > 0
         ? `\nConflicts (${result.conflicts.length}): ${result.conflicts.map(c => c.key).join(', ')}`
@@ -402,7 +414,7 @@ async function main() {
           text: `Merged branch for session "${args.sessionId}": ${result.merged} memories promoted.${conflictSummary}`,
         }],
       }
-    },
+    }),
   )
 
   server.tool(
@@ -411,7 +423,7 @@ async function main() {
     {
       sessionId: z.string().min(1).describe('Session ID to inspect'),
     },
-    async (args) => {
+    withGate('list_branches', async (args) => {
       const mems = getBranchMemories(args.sessionId, cache)
       if (mems.length === 0) {
         return { content: [{ type: 'text' as const, text: `No branch found for session "${args.sessionId}".` }] }
@@ -423,7 +435,7 @@ async function main() {
           text: `Branch memories for "${args.sessionId}" (${mems.length}):\n\n${lines.join('\n')}`,
         }],
       }
-    },
+    }),
   )
 
   // XL1 — Smart Memory Deduplication
@@ -431,7 +443,7 @@ async function main() {
     'detect_duplicates',
     'Detect near-duplicate memories using Jaccard similarity on key+value tokens',
     { threshold: DedupSchema.shape.threshold },
-    async (args) => handleDetectDuplicates(args, projectId, cache),
+    withGate('detect_duplicates', async (args) => handleDetectDuplicates(args, projectId, cache)),
   )
 
   server.tool(
@@ -442,7 +454,7 @@ async function main() {
       victimKey: ConsolidateSchema.shape.victimKey,
       mergedValue: ConsolidateSchema.shape.mergedValue,
     },
-    async (args) => handleConsolidate(args, projectId, cache, sync),
+    withGate('consolidate_memories', async (args) => handleConsolidate(args, projectId, cache, sync)),
   )
 
   // XL2 — Memory Dependency Graph & Impact Analysis
@@ -450,21 +462,21 @@ async function main() {
     'impact_analysis',
     'Analyze the downstream impact of a memory — how many others depend on it',
     { key: ImpactAnalysisSchema.shape.key },
-    async (args) => handleImpactAnalysis(args, projectId, cache),
+    withGate('impact_analysis', async (args) => handleImpactAnalysis(args, projectId, cache)),
   )
 
   server.tool(
     'risk_report',
     'Get project-wide risk ranking — which memories are most dangerous to change',
     {},
-    async () => handleRiskReport({} as never, projectId, cache),
+    withGate('risk_report', async () => handleRiskReport({} as never, projectId, cache)),
   )
 
   server.tool(
     'graph_analysis',
     'Analyze the memory dependency graph — orphans, critical paths, impact scores',
     {},
-    async () => handleGraphAnalysis({} as never, projectId, cache),
+    withGate('graph_analysis', async () => handleGraphAnalysis({} as never, projectId, cache)),
   )
 
   // XL3 — Convention Enforcement
@@ -475,14 +487,14 @@ async function main() {
       key: CheckConventionSchema.shape.key,
       agentName: CheckConventionSchema.shape.agentName,
     },
-    async (args) => handleCheckConvention(args, projectId, cache),
+    withGate('check_convention', async (args) => handleCheckConvention(args, projectId, cache)),
   )
 
   server.tool(
     'enforcement_report',
     'Get per-agent convention compliance stats and recent violations',
     {},
-    async () => handleEnforcementReport({} as never, projectId, cache),
+    withGate('enforcement_report', async () => handleEnforcementReport({} as never, projectId, cache)),
   )
 
   // XL4 — Memory Quality Scoring
@@ -490,14 +502,14 @@ async function main() {
     'memory_quality',
     'Score a specific memory on completeness, freshness, consistency, and usefulness (0-100)',
     { key: MemoryQualitySchema.shape.key },
-    async (args) => handleMemoryQuality(args, projectId, cache),
+    withGate('memory_quality', async (args) => handleMemoryQuality(args, projectId, cache)),
   )
 
   server.tool(
     'project_health',
     'Get overall project memory health score with dimension breakdown and improvement suggestions',
     {},
-    async () => handleProjectHealth({} as never, projectId, cache),
+    withGate('project_health', async () => handleProjectHealth({} as never, projectId, cache)),
   )
 
   // XL5 — Memory Templates
@@ -505,14 +517,14 @@ async function main() {
     'list_templates',
     'List available memory templates (api-endpoint, react-component, database-migration, test-suite, cli-command)',
     {},
-    async () => handleListTemplates({} as never),
+    withGate('list_templates', async () => handleListTemplates({} as never)),
   )
 
   server.tool(
     'match_templates',
     'Find templates matching given file paths — prompts agent to fill required fields',
     { filePaths: MatchTemplatesSchema.shape.filePaths },
-    async (args) => handleMatchTemplates(args),
+    withGate('match_templates', async (args) => handleMatchTemplates(args)),
   )
 
   server.tool(
@@ -523,7 +535,7 @@ async function main() {
       fields: ApplyTemplateSchema.shape.fields,
       filePaths: ApplyTemplateSchema.shape.filePaths,
     },
-    async (args) => handleApplyTemplate(args, projectId, cache, sync),
+    withGate('apply_template', async (args) => handleApplyTemplate(args, projectId, cache, sync)),
   )
 
   // XL6 — Memory Archival
@@ -534,28 +546,28 @@ async function main() {
       key: ArchiveSchema.shape.key,
       reason: ArchiveSchema.shape.reason,
     },
-    async (args) => handleArchive(args, projectId, cache),
+    withGate('archive_memory', async (args) => handleArchive(args, projectId, cache)),
   )
 
   server.tool(
     'restore_memory',
     'Restore an archived memory back to live status',
     { key: RestoreSchema.shape.key },
-    async (args) => handleRestore(args, projectId, cache, sync),
+    withGate('restore_memory', async (args) => handleRestore(args, projectId, cache, sync)),
   )
 
   server.tool(
     'list_archived',
     'List archived memories with their archive reasons and dates',
     { limit: ListArchivedSchema.shape.limit },
-    async (args) => handleListArchived(args, projectId),
+    withGate('list_archived', async (args) => handleListArchived(args, projectId)),
   )
 
   server.tool(
     'archive_stats',
     'Get archive statistics — total archived, restored, expired',
     {},
-    async () => handleArchiveStats({} as never, projectId),
+    withGate('archive_stats', async () => handleArchiveStats({} as never, projectId)),
   )
 
   server.tool(
@@ -565,7 +577,7 @@ async function main() {
       qualityThreshold: AutoArchiveSchema.shape.qualityThreshold,
       stalenessDays: AutoArchiveSchema.shape.stalenessDays,
     },
-    async (args) => handleAutoArchive(args, projectId, cache),
+    withGate('auto_archive', async (args) => handleAutoArchive(args, projectId, cache)),
   )
 
   // XL7 — Federation
@@ -577,28 +589,28 @@ async function main() {
       scope: PromoteSchema.shape.scope,
       promotedBy: PromoteSchema.shape.promotedBy,
     },
-    async (args) => handlePromote(args, projectId, cache),
+    withGate('federate_memory', async (args) => handlePromote(args, projectId, cache)),
   )
 
   server.tool(
     'import_federated',
     'Import a federated memory from the shared library into this project',
     { key: ImportFederatedSchema.shape.key },
-    async (args) => handleImportFederated(args, projectId, cache, sync),
+    withGate('import_federated', async (args) => handleImportFederated(args, projectId, cache, sync)),
   )
 
   server.tool(
     'list_federated',
     'List all memories in the federated library',
     { scope: ListFederatedSchema.shape.scope },
-    async (args) => handleListFederated(args),
+    withGate('list_federated', async (args) => handleListFederated(args)),
   )
 
   server.tool(
     'federation_overrides',
     'Show which federated memories have local project overrides',
     {},
-    async () => handleResolveOverrides({} as never, projectId),
+    withGate('federation_overrides', async () => handleResolveOverrides({} as never, projectId)),
   )
 
   // XL8 — Agent Analytics
@@ -606,21 +618,21 @@ async function main() {
     'session_replay',
     'Replay a session timeline showing all tool calls with metrics',
     { sessionId: SessionReplaySchema.shape.sessionId },
-    async (args) => handleSessionReplay(args),
+    withGate('session_replay', async (args) => handleSessionReplay(args)),
   )
 
   server.tool(
     'agent_metrics',
     'Get agent effectiveness metrics — recall hit rate, memory creation quality, convention compliance',
     { agentName: AgentMetricsSchema.shape.agentName },
-    async (args) => handleAgentMetrics(args, projectId),
+    withGate('agent_metrics', async (args) => handleAgentMetrics(args, projectId)),
   )
 
   server.tool(
     'trends',
     'Detect performance trends across sessions — improvements and regressions',
     { agentName: TrendsSchema.shape.agentName },
-    async (args) => handleTrends(args, projectId),
+    withGate('trends', async (args) => handleTrends(args, projectId)),
   )
 
   // pre_check — Pre-task gotcha check
@@ -671,7 +683,7 @@ async function main() {
     'memory_audit',
     'Audit project memory coverage and quality: type distribution, brief-critical coverage score, imperative phrasing ratio, and actionable suggestions.',
     {},
-    async () => handleMemoryAudit({} as never, projectId, cache),
+    withGate('memory_audit', async () => handleMemoryAudit({} as never, projectId, cache)),
   )
 
   // Memory Quality Flywheel — F2: sharpen_memory
@@ -682,7 +694,7 @@ async function main() {
       key: SharpenMemorySchema.shape.key,
       confirmed: SharpenMemorySchema.shape.confirmed,
     },
-    async (args) => handleSharpenMemory(args, projectId, cache, sync),
+    withGate('sharpen_memory', async (args) => handleSharpenMemory(args, projectId, cache, sync)),
   )
 
   // Memory Quality Flywheel — F3: post_session
@@ -693,7 +705,7 @@ async function main() {
       summary: PostSessionSchema.shape.summary,
       refreshBrief: PostSessionSchema.shape.refreshBrief,
     },
-    async (args) => handlePostSession(args, projectId, cache, sync),
+    withGate('post_session', async (args) => handlePostSession(args, projectId, cache, sync)),
   )
 
   // Register resources

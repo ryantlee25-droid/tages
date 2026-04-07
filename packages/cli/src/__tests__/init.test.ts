@@ -95,7 +95,20 @@ describe('init command', () => {
     cleanupFn()
   })
 
-  it('creates project config in local-only mode', async () => {
+  it('creates project config in local-only mode (default — no flags)', async () => {
+    await initCommand({ slug: 'my-app' })
+
+    const projectPath = path.join(tempConfigDir, 'projects', 'my-app.json')
+    expect(fs.existsSync(projectPath)).toBe(true)
+
+    const config = JSON.parse(fs.readFileSync(projectPath, 'utf-8'))
+    expect(config.projectId).toBe('local-my-app')
+    expect(config.slug).toBe('my-app')
+    expect(config.supabaseUrl).toBe('')
+    expect(config.supabaseAnonKey).toBe('')
+  })
+
+  it('creates project config in local-only mode (deprecated --local flag)', async () => {
     await initCommand({ local: true, slug: 'my-app' })
 
     const projectPath = path.join(tempConfigDir, 'projects', 'my-app.json')
@@ -108,8 +121,8 @@ describe('init command', () => {
     expect(config.supabaseAnonKey).toBe('')
   })
 
-  it('calls injectMcpConfig in local-only mode', async () => {
-    await initCommand({ local: true, slug: 'test-app' })
+  it('calls injectMcpConfig in local-only mode (default)', async () => {
+    await initCommand({ slug: 'test-app' })
 
     expect(mockInjectMcpConfig).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -119,14 +132,26 @@ describe('init command', () => {
     )
   })
 
+  it('does NOT run OAuth in default (local) mode', async () => {
+    const { runGithubOAuth } = await import('../auth/github-oauth.js')
+
+    await initCommand({ slug: 'no-oauth-app' })
+
+    expect(runGithubOAuth).not.toHaveBeenCalled()
+
+    // No auth file should be written in local mode
+    const authPath = path.join(tempConfigDir, 'auth.json')
+    expect(fs.existsSync(authPath)).toBe(false)
+  })
+
   it('is idempotent -- running init twice overwrites the config cleanly', async () => {
     // First init
-    await initCommand({ local: true, slug: 'idem-app' })
+    await initCommand({ slug: 'idem-app' })
     const projectPath = path.join(tempConfigDir, 'projects', 'idem-app.json')
     const firstConfig = JSON.parse(fs.readFileSync(projectPath, 'utf-8'))
 
     // Second init -- should overwrite, not error
-    await initCommand({ local: true, slug: 'idem-app' })
+    await initCommand({ slug: 'idem-app' })
     const secondConfig = JSON.parse(fs.readFileSync(projectPath, 'utf-8'))
 
     expect(secondConfig.slug).toBe('idem-app')
@@ -138,7 +163,7 @@ describe('init command', () => {
     fs.rmSync(tempConfigDir, { recursive: true, force: true })
     fs.mkdirSync(tempConfigDir) // Re-create just the base (no projects/ subdir)
 
-    await initCommand({ local: true, slug: 'fresh' })
+    await initCommand({ slug: 'fresh' })
 
     const projectsDir = path.join(tempConfigDir, 'projects')
     expect(fs.existsSync(projectsDir)).toBe(true)
@@ -147,7 +172,7 @@ describe('init command', () => {
 
   it('uses directory name as slug when --slug is not provided', async () => {
     // basename of cwd will be used
-    await initCommand({ local: true })
+    await initCommand({})
 
     const projectsDir = path.join(tempConfigDir, 'projects')
     const files = fs.readdirSync(projectsDir)
@@ -157,10 +182,10 @@ describe('init command', () => {
     expect(files[0]).toBe(`${expectedSlug}.json`)
   })
 
-  it('runs cloud OAuth flow when not in local mode', async () => {
+  it('runs cloud OAuth flow when --cloud flag is set', async () => {
     const { runGithubOAuth } = await import('../auth/github-oauth.js')
 
-    await initCommand({ slug: 'cloud-app' })
+    await initCommand({ cloud: true, slug: 'cloud-app' })
 
     expect(runGithubOAuth).toHaveBeenCalled()
 
@@ -187,7 +212,7 @@ describe('init command', () => {
     })
 
     await expect(
-      initCommand({ slug: 'fail-app' }),
+      initCommand({ cloud: true, slug: 'fail-app' }),
     ).rejects.toThrow('process.exit called')
 
     expect(exitSpy).toHaveBeenCalledWith(1)

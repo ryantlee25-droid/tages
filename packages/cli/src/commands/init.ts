@@ -12,7 +12,9 @@ const SUPABASE_URL = process.env.TAGES_SUPABASE_URL || 'https://wezagdgpvwfywjox
 const SUPABASE_ANON_KEY = process.env.TAGES_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlemFnZGdwdndmeXdqb3h6dGZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzNDcyNTAsImV4cCI6MjA5MDkyMzI1MH0.iMJ3gnt0w104QxzEaTLJsAYVciPDFJvAzOtIU5tofG0'
 
 interface InitOptions {
-  local?: boolean
+  local?: boolean   // deprecated alias for default behavior; kept for backward compat
+  cloud?: boolean
+  team?: boolean    // implies --cloud, adds teammate invites after project creation
   slug?: string
 }
 
@@ -28,9 +30,14 @@ export async function initCommand(options: InitOptions) {
     }
   }
 
-  if (options.local) {
-    // Local-only mode: no Supabase, no auth
-    spinner.start('Setting up local-only mode...')
+  if (options.team) {
+    // Team mode implies cloud — fall through to OAuth flow
+    options.cloud = true
+  }
+
+  if (!options.cloud) {
+    // Default: local-only mode — no Supabase, no auth required
+    spinner.start('Setting up local mode...')
 
     const projectConfig = {
       projectId: `local-${slug}`,
@@ -48,17 +55,18 @@ export async function initCommand(options: InitOptions) {
       projectSlug: slug,
     })
 
-    spinner.succeed('Local-only mode configured')
+    spinner.succeed('Local mode configured')
     console.log()
     console.log(chalk.green('  Project config:'), projectPath)
     console.log(chalk.green('  MCP config:'), mcpPath, created ? '(created)' : '(updated)')
     console.log()
-    console.log(chalk.dim('  Memories will be stored locally only (no cloud sync).'))
+    console.log(chalk.bold('  Tages is ready!'))
+    console.log(chalk.dim('  Memories are stored locally. Run `tages init --cloud` to enable cloud sync.'))
     console.log(chalk.dim('  Run `tages remember` to store your first memory.'))
     return
   }
 
-  // Default: Cloud mode — OAuth → create project → save config → init cache
+  // Cloud mode (--cloud flag): OAuth → create project → save config → init cache
   spinner.start('Opening browser for GitHub authentication...')
 
   let accessToken: string
@@ -118,7 +126,7 @@ export async function initCommand(options: InitOptions) {
     if (createError || !newProject) {
       spinner.fail('Failed to create project')
       console.error(chalk.red(`  ${createError?.message || 'Unknown error'}`))
-      console.log(chalk.dim('  Try `tages init --local` for local-only mode.'))
+      console.log(chalk.dim('  Cloud sync unavailable. Run `tages init` (no flags) for local-only mode.'))
       process.exit(1)
     }
 
@@ -153,4 +161,48 @@ export async function initCommand(options: InitOptions) {
   console.log(chalk.bold('  Tages is ready!'))
   console.log(chalk.dim('  Your AI tools will now remember this codebase across sessions.'))
   console.log(chalk.dim('  Memories sync to cloud with local SQLite cache for speed.'))
+
+  if (options.team) {
+    // Prompt for teammate emails
+    const { createInterface } = await import('readline/promises')
+    const rl = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    })
+
+    const emailInput = await rl.question('\n  Enter teammate emails (comma-separated): ')
+    rl.close()
+
+    const emails = emailInput.split(',').map((e: string) => e.trim()).filter(Boolean)
+
+    if (emails.length > 0) {
+      const { inviteTeamMembers } = await import('../auth/invite.js')
+      const result = await inviteTeamMembers(supabase, projectId, emails)
+
+      if (result.invited.length > 0) {
+        console.log()
+        console.log(chalk.green(`  Invited ${result.invited.length} teammate(s):`))
+        for (const email of result.invited) {
+          console.log(chalk.dim(`    ${email}`))
+        }
+      }
+
+      if (result.failed.length > 0) {
+        console.log()
+        console.log(chalk.yellow(`  Failed to invite ${result.failed.length} email(s):`))
+        for (const { email, error } of result.failed) {
+          console.log(chalk.dim(`    ${email}: ${error}`))
+        }
+      }
+    }
+
+    // Print MCP config snippet for teammates
+    console.log(chalk.bold('\n  Share this with your teammates:\n'))
+    console.log(chalk.cyan('  claude mcp add tages -- npx -y @tages/server'))
+    console.log(chalk.dim('\n  # Environment variables for team members:'))
+    console.log(chalk.dim(`  TAGES_PROJECT_ID=${projectId}`))
+    console.log(chalk.dim(`  TAGES_PROJECT_SLUG=${slug}`))
+    console.log(chalk.dim(`  TAGES_SUPABASE_URL=${SUPABASE_URL}`))
+    console.log(chalk.dim(`  TAGES_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}`))
+  }
 }
