@@ -5,44 +5,117 @@ const PLANS = [
     name: 'Free',
     price: '$0',
     period: 'forever',
-    description: 'For individual developers',
-    features: ['1 project', '10,000 memories', 'Full MCP server + CLI + dashboard', 'Auto-indexing (git hooks)', 'Local-first with cloud sync'],
+    description: 'For solo projects and evaluation.',
+    features: [
+      '1 project',
+      '10,000 memories',
+      'SQLite local cache',
+      '55 MCP tools',
+      'tages brief generation',
+      'Community support',
+    ],
     cta: 'Get started',
     href: '/auth/login',
     highlighted: false,
   },
   {
     name: 'Pro',
-    price: '$9',
+    price: '$14',
     period: '/month',
-    description: 'For power users and teams',
-    features: ['Unlimited projects', 'Unlimited memories', 'Team sharing', 'Cloud sync across devices', 'Priority support'],
-    cta: 'Get Pro',
+    description: 'For professional developers.',
+    features: [
+      'Unlimited projects',
+      '50,000 memories',
+      'Supabase cloud sync',
+      'Fuzzy + semantic search',
+      'Memory quality scoring',
+      'Priority support',
+    ],
+    cta: 'Start free trial',
     href: '/api/stripe/checkout',
     highlighted: true,
+  },
+  {
+    name: 'Team',
+    price: '$29',
+    period: '/seat/mo',
+    description: 'For shared codebases.',
+    features: [
+      'Everything in Pro',
+      '100,000 memories per project',
+      'Team memory federation',
+      'RBAC + audit logging',
+      'SSO (SAML/OIDC)',
+      'Dashboard analytics',
+    ],
+    cta: 'Contact us',
+    href: 'mailto:support@tages.dev',
+    highlighted: false,
   },
   {
     name: 'Self-hosted',
     price: '$0',
     period: 'forever',
-    description: 'Bring your own Supabase',
-    features: ['Everything free', 'Your own database', 'Full data ownership', 'No usage limits', 'Community support'],
-    cta: 'View docs',
-    href: 'https://github.com/ryantlee25-droid/tages',
+    description: 'Your infrastructure, your data.',
+    features: [
+      'Full feature parity',
+      'No memory limits',
+      'AES-256 encryption',
+      'Air-gapped compatible',
+      'MIT license',
+      'Community support',
+    ],
+    cta: 'View setup guide',
+    href: 'https://github.com/ryantlee25-droid/tages/blob/main/docs/self-hosting.md',
     highlighted: false,
+  },
+]
+
+const COMPARISON = [
+  { feature: 'Free tier', tages: '10K memories', mem0: '10K memories', zep: '1K credits', supermemory: '1M tokens', shodh: 'Unlimited' },
+  { feature: 'Paid entry', tages: '$14/mo', mem0: '$19/mo', zep: '$25/mo', supermemory: '$19/mo', shodh: 'None' },
+  { feature: 'Full features', tages: '$14/mo', mem0: '$249/mo', zep: '$475/mo', supermemory: '$399/mo', shodh: 'N/A' },
+  { feature: 'Team pricing', tages: '$29/seat', mem0: 'Enterprise', zep: 'Enterprise', supermemory: '$399/mo', shodh: 'None' },
+  { feature: 'Self-hosted', tages: 'Free (MIT)', mem0: 'Apache 2.0', zep: 'Graphiti only', supermemory: 'Open core', shodh: 'Free' },
+  { feature: 'Coding focus', tages: 'Purpose-built', mem0: 'General', zep: 'General', supermemory: 'Plugin', shodh: 'General' },
+  { feature: 'Benchmarks', tages: 'Published', mem0: 'LOCOMO', zep: 'LongMemEval', supermemory: '3 benchmarks', shodh: 'None' },
+  { feature: 'Delivery', tages: 'System prompt', mem0: 'MCP / API', zep: 'API', supermemory: 'MCP / API', shodh: 'MCP' },
+]
+
+const FAQ = [
+  {
+    q: 'Why is Tages so much cheaper than Mem0 or Zep?',
+    a: 'Tages is built specifically for coding agent memory, not general-purpose AI memory. We don\'t need to support chatbot personalization, CRM integration, or enterprise copilot workflows. That focus means less infrastructure complexity and lower costs passed to you.',
+  },
+  {
+    q: 'What happens if I exceed my memory limit?',
+    a: 'On Free, older memories are archived when you hit the cap. On Pro, you get a warning at 80% and can upgrade or clean up. Team caps at 100K memories per project.',
+  },
+  {
+    q: 'Can I migrate from Mem0 or Zep?',
+    a: 'Yes. Tages supports importing memories via CLI or API. Memory types map cleanly from most platforms.',
+  },
+  {
+    q: 'What does "system prompt injection" mean?',
+    a: 'Our benchmarks proved that MCP tool calls at runtime don\'t improve agent code quality. tages brief generates a cached context file injected into the system prompt, keeping project knowledge pinned at the top of every turn.',
+  },
+  {
+    q: 'Is self-hosted really free?',
+    a: 'Yes. MIT license, no usage limits, no phone-home. Bring your own Supabase instance (free tier works) and you have full Tages with zero cost.',
   },
 ]
 
 export function Pricing() {
   return (
     <section className="px-6 py-20">
-      <div className="mx-auto max-w-4xl">
+      <div className="mx-auto max-w-5xl">
         <h2 className="text-center text-3xl font-bold text-white">Simple pricing</h2>
         <p className="mt-3 text-center text-zinc-400">
-          Free for individuals. Pro for teams. Self-host for full control.
+          Full features at every paid tier. No paywalls.
         </p>
 
-        <div className="mt-12 grid gap-6 sm:grid-cols-3">
+        {/* Plan cards */}
+        <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {PLANS.map((plan) => (
             <div
               key={plan.name}
@@ -78,6 +151,8 @@ export function Pricing() {
               </ul>
               <Link
                 href={plan.href}
+                target={plan.href.startsWith('http') || plan.href.startsWith('mailto') ? '_blank' : undefined}
+                rel={plan.href.startsWith('http') ? 'noopener noreferrer' : undefined}
                 className={`mt-6 block rounded-lg py-2.5 text-center text-sm font-medium transition-colors ${
                   plan.highlighted
                     ? 'text-white hover:opacity-90'
@@ -87,6 +162,64 @@ export function Pricing() {
               >
                 {plan.cta}
               </Link>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+export function PricingComparison() {
+  return (
+    <section className="px-6 py-20">
+      <div className="mx-auto max-w-5xl">
+        <h2 className="text-center text-3xl font-bold text-white">How Tages compares</h2>
+        <p className="mt-3 text-center text-zinc-400">
+          Most memory platforms charge $249-$475/mo for full features. Tages includes everything at $14/mo.
+        </p>
+
+        <div className="mt-12 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-zinc-800">
+                <th className="pb-3 pr-6 text-left text-zinc-500 font-medium" />
+                <th className="pb-3 px-4 text-left font-semibold" style={{ color: '#3BA3C7' }}>Tages</th>
+                <th className="pb-3 px-4 text-left text-zinc-400 font-medium">Mem0</th>
+                <th className="pb-3 px-4 text-left text-zinc-400 font-medium">Zep</th>
+                <th className="pb-3 px-4 text-left text-zinc-400 font-medium">Supermemory</th>
+                <th className="pb-3 px-4 text-left text-zinc-400 font-medium">Shodh</th>
+              </tr>
+            </thead>
+            <tbody>
+              {COMPARISON.map((row) => (
+                <tr key={row.feature} className="border-b border-zinc-800/50">
+                  <td className="py-3 pr-6 text-zinc-500 font-medium">{row.feature}</td>
+                  <td className="py-3 px-4 text-white font-medium">{row.tages}</td>
+                  <td className="py-3 px-4 text-zinc-400">{row.mem0}</td>
+                  <td className="py-3 px-4 text-zinc-400">{row.zep}</td>
+                  <td className="py-3 px-4 text-zinc-400">{row.supermemory}</td>
+                  <td className="py-3 px-4 text-zinc-400">{row.shodh}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+export function PricingFAQ() {
+  return (
+    <section className="px-6 py-20">
+      <div className="mx-auto max-w-3xl">
+        <h2 className="text-center text-3xl font-bold text-white">FAQ</h2>
+        <div className="mt-12 space-y-6">
+          {FAQ.map((item) => (
+            <div key={item.q} className="rounded-xl border border-zinc-800 p-6">
+              <h3 className="font-semibold text-white">{item.q}</h3>
+              <p className="mt-2 text-sm text-zinc-400 leading-relaxed">{item.a}</p>
             </div>
           ))}
         </div>

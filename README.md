@@ -100,8 +100,9 @@ See [SECURITY.md](SECURITY.md) for our full security policy and responsible disc
 | Plan | Price | Includes |
 |------|-------|----------|
 | **Free** | $0 | 1 project, 10,000 memories, full MCP + CLI + dashboard |
-| **Pro** | $9/mo | Unlimited projects, team sharing, SSO |
-| **Self-hosted** | Free forever | Bring your own Supabase |
+| **Pro** | $14/mo | Unlimited projects, 50K memories, cloud sync, semantic search |
+| **Team** | $29/seat/mo | 100K memories/project, federation, RBAC, SSO, analytics |
+| **Self-hosted** | Free forever | Bring your own Supabase, no limits, MIT license |
 
 ## Contributing
 

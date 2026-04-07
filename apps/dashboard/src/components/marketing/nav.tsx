@@ -27,6 +27,9 @@ export function Nav() {
           <Link href="/examples" className="text-sm text-zinc-400 hover:text-white transition-colors">
             Examples
           </Link>
+          <Link href="/pricing" className="text-sm text-zinc-400 hover:text-white transition-colors">
+            Pricing
+          </Link>
           <Link href="/security" className="text-sm text-zinc-400 hover:text-white transition-colors">
             Security
           </Link>
@@ -69,6 +72,9 @@ export function Nav() {
           <div className="flex flex-col gap-4">
             <Link href="/examples" onClick={() => setOpen(false)} className="text-sm text-zinc-400 hover:text-white">
               Examples
+            </Link>
+            <Link href="/pricing" onClick={() => setOpen(false)} className="text-sm text-zinc-400 hover:text-white">
+              Pricing
             </Link>
             <Link href="/security" onClick={() => setOpen(false)} className="text-sm text-zinc-400 hover:text-white">
               Security

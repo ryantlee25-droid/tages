@@ -11,6 +11,7 @@ export function Footer() {
         </div>
         <div className="flex flex-wrap justify-center gap-6 text-sm text-zinc-400">
           <Link href="/examples" className="hover:text-white transition-colors">Examples</Link>
+          <Link href="/pricing" className="hover:text-white transition-colors">Pricing</Link>
           <Link href="/security" className="hover:text-white transition-colors">Security</Link>
           <a
             href="https://github.com/ryantlee25-droid/tages"
