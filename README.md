@@ -117,9 +117,9 @@ See [SECURITY.md](SECURITY.md) for our full security policy and responsible disc
 
 | Plan | Price | Includes |
 |------|-------|----------|
-| **Free** | $0 | 1 project, 10,000 memories, 20 core MCP tools, local SQLite |
-| **Pro** | $14/mo | Unlimited projects, 50K memories, cloud sync, semantic search |
-| **Team** | $29/seat/mo | 100K memories/project, federation, RBAC, SSO, analytics |
+| **Free** | $0 | Up to 2 projects, 10,000 memories, 20 core MCP tools, local SQLite |
+| **Pro** | $14/mo | Up to 10 projects, 50K memories, all 56 tools, cloud sync |
+| **Team** | $29/seat/mo (coming soon) | Up to 20 projects, 100K memories, federation, RBAC, SSO |
 | **Self-hosted** | Free forever | Bring your own Supabase, no limits, MIT license |
 
 ## Contributing

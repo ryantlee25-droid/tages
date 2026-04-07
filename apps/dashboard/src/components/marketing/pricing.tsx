@@ -7,7 +7,7 @@ const PLANS = [
     period: 'forever',
     description: 'For solo developers. No account needed.',
     features: [
-      '1 project',
+      'Up to 2 projects',
       '10,000 memories',
       '20 core MCP tools',
       'SQLite local-only',
@@ -25,7 +25,7 @@ const PLANS = [
     description: 'For professional developers.',
     features: [
       'All 56 MCP tools',
-      'Unlimited projects',
+      'Up to 10 projects',
       '50,000 memories',
       'Supabase cloud sync',
       'Fuzzy + semantic search',
@@ -40,15 +40,16 @@ const PLANS = [
     price: '$29',
     period: '/seat/mo',
     description: 'For shared codebases.',
+    badge: 'Coming soon',
     features: [
       'Everything in Pro',
+      'Up to 20 projects',
       '100,000 memories per project',
       'Team memory federation',
       'RBAC + audit logging',
       'SSO (SAML/OIDC)',
-      'Dashboard analytics',
     ],
-    cta: 'Contact us',
+    cta: 'Join waitlist',
     href: 'mailto:support@tages.dev',
     highlighted: false,
   },
@@ -134,9 +135,15 @@ export function Pricing() {
                   Most popular
                 </span>
               )}
+              {'badge' in plan && plan.badge && (
+                <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full border border-zinc-600 bg-zinc-800 px-3 py-0.5 text-xs font-medium text-zinc-300">
+                  {plan.badge}
+                </span>
+              )}
               <h3 className="text-lg font-semibold text-white">{plan.name}</h3>
               <div className="mt-2">
                 <span className="text-3xl font-bold text-white">{plan.price}</span>
+                {' '}
                 <span className="text-sm text-zinc-500">{plan.period}</span>
               </div>
               <p className="mt-2 text-sm text-zinc-400">{plan.description}</p>
