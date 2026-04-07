@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import Link from 'next/link'
 import { useState } from 'react'
 
@@ -9,8 +10,15 @@ export function Nav() {
   return (
     <nav className="fixed top-0 z-50 w-full border-b border-zinc-800/50 bg-[#0a0a0a]/80 backdrop-blur-sm">
       <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-3">
-        <Link href="/" className="text-lg font-bold" style={{ color: '#3BA3C7' }}>
-          Tages
+        <Link href="/" className="flex items-center gap-1">
+          <Image
+            src="/logo-nav.png"
+            alt="Tages"
+            width={120}
+            height={80}
+            className="h-8 w-auto"
+            priority
+          />
         </Link>
 
         {/* Desktop nav */}
