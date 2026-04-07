@@ -5,12 +5,12 @@ const PLANS = [
     name: 'Free',
     price: '$0',
     period: 'forever',
-    description: 'For solo projects and evaluation.',
+    description: 'For solo developers. No account needed.',
     features: [
       '1 project',
       '10,000 memories',
-      'SQLite local cache',
-      '55 MCP tools',
+      '20 core MCP tools',
+      'SQLite local-only',
       'tages brief generation',
       'Community support',
     ],
@@ -24,12 +24,12 @@ const PLANS = [
     period: '/month',
     description: 'For professional developers.',
     features: [
+      'All 56 MCP tools',
       'Unlimited projects',
       '50,000 memories',
       'Supabase cloud sync',
       'Fuzzy + semantic search',
-      'Memory quality scoring',
-      'Priority support',
+      'Quality scoring + analytics',
     ],
     cta: 'Start free trial',
     href: '/api/stripe/checkout?plan=pro',
@@ -72,14 +72,15 @@ const PLANS = [
 ]
 
 const COMPARISON = [
-  { feature: 'Free tier', tages: '10K memories', mem0: '10K memories', zep: '1K credits', supermemory: '1M tokens', shodh: 'Unlimited' },
-  { feature: 'Paid entry', tages: '$14/mo', mem0: '$19/mo', zep: '$25/mo', supermemory: '$19/mo', shodh: 'None' },
-  { feature: 'Full features', tages: '$14/mo', mem0: '$249/mo', zep: '$475/mo', supermemory: '$399/mo', shodh: 'N/A' },
-  { feature: 'Team pricing', tages: '$29/seat', mem0: 'Enterprise', zep: 'Enterprise', supermemory: '$399/mo', shodh: 'None' },
-  { feature: 'Self-hosted', tages: 'Free (MIT)', mem0: 'Apache 2.0', zep: 'Graphiti only', supermemory: 'Open core', shodh: 'Free' },
-  { feature: 'Coding focus', tages: 'Purpose-built', mem0: 'General', zep: 'General', supermemory: 'Plugin', shodh: 'General' },
-  { feature: 'Benchmarks', tages: 'Published', mem0: 'LOCOMO', zep: 'LongMemEval', supermemory: '3 benchmarks', shodh: 'None' },
-  { feature: 'Delivery', tages: 'System prompt', mem0: 'MCP / API', zep: 'API', supermemory: 'MCP / API', shodh: 'MCP' },
+  { feature: 'Free tier', tages: '10K memories', mempalace: 'Unlimited', mem0: '10K memories', zep: '1K credits', supermemory: '1M tokens' },
+  { feature: 'Paid entry', tages: '$14/mo', mempalace: 'Free', mem0: '$19/mo', zep: '$25/mo', supermemory: '$19/mo' },
+  { feature: 'Team sharing', tages: 'RBAC + federation', mempalace: 'None', mem0: 'None', zep: 'None', supermemory: 'None' },
+  { feature: 'Dashboard', tages: 'Full (Next.js)', mempalace: 'None', mem0: 'Basic', zep: 'None', supermemory: 'Basic' },
+  { feature: 'MCP tools', tages: '56', mempalace: '19', mem0: 'N/A', zep: 'N/A', supermemory: 'N/A' },
+  { feature: 'Quality control', tages: 'Audit + sharpen', mempalace: 'None', mem0: 'None', zep: 'None', supermemory: 'None' },
+  { feature: 'Self-hosted', tages: 'Free (MIT)', mempalace: 'Free (MIT)', mem0: 'Apache 2.0', zep: 'Graphiti only', supermemory: 'Open core' },
+  { feature: 'Coding focus', tages: 'Purpose-built', mempalace: 'General', mem0: 'General', zep: 'General', supermemory: 'Plugin' },
+  { feature: 'Delivery', tages: 'System prompt', mempalace: 'MCP', mem0: 'MCP / API', zep: 'API', supermemory: 'MCP / API' },
 ]
 
 const FAQ = [
@@ -111,7 +112,7 @@ export function Pricing() {
       <div className="mx-auto max-w-5xl">
         <h2 className="text-center text-3xl font-bold text-white">Simple pricing</h2>
         <p className="mt-3 text-center text-zinc-400">
-          Full features at every paid tier. No paywalls.
+          Start free with 20 core tools. Upgrade for team sharing and advanced features.
         </p>
 
         {/* Plan cards */}
@@ -176,7 +177,7 @@ export function PricingComparison() {
       <div className="mx-auto max-w-5xl">
         <h2 className="text-center text-3xl font-bold text-white">How Tages compares</h2>
         <p className="mt-3 text-center text-zinc-400">
-          Most memory platforms charge $249-$475/mo for full features. Tages includes everything at $14/mo.
+          The only memory platform built for teams. Others store facts — Tages manages quality.
         </p>
 
         <div className="mt-12 overflow-x-auto">
@@ -185,10 +186,10 @@ export function PricingComparison() {
               <tr className="border-b border-zinc-800">
                 <th className="pb-3 pr-6 text-left text-zinc-500 font-medium" />
                 <th className="pb-3 px-4 text-left font-semibold" style={{ color: '#3BA3C7' }}>Tages</th>
+                <th className="pb-3 px-4 text-left text-zinc-400 font-medium">MemPalace</th>
                 <th className="pb-3 px-4 text-left text-zinc-400 font-medium">Mem0</th>
                 <th className="pb-3 px-4 text-left text-zinc-400 font-medium">Zep</th>
                 <th className="pb-3 px-4 text-left text-zinc-400 font-medium">Supermemory</th>
-                <th className="pb-3 px-4 text-left text-zinc-400 font-medium">Shodh</th>
               </tr>
             </thead>
             <tbody>
@@ -196,10 +197,10 @@ export function PricingComparison() {
                 <tr key={row.feature} className="border-b border-zinc-800/50">
                   <td className="py-3 pr-6 text-zinc-500 font-medium">{row.feature}</td>
                   <td className="py-3 px-4 text-white font-medium">{row.tages}</td>
+                  <td className="py-3 px-4 text-zinc-400">{row.mempalace}</td>
                   <td className="py-3 px-4 text-zinc-400">{row.mem0}</td>
                   <td className="py-3 px-4 text-zinc-400">{row.zep}</td>
                   <td className="py-3 px-4 text-zinc-400">{row.supermemory}</td>
-                  <td className="py-3 px-4 text-zinc-400">{row.shodh}</td>
                 </tr>
               ))}
             </tbody>

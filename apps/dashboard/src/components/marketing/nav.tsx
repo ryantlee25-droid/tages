@@ -46,7 +46,7 @@ export function Nav() {
             className="rounded-lg px-4 py-1.5 text-sm font-medium text-white transition-all hover:opacity-90"
             style={{ backgroundColor: '#3BA3C7' }}
           >
-            Try demo
+            Get started
           </Link>
         </div>
 
@@ -93,7 +93,7 @@ export function Nav() {
               className="inline-flex w-fit rounded-lg px-4 py-1.5 text-sm font-medium text-white"
               style={{ backgroundColor: '#3BA3C7' }}
             >
-              Try demo
+              Get started
             </Link>
           </div>
         </div>
