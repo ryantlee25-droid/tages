@@ -4,6 +4,7 @@ import { Hero } from '@/components/marketing/hero'
 import { Problem } from '@/components/marketing/problem'
 import { HowItWorks } from '@/components/marketing/how-it-works'
 import { ValueProps } from '@/components/marketing/value-props'
+import { Pricing } from '@/components/marketing/pricing'
 import { Footer } from '@/components/marketing/footer'
 
 export default async function HomePage() {
@@ -20,6 +21,7 @@ export default async function HomePage() {
       <Problem />
       <HowItWorks />
       <ValueProps />
+      <Pricing />
       <Footer />
     </>
   )
