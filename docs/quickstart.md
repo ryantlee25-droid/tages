@@ -5,7 +5,7 @@ Get Tages running in under 5 minutes.
 ## 1. Install
 
 ```bash
-npm install -g tages
+npm install -g @tages/cli
 ```
 
 ## 2. Initialize

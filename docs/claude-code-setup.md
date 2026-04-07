@@ -12,7 +12,7 @@ Connect Tages to Claude Code so your AI sessions remember your codebase.
 ### 1. Install Tages
 
 ```bash
-npm install -g tages
+npm install -g @tages/cli
 ```
 
 ### 2. Initialize in your project

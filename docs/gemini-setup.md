@@ -12,7 +12,7 @@ Connect Tages to Google Gemini for persistent codebase memory.
 ### 1. Install
 
 ```bash
-npm install -g tages
+npm install -g @tages/cli
 tages init
 ```
 

@@ -289,7 +289,7 @@ Include in each finding:
 
 ```bash
 # Install the CLI
-npm install -g tages
+npm install -g @tages/cli
 
 # Initialize with your test Supabase project
 tages init \

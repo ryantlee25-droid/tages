@@ -2,7 +2,7 @@ const STEPS = [
   {
     step: 1,
     title: 'Install',
-    code: `npm install -g tages\ntages init`,
+    code: `npm install -g @tages/cli\ntages init`,
     description: 'One command connects Tages to your project and configures your AI tools.',
   },
   {

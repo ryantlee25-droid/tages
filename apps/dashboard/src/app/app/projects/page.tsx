@@ -47,7 +47,7 @@ export default async function ProjectsPage() {
             your project directory to get started.
           </p>
           <p className="mt-4 text-sm text-zinc-500">
-            Or install the CLI: <code className="rounded bg-zinc-800 px-1.5 py-0.5">npm install -g tages</code>
+            Or install the CLI: <code className="rounded bg-zinc-800 px-1.5 py-0.5">npm install -g @tages/cli</code>
           </p>
         </div>
       ) : (

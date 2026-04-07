@@ -10,7 +10,7 @@ Your AI agents forget everything between sessions. Tages fixes that. Conventions
 ## Quick Start
 
 ```bash
-npm install -g tages
+npm install -g @tages/cli
 tages init
 ```
 
