@@ -7,9 +7,10 @@ export function Hero() {
       <Image
         src="/logo-hero.png"
         alt="Tages"
-        width={240}
-        height={160}
-        className="mb-8 h-16 w-auto sm:h-20"
+        width={480}
+        height={320}
+        className="mb-8 h-28 w-auto sm:h-36"
+        style={{ filter: 'hue-rotate(-13deg) saturate(0.6)' }}
         priority
       />
       <div className="mb-6 inline-flex items-center rounded-full border border-[#3BA3C7]/30 bg-[#3BA3C7]/10 px-4 py-1.5 text-sm text-[#3BA3C7]">

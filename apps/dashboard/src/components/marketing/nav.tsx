@@ -12,11 +12,12 @@ export function Nav() {
       <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-3">
         <Link href="/" className="flex items-center gap-1">
           <Image
-            src="/logo-nav.png"
+            src="/logo-hero.png"
             alt="Tages"
-            width={120}
-            height={80}
-            className="h-8 w-auto"
+            width={240}
+            height={160}
+            className="h-12 w-auto"
+            style={{ filter: 'hue-rotate(-13deg) saturate(0.6)' }}
             priority
           />
         </Link>
