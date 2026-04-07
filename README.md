@@ -108,6 +108,21 @@ See [SECURITY.md](SECURITY.md) for our full security policy and responsible disc
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
+## Release Notes
+
+### 2026-04-06 — Pre-launch E2E fixes + Benchmark 4 & 5
+
+**Bug fixes:**
+- Fix workspace reference mismatch: `@tages/shared` now uses `workspace:*` in cli and server package.json (was `^0.1.0`, causing `pnpm install --frozen-lockfile` failures)
+- Fix MCP server config resolution: pass `TAGES_PROJECT_SLUG` env var to `loadServerConfig()` so the server uses the correct project instead of falling through to the first alphabetical config file
+- Add startup logging to MCP server for transport connection readiness
+
+**Benchmarks:**
+- Benchmark 4 (TheDocGen changelog pipeline): +4.0 quality delta, 17 conventions, 6 gotchas
+- Benchmark 5 (TheDocGen API reference generator): +6.3 quality delta, 19 conventions, 8 gotchas — largest delta recorded
+- New formal benchmark rubric with 3 scoring clusters (memory-dependent, code quality, operational)
+- Cross-benchmark trend analysis confirms superlinear complexity-to-value relationship
+
 ## License
 
 [MIT](LICENSE)

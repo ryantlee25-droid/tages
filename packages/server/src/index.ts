@@ -60,7 +60,7 @@ import {
 } from './schemas'
 
 async function main() {
-  const config = loadServerConfig()
+  const config = loadServerConfig(process.env.TAGES_PROJECT_SLUG)
 
   // Initialize SQLite cache (works even without Supabase)
   const cachePath = config?.cachePath || '/tmp/tages-default.db'
@@ -700,8 +700,10 @@ async function main() {
   registerResources(server, cache, sync)
 
   // Start stdio transport
+  console.error('[tages] Connecting stdio transport...')
   const transport = new StdioServerTransport()
   await server.connect(transport)
+  console.error('[tages] Server ready — listening for MCP requests')
 
   // Cleanup on exit
   process.on('SIGINT', async () => {
