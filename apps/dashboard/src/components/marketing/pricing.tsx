@@ -32,7 +32,7 @@ const PLANS = [
       'Priority support',
     ],
     cta: 'Start free trial',
-    href: '/api/stripe/checkout',
+    href: '/api/stripe/checkout?plan=pro',
     highlighted: true,
   },
   {

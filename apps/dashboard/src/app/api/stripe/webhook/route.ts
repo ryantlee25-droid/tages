@@ -40,10 +40,12 @@ export async function POST(request: Request) {
     case 'checkout.session.completed': {
       const session = event.data.object
       const userId = session.metadata?.user_id
+      const plan = session.metadata?.plan || 'pro'
       if (userId) {
         await supabase.from('user_profiles').upsert({
           user_id: userId,
           is_pro: true,
+          plan,
           pro_since: new Date().toISOString(),
           stripe_customer_id: session.customer as string,
         })
@@ -55,7 +57,6 @@ export async function POST(request: Request) {
       const subscription = event.data.object
       const customerId = subscription.customer as string
 
-      // Look up user by stripe_customer_id (set during checkout)
       const { data } = await supabase
         .from('user_profiles')
         .select('user_id')
@@ -65,7 +66,7 @@ export async function POST(request: Request) {
       if (data?.[0]) {
         await supabase
           .from('user_profiles')
-          .update({ is_pro: false })
+          .update({ is_pro: false, plan: 'free' })
           .eq('user_id', data[0].user_id)
       }
       break
