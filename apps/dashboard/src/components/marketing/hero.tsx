@@ -14,24 +14,30 @@ export function Hero() {
         priority
       />
       <div className="mb-6 inline-flex items-center rounded-full border border-[#3BA3C7]/30 bg-[#3BA3C7]/10 px-4 py-1.5 text-sm text-[#3BA3C7]">
-        Free demo — no credit card required
+        One command to install. No account needed.
       </div>
 
       <h1 className="max-w-3xl text-5xl font-bold leading-tight tracking-tight text-white sm:text-6xl">
-        Your agents remember everything.{' '}
-        <span style={{ color: '#3BA3C7' }}>Your codebase never gets re-explained.</span>
+        Memory isn&apos;t storage.{' '}
+        <span style={{ color: '#3BA3C7' }}>It&apos;s a team practice.</span>
       </h1>
       <p className="mt-6 max-w-xl text-lg text-zinc-400">
-        Tages gives AI coding agents persistent, cross-session memory about your codebase.
-        Architectural decisions, naming conventions, past mistakes — remembered automatically
-        across every tool and session.
+        When three developers use AI agents on the same codebase, those agents need to share
+        what they know. Tages gives them persistent, quality-controlled, shared memory —
+        conventions, decisions, architecture, past mistakes.
       </p>
 
-      <div className="mt-10">
+      <div className="mt-10 flex gap-4">
         <Link
-          href="/auth/login"
+          href="/examples"
           className="rounded-lg px-8 py-3.5 text-sm font-medium text-white transition-all hover:opacity-90 hover:shadow-lg hover:shadow-[#3BA3C7]/20"
           style={{ backgroundColor: '#3BA3C7' }}
+        >
+          See how teams use it
+        </Link>
+        <Link
+          href="/auth/login"
+          className="rounded-lg border border-zinc-700 px-8 py-3.5 text-sm font-medium text-zinc-300 transition-colors hover:border-zinc-500 hover:text-white"
         >
           Try the demo
         </Link>
@@ -40,16 +46,16 @@ export function Hero() {
       {/* Stats */}
       <div className="mt-12 flex gap-8 text-center">
         <div>
-          <p className="text-2xl font-bold text-white">55</p>
-          <p className="text-xs text-zinc-500">MCP tools</p>
+          <p className="text-2xl font-bold text-white">20</p>
+          <p className="text-xs text-zinc-500">free MCP tools</p>
         </div>
         <div>
           <p className="text-2xl font-bold text-white">&lt;10ms</p>
           <p className="text-xs text-zinc-500">local recall</p>
         </div>
         <div>
-          <p className="text-2xl font-bold text-white">+14%</p>
-          <p className="text-xs text-zinc-500">agent quality improvement</p>
+          <p className="text-2xl font-bold text-white">+6.3</p>
+          <p className="text-xs text-zinc-500">quality delta (complex tasks)</p>
         </div>
       </div>
 
@@ -62,23 +68,20 @@ export function Hero() {
           <span className="ml-3 text-xs text-zinc-500">Terminal</span>
         </div>
         <div className="space-y-2 p-4 font-mono text-sm">
+          <p className="text-zinc-500"># Add to Claude Code — one command, no account</p>
           <p>
             <span className="text-zinc-500">$</span>{' '}
-            <span className="text-green-400">tages remember</span>{' '}
-            <span className="text-zinc-300">&quot;api-errors&quot; &quot;Return &#123; error, code, status &#125;&quot;</span>{' '}
-            <span className="text-zinc-500">--type convention</span>
+            <span className="text-green-400">claude mcp add tages</span>{' '}
+            <span className="text-zinc-300">-- npx -y @tages/server</span>
           </p>
-          <p className="text-zinc-500">Stored: &quot;api-errors&quot; (convention)</p>
+          <p className="text-zinc-500 mt-1">MCP server registered.</p>
           <p className="mt-4">
-            <span className="text-zinc-500">$ # ... 3 weeks later, new session ...</span>
+            <span className="text-zinc-500"># Agent remembers conventions across sessions</span>
           </p>
           <p>
             <span className="text-zinc-500">$</span>{' '}
             <span className="text-green-400">tages recall</span>{' '}
             <span className="text-zinc-300">&quot;error handling&quot;</span>
-          </p>
-          <p className="text-zinc-500">
-            Found 1 memory (hybrid: trigram + semantic):
           </p>
           <p>
             <span className="text-blue-400">[convention]</span>{' '}

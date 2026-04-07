@@ -1,9 +1,9 @@
 const STEPS = [
   {
     step: 1,
-    title: 'Install',
-    code: `npm install -g @tages/cli\ntages init`,
-    description: 'One command connects Tages to your project and configures your AI tools.',
+    title: 'Add to Claude Code',
+    code: `claude mcp add tages -- npx -y @tages/server\n\n# Or install the full CLI:\nnpm install -g @tages/cli && tages init`,
+    description: 'One line. No account needed. Memories stored locally in SQLite. Free forever.',
   },
   {
     step: 2,
