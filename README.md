@@ -1,38 +1,20 @@
 # Tages
 
-**Team memory for AI coding agents.**
+**Persistent codebase memory for AI coding agents.**
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-521%20passing-brightgreen.svg)]()
 
-Your AI agents forget everything between sessions. Every decision re-litigated. Every convention re-explained. Every past mistake repeated by the next agent that touches the same code.
+Your AI agents forget everything between sessions. Tages fixes that. Conventions, decisions, architecture, past mistakes — remembered automatically, injected into every session, across every tool.
 
-Personal memory tools patch the symptom: store some facts, retrieve them later. That works for solo developers who remember what they stored. It breaks down when teams ship with AI — when three developers are using agents on the same codebase, when onboarding requires transferring institutional knowledge, when the wrong memory survives a refactor because no one audited it.
-
-Memory isn't storage. It's a team practice.
-
-Tages treats codebase memory as a managed artifact: structured types, quality scoring, audit trails, sharpen passes that rewrite vague notes into imperative agent instructions. One developer's architecture decision becomes every agent's context. A bad memory gets flagged and corrected before it misleads the next session.
-
-Start in under 60 seconds with one command. Add team features when your workflow demands them.
+## Quick Start
 
 ```bash
-claude mcp add tages -- npx -y @tages/server
+npm install -g @tages/cli
+tages init
 ```
 
-## Why Tages?
-
-| | Tages | MemPalace | Mem0 |
-|---|---|---|---|
-| Install | One line (`claude mcp add`) | One line (`pip install`) | API key + SDK |
-| Local-only mode | Yes (SQLite, zero config) | Yes (ChromaDB) | No (cloud-only) |
-| Team sharing | Yes (RBAC, federation) | No | No |
-| Dashboard | Yes (Next.js, analytics) | No | Basic |
-| Quality control | Audit, sharpen, enforce | No | No |
-| Memory types | 11 structured types | Free-form | Structured |
-| MCP tools | 56 | 19 | N/A |
-| Search | Trigram + semantic + decay | Vector + palace graph | Vector |
-| Workflow integration | Git hooks, CI/CD, briefs | Manual mining | SDK calls |
-| Pricing | Free local / $14 Pro | Free | $19-$249/mo |
+That's it. Your AI tools now remember your codebase.
 
 ## What It Remembers
 
@@ -117,7 +99,7 @@ See [SECURITY.md](SECURITY.md) for our full security policy and responsible disc
 
 | Plan | Price | Includes |
 |------|-------|----------|
-| **Free** | $0 | 1 project, 10,000 memories, 20 core MCP tools, local SQLite |
+| **Free** | $0 | 1 project, 10,000 memories, full MCP + CLI + dashboard |
 | **Pro** | $14/mo | Unlimited projects, 50K memories, cloud sync, semantic search |
 | **Team** | $29/seat/mo | 100K memories/project, federation, RBAC, SSO, analytics |
 | **Self-hosted** | Free forever | Bring your own Supabase, no limits, MIT license |
@@ -127,26 +109,6 @@ See [SECURITY.md](SECURITY.md) for our full security policy and responsible disc
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
-
-### 2026-04-07 — Competitive positioning: free tier, team flow, feature gating
-
-**Free tier overhaul:**
-- `tages init` now defaults to local mode (no OAuth required). Use `--cloud` to opt in.
-- MCP-only install: `claude mcp add tages -- npx -y @tages/server` — zero CLI needed
-- 20 core tools free (remember, recall, forget, conventions, architecture, decisions, brief, pre-check, etc.)
-- 36 advanced tools (federation, analytics, impact analysis, quality scoring) gated behind Pro
-- 10,000 memory limit enforced on free tier with upgrade prompt
-
-**Team onboarding:**
-- `tages init --team` — cloud auth + teammate invites + shared MCP config snippet
-- New team overview dashboard page: weekly memory creation, member activity
-
-**Positioning:**
-- README hero rewrite: "Memory isn't storage. It's a team practice."
-- Added "Why Tages?" comparison table vs MemPalace and Mem0
-- Quickstart now leads with MCP-only install path
-
-**Tests:** 543 passing (459 server + 84 CLI), up from 521
 
 ### 2026-04-06 — Pre-launch E2E fixes + Benchmark 4 & 5
 
