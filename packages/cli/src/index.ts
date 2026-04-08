@@ -45,8 +45,8 @@ program
 program
   .command('init')
   .description('Initialize tages for the current project')
-  .option('--local', 'Local-only mode (no cloud sync)')
-  .option('--cloud', 'Enable cloud sync with Supabase')
+  .option('--local', 'Local-only mode (no cloud sync, no auth)')
+  .option('--cloud', 'Cloud mode with OAuth (default; kept for backward compat)')
   .option('--team', 'Cloud mode with team member invites')
   .option('--slug <slug>', 'Project slug (defaults to directory name)')
   .action(initCommand)
