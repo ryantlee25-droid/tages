@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Tages — Codebase Memory for AI Agents",
+  title: "Tages | Codebase Memory for AI Agents",
   description: "Persistent codebase memory for AI coding agents. Your agents remember everything.",
 };
 

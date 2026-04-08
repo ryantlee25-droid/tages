@@ -98,7 +98,7 @@ interface MemoryRow {
 
 function buildMarkdown(projectName: string, memories: MemoryRow[]): string {
   const lines: string[] = [
-    `# ${projectName} — Codebase Memory`,
+    `# ${projectName} | Codebase Memory`,
     '',
     `> Exported on ${new Date().toISOString().split('T')[0]}`,
     '',

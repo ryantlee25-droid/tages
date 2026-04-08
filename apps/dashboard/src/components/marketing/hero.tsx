@@ -23,7 +23,7 @@ export function Hero() {
       </h1>
       <p className="mt-6 max-w-xl text-lg text-zinc-400">
         When three developers use AI agents on the same codebase, those agents need to share
-        what they know. Tages gives them persistent, quality-controlled, shared memory —
+        what they know. Tages gives them persistent, quality-controlled, shared memory:
         conventions, decisions, architecture, past mistakes.
       </p>
 
@@ -72,7 +72,7 @@ export function Hero() {
           <span className="ml-3 text-xs text-zinc-500">Terminal</span>
         </div>
         <div className="space-y-2 p-4 font-mono text-sm">
-          <p className="text-zinc-500"># Add to any MCP client — works with Claude, Qwen, DeepSeek</p>
+          <p className="text-zinc-500"># Add to any MCP client (Claude, Qwen, DeepSeek)</p>
           <p>
             <span className="text-zinc-500">$</span>{' '}
             <span className="text-green-400">claude mcp add tages</span>{' '}

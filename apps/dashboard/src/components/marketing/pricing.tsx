@@ -47,7 +47,7 @@ const PLANS = [
       '100,000 memories per project',
       'Team memory federation',
       'RBAC + audit logging',
-      'SSO (SAML/OIDC) — planned',
+      'SSO (SAML/OIDC) [planned]',
     ],
     cta: 'Join waitlist',
     href: 'mailto:support@tages.ai',
@@ -184,7 +184,7 @@ export function PricingComparison() {
       <div className="mx-auto max-w-5xl">
         <h2 className="text-center text-3xl font-bold text-white">How Tages compares</h2>
         <p className="mt-3 text-center text-zinc-400">
-          The only memory platform built for teams. Others store facts — Tages manages quality.
+          The only memory platform built for teams. Others store facts. Tages manages quality.
         </p>
 
         <div className="mt-12 overflow-x-auto">
