@@ -41,13 +41,17 @@ export async function GET(request: Request) {
     null
   const userAgent = request.headers.get('user-agent') ?? null
 
-  if (!redirectUri) {
+  if (!redirectUri && !code) {
+    return NextResponse.json({ error: 'Missing redirect_uri or code' }, { status: 400 })
+  }
+
+  if (redirectUri && !code) {
     // Step 1: Redirect to GitHub OAuth with this route as callback
     const supabase = await createClient()
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'github',
       options: {
-        redirectTo: `${origin}/auth/cli?redirect_uri=${encodeURIComponent(searchParams.get('redirect_uri') || '')}`,
+        redirectTo: `${origin}/auth/cli?redirect_uri=${encodeURIComponent(redirectUri)}`,
       },
     })
 
