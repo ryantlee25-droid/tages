@@ -1,23 +1,31 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import * as fs from 'fs'
-import * as os from 'os'
 import * as path from 'path'
 import {
   setupTempConfigDir,
   writeProjectConfig,
-  createMockSupabaseClient,
   captureConsole,
   TEST_PROJECT_CONFIG,
   TEST_LOCAL_CONFIG,
 } from './helpers.js'
 
-// Mock @tages/shared before importing the command
-const mockSupabase = createMockSupabaseClient()
-vi.mock('@tages/shared', () => ({
-  createSupabaseClient: vi.fn(() => mockSupabase),
+// vi.mock factories are hoisted — do NOT reference outer variables inside them.
+// Use vi.hoisted() to share mocks across the factory and tests.
+const { mockUpsertMemory, mockFlush, mockClose, mockOpenCliSync } = vi.hoisted(() => {
+  const mockUpsertMemory = vi.fn()
+  const mockFlush = vi.fn().mockResolvedValue(undefined)
+  const mockClose = vi.fn()
+  const mockOpenCliSync = vi.fn().mockResolvedValue({
+    cache: { upsertMemory: mockUpsertMemory },
+    flush: mockFlush,
+    close: mockClose,
+  })
+  return { mockUpsertMemory, mockFlush, mockClose, mockOpenCliSync }
+})
+
+vi.mock('../sync/cli-sync.js', () => ({
+  openCliSync: mockOpenCliSync,
 }))
 
-// Mock config/paths to point at our temp dir
 let tempConfigDir: string
 let cleanupFn: () => void
 
@@ -39,11 +47,14 @@ describe('remember command', () => {
     tempConfigDir = setup.configDir
     cleanupFn = setup.cleanup
     console_ = captureConsole()
-
-    // Reset mock state
     vi.clearAllMocks()
-    mockSupabase.from = vi.fn().mockReturnValue({
-      upsert: vi.fn().mockResolvedValue({ data: null, error: null }),
+
+    // Reset mock return values after clearAllMocks
+    mockFlush.mockResolvedValue(undefined)
+    mockOpenCliSync.mockResolvedValue({
+      cache: { upsertMemory: mockUpsertMemory },
+      flush: mockFlush,
+      close: mockClose,
     })
   })
 
@@ -52,25 +63,42 @@ describe('remember command', () => {
     cleanupFn()
   })
 
+  it('writes SQLite first then flushes to cloud', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+
+    const callOrder: string[] = []
+    mockUpsertMemory.mockImplementation(() => { callOrder.push('sqlite') })
+    mockFlush.mockImplementation(async () => { callOrder.push('flush') })
+
+    await rememberCommand('test-key', 'test-value', { type: 'convention' })
+
+    expect(callOrder).toEqual(['sqlite', 'flush'])
+    expect(mockUpsertMemory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: 'test-key',
+        value: 'test-value',
+        type: 'convention',
+        projectId: 'test-project-id',
+      }),
+      true,
+    )
+    expect(console_.logs.join('\n')).toContain('test-key')
+  })
+
   it('stores a memory and prints success message', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
 
     await rememberCommand('test-key', 'test-value', { type: 'convention' })
 
-    expect(mockSupabase.from).toHaveBeenCalledWith('memories')
-    const upsertCall = mockSupabase.from.mock.results[0].value.upsert
-    expect(upsertCall).toHaveBeenCalledWith(
+    expect(mockUpsertMemory).toHaveBeenCalledWith(
       expect.objectContaining({
         key: 'test-key',
         value: 'test-value',
         type: 'convention',
-        project_id: 'test-project-id',
+        projectId: 'test-project-id',
       }),
-      { onConflict: 'project_id,key', ignoreDuplicates: false },
+      true,
     )
-    // id must NOT be in the upsert payload (causes FK violation on memory_versions)
-    const payload = upsertCall.mock.calls[0][0]
-    expect(payload).not.toHaveProperty('id')
     expect(console_.logs.join('\n')).toContain('test-key')
   })
 
@@ -83,16 +111,15 @@ describe('remember command', () => {
       tags: ['important', 'architecture'],
     })
 
-    const upsertCall = mockSupabase.from.mock.results[0].value.upsert
-    expect(upsertCall).toHaveBeenCalledWith(
+    expect(mockUpsertMemory).toHaveBeenCalledWith(
       expect.objectContaining({
         key: 'tagged-key',
         value: 'tagged-value',
         type: 'decision',
-        file_paths: ['src/index.ts', 'src/utils.ts'],
+        filePaths: ['src/index.ts', 'src/utils.ts'],
         tags: ['important', 'architecture'],
       }),
-      expect.any(Object),
+      true,
     )
   })
 
@@ -102,19 +129,17 @@ describe('remember command', () => {
     const specialValue = 'He said "hello"\nNew line here\tTab\u00e9\u00e8\u00ea emoji: \u2764'
     await rememberCommand('special-chars', specialValue, { type: 'lesson' })
 
-    const upsertCall = mockSupabase.from.mock.results[0].value.upsert
-    expect(upsertCall).toHaveBeenCalledWith(
+    expect(mockUpsertMemory).toHaveBeenCalledWith(
       expect.objectContaining({
         key: 'special-chars',
         value: specialValue,
       }),
-      expect.any(Object),
+      true,
     )
     expect(console_.logs.join('\n')).toContain('special-chars')
   })
 
   it('exits with error when no project is configured', async () => {
-    // Don't write any project config -- the directory exists but is empty
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
       throw new Error('process.exit called')
     })
@@ -128,25 +153,46 @@ describe('remember command', () => {
     exitSpy.mockRestore()
   })
 
-  it('reports Supabase upsert errors', async () => {
+  it('Supabase failure does not prevent SQLite write', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
-    mockSupabase.from = vi.fn().mockReturnValue({
-      upsert: vi.fn().mockResolvedValue({
-        data: null,
-        error: { message: 'Row too large' },
+
+    const callOrder: string[] = []
+    mockUpsertMemory.mockImplementation(() => { callOrder.push('sqlite') })
+    // flush throws — but SQLite was already written before flush is called
+    mockFlush.mockImplementation(async () => {
+      callOrder.push('flush-start')
+      throw new Error('Network error')
+    })
+
+    // Command may throw from flush — but SQLite was written before that
+    try {
+      await rememberCommand('key', 'value', { type: 'convention' })
+    } catch {
+      // acceptable
+    }
+
+    expect(callOrder[0]).toBe('sqlite')
+    expect(callOrder[1]).toBe('flush-start')
+    expect(mockUpsertMemory).toHaveBeenCalled()
+    // close() is always called in finally
+    expect(mockClose).toHaveBeenCalled()
+  })
+
+  it('remember works in local mode (no supabaseUrl)', async () => {
+    writeProjectConfig(tempConfigDir, TEST_LOCAL_CONFIG)
+
+    await rememberCommand('local-key', 'local-value', { type: 'convention' })
+
+    // openCliSync is called (handles local mode internally with no-op flush)
+    expect(mockOpenCliSync).toHaveBeenCalled()
+    expect(mockUpsertMemory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: 'local-key',
+        value: 'local-value',
       }),
-    })
-
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
-      throw new Error('process.exit called')
-    })
-
-    await expect(
-      rememberCommand('key', 'value', { type: 'convention' }),
-    ).rejects.toThrow('process.exit called')
-
-    expect(console_.errors.join('\n')).toContain('Row too large')
-    exitSpy.mockRestore()
+      true,
+    )
+    expect(console_.logs.join('\n')).toContain('local-key')
   })
 
   it('skips Supabase when in local-only mode (no supabaseUrl)', async () => {
@@ -154,8 +200,9 @@ describe('remember command', () => {
 
     await rememberCommand('local-key', 'local-value', { type: 'convention' })
 
-    // Supabase should NOT be called in local-only mode
-    expect(mockSupabase.from).not.toHaveBeenCalled()
+    expect(mockOpenCliSync).toHaveBeenCalledWith(
+      expect.objectContaining({ supabaseUrl: '' }),
+    )
     expect(console_.logs.join('\n')).toContain('local-key')
   })
 
@@ -172,10 +219,9 @@ describe('remember command', () => {
 
     await rememberCommand('key', 'val', { type: 'convention' })
 
-    const upsertCall = mockSupabase.from.mock.results[0].value.upsert
-    expect(upsertCall).toHaveBeenCalledWith(
+    expect(mockUpsertMemory).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'convention' }),
-      expect.any(Object),
+      true,
     )
   })
 
@@ -184,13 +230,25 @@ describe('remember command', () => {
 
     await rememberCommand('key', 'val', { type: 'convention' })
 
-    const upsertCall = mockSupabase.from.mock.results[0].value.upsert
-    expect(upsertCall).toHaveBeenCalledWith(
+    expect(mockUpsertMemory).toHaveBeenCalledWith(
       expect.objectContaining({
-        file_paths: [],
+        filePaths: [],
         tags: [],
       }),
-      expect.any(Object),
+      true,
     )
+  })
+
+  it('always calls close() even when flush throws', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    mockFlush.mockRejectedValue(new Error('flush error'))
+
+    try {
+      await rememberCommand('key', 'value', { type: 'convention' })
+    } catch {
+      // may throw from flush
+    }
+
+    expect(mockClose).toHaveBeenCalled()
   })
 })
