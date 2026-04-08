@@ -54,10 +54,6 @@ export function Hero() {
           <p className="text-xs text-zinc-500">local recall</p>
         </div>
         <div>
-          <p className="text-2xl font-bold text-white">+6.3</p>
-          <p className="text-xs text-zinc-500">quality delta (complex tasks)</p>
-        </div>
-        <div>
           <p className="text-2xl font-bold text-white">Any</p>
           <p className="text-xs text-zinc-500">model or machine</p>
         </div>
