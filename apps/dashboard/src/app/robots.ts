@@ -7,6 +7,6 @@ export default function robots(): MetadataRoute.Robots {
       allow: '/',
       disallow: ['/app/', '/api/'],
     },
-    sitemap: 'https://dashboard-weld-nine-65.vercel.app/sitemap.xml',
+    sitemap: 'https://app.tages.ai/sitemap.xml',
   }
 }
