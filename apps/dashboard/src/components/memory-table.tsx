@@ -42,13 +42,13 @@ export function MemoryTable({ projectId }: { projectId: string }) {
 
   const { toast } = useToast()
   const supabase = createClient()
+  const reloadRef = useRef(() => {})
 
   // Debounce search input
   useEffect(() => {
     const timeout = setTimeout(() => {
       setDebouncedSearch(search)
       setPage(0)
-      setMemories([])
     }, 300)
     return () => clearTimeout(timeout)
   }, [search])
@@ -56,7 +56,6 @@ export function MemoryTable({ projectId }: { projectId: string }) {
   // Reset page when filters change
   useEffect(() => {
     setPage(0)
-    setMemories([])
   }, [filter, statusFilter])
 
   // Realtime subscription — only depends on projectId
@@ -72,8 +71,8 @@ export function MemoryTable({ projectId }: { projectId: string }) {
           filter: `project_id=eq.${projectId}`,
         },
         () => {
-          setPage(0)
-          setMemories([])
+          // Realtime change — reload with current filters via ref
+          reloadRef.current()
         },
       )
       .subscribe()
@@ -85,6 +84,11 @@ export function MemoryTable({ projectId }: { projectId: string }) {
   useEffect(() => {
     loadMemories(0, false)
   }, [projectId, filter, statusFilter, debouncedSearch]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep reloadRef pointing at the latest load function
+  useEffect(() => {
+    reloadRef.current = () => { loadMemories(0, false); setPage(0) }
+  })
 
   async function loadMemories(targetPage = 0, append = false) {
     setLoading(true)
