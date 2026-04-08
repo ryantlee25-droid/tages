@@ -31,7 +31,7 @@ export async function handleRemember(
     return {
       content: [{
         type: 'text',
-        text: 'Memory limit reached (10,000 on free tier). Upgrade to Pro for 50,000 memories: https://tages.dev/upgrade',
+        text: 'Memory limit reached (10,000 on free tier). Upgrade to Pro for 50,000 memories: https://dashboard-weld-nine-65.vercel.app/upgrade',
       }],
     }
   }

@@ -5,7 +5,7 @@ export interface GateResult {
   content: Array<{ type: 'text'; text: string }>
 }
 
-const UPGRADE_MSG = 'This tool requires Tages Pro. Run `tages init --cloud` and upgrade at https://tages.dev/upgrade'
+const UPGRADE_MSG = 'This tool requires Tages Pro. Run `tages init --cloud` and upgrade at https://dashboard-weld-nine-65.vercel.app/upgrade'
 
 export function gateCheck(plan: string | undefined, toolName: string): GateResult | null {
   const effectivePlan = plan || 'free'
