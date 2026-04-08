@@ -8,16 +8,37 @@ import {
   TEST_LOCAL_CONFIG,
 } from './helpers.js'
 
-const mockDeleteEq2 = vi.fn()
-const mockDeleteEq1 = vi.fn().mockReturnValue({ eq: mockDeleteEq2 })
-const mockDelete = vi.fn().mockReturnValue({ eq: mockDeleteEq1 })
-const mockSupabase = {
-  from: vi.fn().mockReturnValue({ delete: mockDelete }),
-  rpc: vi.fn(),
-}
+// vi.mock factories are hoisted — use vi.hoisted() to share mocks.
+const { mockDeleteByKey, mockClose, mockFlush, mockOpenCliSync } = vi.hoisted(() => {
+  const mockDeleteByKey = vi.fn().mockReturnValue(true)
+  const mockClose = vi.fn()
+  const mockFlush = vi.fn().mockResolvedValue(undefined)
+  const mockOpenCliSync = vi.fn().mockResolvedValue({
+    cache: { deleteByKey: mockDeleteByKey },
+    flush: mockFlush,
+    close: mockClose,
+  })
+  return { mockDeleteByKey, mockClose, mockFlush, mockOpenCliSync }
+})
 
-vi.mock('@tages/shared', () => ({
-  createSupabaseClient: vi.fn(() => mockSupabase),
+vi.mock('../sync/cli-sync.js', () => ({
+  openCliSync: mockOpenCliSync,
+}))
+
+// Mock the Supabase auth client used for cloud delete
+const { mockDeleteEq2, mockDeleteEq1, mockDelete, mockSupabaseClient, mockCreateAuthenticatedClient } = vi.hoisted(() => {
+  const mockDeleteEq2 = vi.fn().mockResolvedValue({ data: null, error: null })
+  const mockDeleteEq1 = vi.fn().mockReturnValue({ eq: mockDeleteEq2 })
+  const mockDelete = vi.fn().mockReturnValue({ eq: mockDeleteEq1 })
+  const mockSupabaseClient = {
+    from: vi.fn().mockReturnValue({ delete: mockDelete }),
+  }
+  const mockCreateAuthenticatedClient = vi.fn().mockResolvedValue(mockSupabaseClient)
+  return { mockDeleteEq2, mockDeleteEq1, mockDelete, mockSupabaseClient, mockCreateAuthenticatedClient }
+})
+
+vi.mock('../auth/session.js', () => ({
+  createAuthenticatedClient: mockCreateAuthenticatedClient,
 }))
 
 let tempConfigDir: string
@@ -43,11 +64,19 @@ describe('forget command', () => {
     console_ = captureConsole()
     vi.clearAllMocks()
 
-    // Reset the chain
+    // Reset mocks after clearAllMocks
+    mockDeleteByKey.mockReturnValue(true)
+    mockFlush.mockResolvedValue(undefined)
     mockDeleteEq2.mockResolvedValue({ data: null, error: null })
     mockDeleteEq1.mockReturnValue({ eq: mockDeleteEq2 })
     mockDelete.mockReturnValue({ eq: mockDeleteEq1 })
-    mockSupabase.from.mockReturnValue({ delete: mockDelete })
+    mockSupabaseClient.from.mockReturnValue({ delete: mockDelete })
+    mockCreateAuthenticatedClient.mockResolvedValue(mockSupabaseClient)
+    mockOpenCliSync.mockResolvedValue({
+      cache: { deleteByKey: mockDeleteByKey },
+      flush: mockFlush,
+      close: mockClose,
+    })
   })
 
   afterEach(() => {
@@ -55,47 +84,58 @@ describe('forget command', () => {
     cleanupFn()
   })
 
+  it('deletes SQLite first then cloud', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+
+    const callOrder: string[] = []
+    mockDeleteByKey.mockImplementation(() => { callOrder.push('sqlite'); return true })
+    mockDeleteEq2.mockImplementation(async () => { callOrder.push('cloud'); return { data: null, error: null } })
+
+    await forgetCommand('old-convention', {})
+
+    expect(callOrder[0]).toBe('sqlite')
+    expect(callOrder[1]).toBe('cloud')
+    expect(mockDeleteByKey).toHaveBeenCalledWith('test-project-id', 'old-convention')
+    expect(console_.logs.join('\n')).toContain('Deleted')
+    expect(console_.logs.join('\n')).toContain('old-convention')
+  })
+
   it('deletes a memory by key and prints success', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
 
     await forgetCommand('old-convention', {})
 
-    expect(mockSupabase.from).toHaveBeenCalledWith('memories')
+    expect(mockDeleteByKey).toHaveBeenCalledWith('test-project-id', 'old-convention')
+    expect(mockSupabaseClient.from).toHaveBeenCalledWith('memories')
     expect(mockDeleteEq1).toHaveBeenCalledWith('project_id', 'test-project-id')
     expect(mockDeleteEq2).toHaveBeenCalledWith('key', 'old-convention')
     expect(console_.logs.join('\n')).toContain('Deleted')
     expect(console_.logs.join('\n')).toContain('old-convention')
   })
 
-  it('succeeds silently when deleting a non-existent key (Supabase returns no error)', async () => {
+  it('succeeds silently when deleting a non-existent key (SQLite returns false)', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
-    // Supabase DELETE on a non-existent row returns success with no error
-    mockDeleteEq2.mockResolvedValue({ data: null, error: null })
+    mockDeleteByKey.mockReturnValue(false)
 
     await forgetCommand('does-not-exist', {})
 
-    // The CLI still prints "Deleted" because Supabase doesn't error on missing rows
     expect(console_.logs.join('\n')).toContain('Deleted')
     expect(console_.logs.join('\n')).toContain('does-not-exist')
   })
 
-  it('reports Supabase delete errors', async () => {
+  it('cloud delete error is a warning only — does not exit', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
     mockDeleteEq2.mockResolvedValue({
       data: null,
       error: { message: 'permission denied' },
     })
 
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
-      throw new Error('process.exit called')
-    })
+    // Should NOT throw — cloud errors are best-effort warnings
+    await forgetCommand('key', {})
 
-    await expect(
-      forgetCommand('key', {}),
-    ).rejects.toThrow('process.exit called')
-
+    expect(mockDeleteByKey).toHaveBeenCalled()
     expect(console_.errors.join('\n')).toContain('permission denied')
-    exitSpy.mockRestore()
+    expect(console_.logs.join('\n')).toContain('Deleted')
   })
 
   it('exits with error when no project is configured', async () => {
@@ -117,8 +157,35 @@ describe('forget command', () => {
 
     await forgetCommand('key', {})
 
-    // from() should not be called since there's no supabaseUrl
-    expect(mockSupabase.from).not.toHaveBeenCalled()
+    // Supabase client should not be called since supabaseUrl is empty
+    expect(mockSupabaseClient.from).not.toHaveBeenCalled()
+    expect(mockDeleteByKey).toHaveBeenCalled()
+    expect(console_.logs.join('\n')).toContain('Deleted')
+  })
+
+  it('always calls close() even when cloud delete throws', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    mockDeleteEq2.mockRejectedValue(new Error('network error'))
+
+    await forgetCommand('key', {})
+
+    expect(mockDeleteByKey).toHaveBeenCalled()
+    expect(mockClose).toHaveBeenCalled()
+    expect(console_.errors.join('\n')).toContain('network error')
+    expect(console_.logs.join('\n')).toContain('Deleted')
+  })
+
+  it('reports Supabase delete errors as warnings (no process.exit)', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    mockDeleteEq2.mockResolvedValue({
+      data: null,
+      error: { message: 'permission denied' },
+    })
+
+    // Should complete without throwing
+    await forgetCommand('key', {})
+
+    expect(console_.errors.join('\n')).toContain('permission denied')
     expect(console_.logs.join('\n')).toContain('Deleted')
   })
 
