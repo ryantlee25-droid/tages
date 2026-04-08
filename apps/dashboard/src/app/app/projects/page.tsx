@@ -72,7 +72,7 @@ export default async function ProjectsPage() {
                   {(project.memories as Array<{ count: number }>)?.[0]?.count ?? 0} memories
                 </span>
                 <span>
-                  {new Date(project.updated_at as string).toLocaleDateString()}
+                  Created {new Date(project.created_at as string).toLocaleDateString()}
                 </span>
               </div>
             </Link>
