@@ -3,6 +3,7 @@ import { isValidSlug } from '@/lib/validate-slug'
 import { notFound } from 'next/navigation'
 import { ProjectNav } from '@/components/project-nav'
 import { TeamMembers } from '@/components/team-members'
+import { ProjectSettingsForm } from '@/components/project-settings-form'
 
 export default async function SettingsPage({
   params,
@@ -37,10 +38,22 @@ export default async function SettingsPage({
           <h3 className="text-lg font-medium text-white">Project</h3>
           <div className="mt-3 space-y-2 text-sm text-zinc-400">
             <p><span className="text-zinc-500">Slug:</span> {project.slug}</p>
-            <p><span className="text-zinc-500">Git remote:</span> {project.git_remote || 'Not set'}</p>
-            <p><span className="text-zinc-500">Default branch:</span> {project.default_branch}</p>
             <p><span className="text-zinc-500">Created:</span> {new Date(project.created_at).toLocaleDateString()}</p>
           </div>
+        </div>
+
+        {/* Editable settings */}
+        <div>
+          <h3 className="mb-3 text-lg font-medium text-white">Settings</h3>
+          <ProjectSettingsForm
+            project={{
+              id: project.id,
+              name: project.name,
+              git_remote: project.git_remote ?? null,
+              default_branch: project.default_branch ?? 'main',
+            }}
+            isOwner={isOwner}
+          />
         </div>
 
         {/* Team */}

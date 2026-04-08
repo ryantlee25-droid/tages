@@ -1,4 +1,6 @@
 import Link from 'next/link'
+import { createClient } from '@/lib/supabase/server'
+import { redirect } from 'next/navigation'
 
 const PLANS = [
   {
@@ -35,7 +37,24 @@ const PLANS = [
   },
 ]
 
-export default function UpgradePage() {
+export default async function UpgradePage() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+
+  if (!user) {
+    redirect('/auth/login')
+  }
+
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('is_pro')
+    .eq('user_id', user.id)
+    .single()
+
+  if (profile?.is_pro) {
+    redirect('/app/projects')
+  }
+
   return (
     <div className="flex min-h-full items-center justify-center p-8">
       <div className="max-w-2xl">
