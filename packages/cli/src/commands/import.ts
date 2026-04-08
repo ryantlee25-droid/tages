@@ -3,9 +3,9 @@ import * as path from 'path'
 import { randomUUID } from 'crypto'
 import chalk from 'chalk'
 import ora from 'ora'
-import { createAuthenticatedClient } from '../auth/session.js'
 import type { Memory, MemoryType } from '@tages/shared'
 import { loadProjectConfig } from '../config/project.js'
+import { openCliSync } from '../sync/cli-sync.js'
 
 type ImportStrategy = 'skip' | 'overwrite' | 'merge'
 
@@ -76,128 +76,99 @@ export async function importCommand(file: string, options: ImportOptions) {
     return
   }
 
-  if (!config.supabaseUrl || !config.supabaseAnonKey) {
-    spinner.fail('Import requires a cloud connection. Run `tages init` to configure Supabase.')
-    process.exit(1)
-  }
+  const { cache, flush, close } = await openCliSync(config)
 
-  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
+  try {
+    spinner.text = `Importing ${rawMemories.length} memories...`
 
-  // Fetch existing keys for duplicate checking
-  const { data: existing } = await supabase
-    .from('memories')
-    .select('id, key, value, created_at')
-    .eq('project_id', config.projectId)
+    let imported = 0
+    let skipped = 0
+    let merged = 0
+    const errors: string[] = []
+    const now = new Date().toISOString()
 
-  const existingMap = new Map<string, { id: string; value: string; createdAt: string }>()
-  for (const row of (existing || [])) {
-    existingMap.set(row.key, { id: row.id, value: row.value, createdAt: row.created_at })
-  }
+    for (const raw of rawMemories) {
+      const key = typeof raw.key === 'string' ? raw.key.trim() : ''
+      const rawValue = typeof raw.value === 'string' ? raw.value.trim() : ''
 
-  spinner.text = `Importing ${rawMemories.length} memories...`
+      if (!key) {
+        errors.push('Skipped memory with missing key')
+        continue
+      }
+      if (!rawValue) {
+        errors.push(`Skipped "${key}" with empty value`)
+        continue
+      }
 
-  let imported = 0
-  let skipped = 0
-  let merged = 0
-  const errors: string[] = []
-  const now = new Date().toISOString()
+      const dup = cache.getByKey(config.projectId, key)
 
-  for (const raw of rawMemories) {
-    const key = typeof raw.key === 'string' ? raw.key.trim() : ''
-    const rawValue = typeof raw.value === 'string' ? raw.value.trim() : ''
+      if (dup && strategy === 'skip') {
+        skipped++
+        continue
+      }
 
-    if (!key) {
-      errors.push('Skipped memory with missing key')
-      continue
-    }
-    if (!rawValue) {
-      errors.push(`Skipped "${key}" with empty value`)
-      continue
-    }
+      let finalValue = rawValue
+      if (dup && strategy === 'merge') {
+        finalValue = `${dup.value}\n\n${finalValue}`
+      }
 
-    const dup = existingMap.get(key)
+      const memType: MemoryType = VALID_TYPES.includes(raw.type as MemoryType)
+        ? (raw.type as MemoryType)
+        : 'convention'
 
-    if (dup && strategy === 'skip') {
-      skipped++
-      continue
-    }
+      const memory: Memory = {
+        id: dup?.id || randomUUID(),
+        projectId: config.projectId,
+        key,
+        value: finalValue,
+        type: memType,
+        source: 'import',
+        status: 'live',
+        filePaths: Array.isArray(raw.filePaths)
+          ? (raw.filePaths as string[])
+          : (Array.isArray(raw.file_paths) ? (raw.file_paths as string[]) : []),
+        tags: Array.isArray(raw.tags) ? (raw.tags as string[]) : [],
+        confidence: typeof raw.confidence === 'number' ? raw.confidence : 1.0,
+        agentName: typeof raw.agentName === 'string' ? raw.agentName : undefined,
+        conditions: Array.isArray(raw.conditions) ? (raw.conditions as string[]) : undefined,
+        phases: Array.isArray(raw.phases) ? (raw.phases as string[]) : undefined,
+        crossSystemRefs: Array.isArray(raw.crossSystemRefs) ? (raw.crossSystemRefs as string[]) : undefined,
+        createdAt: dup?.createdAt || now,
+        updatedAt: now,
+      }
 
-    let finalValue = rawValue
-    if (dup && strategy === 'merge') {
-      finalValue = `${dup.value}\n\n${finalValue}`
-    }
+      cache.upsertMemory(memory, true)
 
-    const memType: MemoryType = VALID_TYPES.includes(raw.type as MemoryType)
-      ? (raw.type as MemoryType)
-      : 'convention'
+      if (dup && strategy === 'merge') {
+        merged++
+      } else {
+        imported++
+      }
 
-    const memory: Memory = {
-      id: dup?.id || randomUUID(),
-      projectId: config.projectId,
-      key,
-      value: finalValue,
-      type: memType,
-      source: 'import',
-      status: 'live',
-      filePaths: Array.isArray(raw.filePaths)
-        ? (raw.filePaths as string[])
-        : (Array.isArray(raw.file_paths) ? (raw.file_paths as string[]) : []),
-      tags: Array.isArray(raw.tags) ? (raw.tags as string[]) : [],
-      confidence: typeof raw.confidence === 'number' ? raw.confidence : 1.0,
-      agentName: typeof raw.agentName === 'string' ? raw.agentName : undefined,
-      conditions: Array.isArray(raw.conditions) ? (raw.conditions as string[]) : undefined,
-      phases: Array.isArray(raw.phases) ? (raw.phases as string[]) : undefined,
-      crossSystemRefs: Array.isArray(raw.crossSystemRefs) ? (raw.crossSystemRefs as string[]) : undefined,
-      createdAt: dup?.createdAt || now,
-      updatedAt: now,
-    }
-
-    // Omit `id` from upsert — passing a new UUID on conflict overwrites
-    // the existing row's id, which violates FK from memory_versions.
-    const { error } = await supabase.from('memories').upsert({
-      project_id: memory.projectId,
-      key: memory.key,
-      value: memory.value,
-      type: memory.type,
-      source: memory.source,
-      status: memory.status,
-      file_paths: memory.filePaths,
-      tags: memory.tags,
-      confidence: memory.confidence,
-    }, { onConflict: 'project_id,key', ignoreDuplicates: false })
-
-    if (error) {
-      errors.push(`Failed to store "${key}": ${error.message}`)
-      continue
+      const statusParts = [`${imported} imported`]
+      if (skipped > 0) statusParts.push(`${skipped} skipped`)
+      if (merged > 0) statusParts.push(`${merged} merged`)
+      spinner.text = `Importing ${rawMemories.length} memories... (${statusParts.join(', ')})`
     }
 
-    existingMap.set(key, { id: memory.id, value: finalValue, createdAt: memory.createdAt })
+    await flush()
 
-    if (dup && strategy === 'merge') {
-      merged++
-    } else {
-      imported++
+    const resultParts = [`${imported} imported`]
+    if (skipped > 0) resultParts.push(`${skipped} skipped`)
+    if (merged > 0) resultParts.push(`${merged} merged`)
+
+    spinner.succeed(
+      chalk.green(`Imported from ${path.basename(file)}: `) + resultParts.join(', ')
+    )
+
+    if (errors.length > 0) {
+      console.log(chalk.yellow(`\n  ${errors.length} warning(s):`))
+      for (const e of errors) {
+        console.log(chalk.dim(`    - ${e}`))
+      }
     }
-
-    const statusParts = [`${imported} imported`]
-    if (skipped > 0) statusParts.push(`${skipped} skipped`)
-    if (merged > 0) statusParts.push(`${merged} merged`)
-    spinner.text = `Importing ${rawMemories.length} memories... (${statusParts.join(', ')})`
-  }
-
-  const resultParts = [`${imported} imported`]
-  if (skipped > 0) resultParts.push(`${skipped} skipped`)
-  if (merged > 0) resultParts.push(`${merged} merged`)
-
-  spinner.succeed(
-    chalk.green(`Imported from ${path.basename(file)}: `) + resultParts.join(', ')
-  )
-
-  if (errors.length > 0) {
-    console.log(chalk.yellow(`\n  ${errors.length} warning(s):`))
-    for (const e of errors) {
-      console.log(chalk.dim(`    - ${e}`))
-    }
+  } finally {
+    close()
   }
 }
 
@@ -229,4 +200,3 @@ export function parseMarkdown(content: string): Array<Record<string, unknown>> {
 
   return memories
 }
-
