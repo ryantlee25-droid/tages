@@ -131,7 +131,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 ### 2026-04-07 — Competitive positioning: free tier, team flow, feature gating
 
 **Free tier overhaul:**
-- `tages init` now defaults to local mode (no OAuth required). Use `--cloud` to opt in.
+- `tages init` defaults to cloud mode (GitHub OAuth). Use `--local` to skip auth and store memories locally only.
 - MCP-only install: `claude mcp add tages -- npx -y @tages/server` — zero CLI needed
 - 20 core tools free (remember, recall, forget, conventions, architecture, decisions, brief, pre-check, etc.)
 - 36 advanced tools (federation, analytics, impact analysis, quality scoring) gated behind Pro

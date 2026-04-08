@@ -9,7 +9,7 @@ const PLANS = [
     period: '/month',
     description: 'For professional developers.',
     features: [
-      'Unlimited projects',
+      'Up to 10 projects',
       '50,000 memories',
       'Supabase cloud sync',
       'Fuzzy + semantic search',
@@ -32,7 +32,7 @@ const PLANS = [
       'SSO (SAML/OIDC)',
       'Dashboard analytics',
     ],
-    href: 'mailto:support@tages.dev?subject=Tages Team plan',
+    href: 'mailto:support@tages.ai?subject=Tages Team plan',
     highlighted: false,
   },
 ]

@@ -6,7 +6,7 @@ Tages is an open-source MCP server + CLI + dashboard that gives AI coding agents
 
 **Repo**: https://github.com/ryantlee25-droid/tages
 **Stack**: pnpm monorepo — Node.js/TypeScript
-**npm packages**: `tages` (CLI), `@tages/server` (MCP server), `@tages/shared` (types)
+**npm packages**: `@tages/cli` (CLI), `@tages/server` (MCP server), `@tages/shared` (types)
 
 ## Architecture
 
@@ -55,7 +55,7 @@ pnpm typecheck        # tsc --noEmit across all packages
 pnpm --filter server test  # server tests only
 ```
 
-### CLI (tages)
+### CLI (@tages/cli)
 
 Core: `init`, `remember`, `recall`, `forget`, `status`, `dashboard`
 Advanced: `dedup`, `impact`, `risk`, `enforce`, `quality`, `templates`, `archive`, `federation`

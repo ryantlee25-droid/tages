@@ -3,7 +3,7 @@
 > **Disclaimer**: This is a self-assessment, not a third-party SOC 2 Type II audit report. It has not been reviewed or attested by a licensed CPA firm. It is provided for transparency and to assist enterprise customers evaluating Tages. Formal audit engagement is on the roadmap.
 
 **Assessment date**: 2026-04-06
-**Scope**: Tages cloud service (tages.dev) — MCP server (`@tages/server`), CLI (`@tages/cli`), dashboard (`apps/dashboard`), and Supabase-hosted data store.
+**Scope**: Tages cloud service (tages.ai) — MCP server (`@tages/server`), CLI (`@tages/cli`), dashboard (`apps/dashboard`), and Supabase-hosted data store.
 
 ---
 
@@ -102,7 +102,7 @@
 
 **Implementation**:
 - Tages relies on Supabase (database, auth) and Vercel (hosting) as primary infrastructure vendors, both of which maintain their own SOC 2 Type II certifications.
-- `SECURITY.md` defines a responsible disclosure policy with SLA targets by severity: Critical 7 days, High 30 days, Medium 90 days. Security contact is `security@tages.dev`.
+- `SECURITY.md` defines a responsible disclosure policy with SLA targets by severity: Critical 7 days, High 30 days, Medium 90 days. Security contact is `security@tages.ai`.
 - Input validation on all 30 MCP server tools uses Zod schemas (`packages/server/src/schemas.ts`), rejecting malformed inputs before they reach business logic.
 - Request body size is capped at 1 MB in `apps/dashboard/src/proxy.ts` for all non-GET API routes.
 

@@ -22,9 +22,9 @@ cd your-project
 tages init
 ```
 
-This sets up local mode by default. Add `--cloud` to enable GitHub OAuth and cloud sync.
+This defaults to cloud mode (GitHub OAuth + sync). Use `--local` to skip auth and store memories locally only.
 
-> **Free tier** includes 20 core MCP tools (remember, recall, forget, conventions, architecture, decisions, brief, pre-check, and more). Pro adds 36 advanced tools: federation, analytics, impact analysis, quality scoring, and templates. [Compare plans ->](https://tages.dev/pricing)
+> **Free tier** includes 20 core MCP tools (remember, recall, forget, conventions, architecture, decisions, brief, pre-check, and more). Pro adds 36 advanced tools: federation, analytics, impact analysis, quality scoring, and templates. [Compare plans ->](https://tages.ai/pricing)
 
 ## Store your first memory
 

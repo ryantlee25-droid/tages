@@ -14,7 +14,7 @@ export function Hero() {
         priority
       />
       <div className="mb-6 inline-flex items-center rounded-full border border-[#3BA3C7]/30 bg-[#3BA3C7]/10 px-4 py-1.5 text-sm text-[#3BA3C7]">
-        One command to install. No account needed.
+        One command to install. Works offline. Syncs when connected.
       </div>
 
       <h1 className="max-w-3xl text-5xl font-bold leading-tight tracking-tight text-white sm:text-6xl">

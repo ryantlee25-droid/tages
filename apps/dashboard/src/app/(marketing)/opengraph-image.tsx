@@ -37,7 +37,7 @@ export default async function Image() {
           Persistent codebase memory for AI coding agents
         </div>
         <div style={{ display: 'flex', fontSize: 18, color: '#52525b', marginTop: 32 }}>
-          tages.dev
+          tages.ai
         </div>
       </div>
     ),

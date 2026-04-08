@@ -142,12 +142,12 @@ export function SecurityPage() {
             OAuth app, and your own encryption key.
           </p>
           <p>
-            When self-hosting, the cloud dashboard at tages.dev is never involved. Your agents
+            When self-hosting, the cloud dashboard at tages.ai is never involved. Your agents
             connect directly to your Supabase instance. This is the highest-isolation option
             for teams with strict data residency requirements.
           </p>
           <div className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 font-mono text-sm text-zinc-300">
-            npx tages init --supabase-url YOUR_URL --supabase-key YOUR_KEY
+            npm install -g @tages/cli{'\n'}tages init --supabase-url YOUR_URL --supabase-key YOUR_KEY
           </div>
         </SecuritySection>
 
@@ -159,8 +159,8 @@ export function SecurityPage() {
           <div className="mt-2 space-y-2 text-sm">
             <p>
               <strong className="text-zinc-200">Email:</strong>{' '}
-              <a href="mailto:security@tages.dev" className="text-[#3BA3C7] hover:underline">
-                security@tages.dev
+              <a href="mailto:security@tages.ai" className="text-[#3BA3C7] hover:underline">
+                security@tages.ai
               </a>
             </p>
             <p>
@@ -198,11 +198,11 @@ export function SecurityPage() {
           We&apos;re happy to answer questions from security teams evaluating Tages.
         </p>
         <a
-          href="mailto:security@tages.dev"
+          href="mailto:security@tages.ai"
           className="mt-6 inline-flex items-center rounded-lg px-6 py-2.5 text-sm font-medium text-white transition-all hover:opacity-90"
           style={{ backgroundColor: '#3BA3C7' }}
         >
-          Contact security@tages.dev
+          Contact security@tages.ai
         </a>
       </div>
     </div>

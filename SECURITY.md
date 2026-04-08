@@ -4,7 +4,7 @@
 
 To report a security vulnerability, please use one of the following channels:
 
-- **Email**: security@tages.dev
+- **Email**: security@tages.ai
 - **GitHub Security Advisory**: [Submit a private report](https://github.com/ryantlee25-droid/tages/security/advisories/new)
 
 Please do not open a public GitHub issue for security vulnerabilities.
@@ -24,8 +24,8 @@ Please do not open a public GitHub issue for security vulnerabilities.
 
 The following assets are in scope for security research:
 
-- Cloud dashboard (tages.dev web application)
-- MCP server (`@tages/mcp-server` package)
+- Cloud dashboard (tages.ai web application)
+- MCP server (`@tages/server` package)
 - CLI (`@tages/cli` package)
 - Supabase schema and database access controls
 - npm packages published under the `@tages` organization

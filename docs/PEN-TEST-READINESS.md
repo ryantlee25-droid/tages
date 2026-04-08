@@ -2,7 +2,7 @@
 
 Version: 1.0
 Last updated: 2026-04-06
-Contact: security@tages.dev
+Contact: security@tages.ai
 
 ---
 
@@ -217,7 +217,7 @@ Consistent with `SECURITY.md`.
 
 ### In Scope
 
-- Cloud dashboard at `tages.dev` (Next.js on Vercel)
+- Cloud dashboard at `tages.ai` (Next.js on Vercel)
 - API routes under `/api/*` and auth routes under `/auth/*`
 - MCP server (`@tages/server` npm package, stdio transport)
 - CLI (`tages` npm package, all subcommands)
@@ -244,13 +244,13 @@ Consistent with `SECURITY.md`.
 
 1. **No production data access.** All testing must use dedicated test accounts and a separate Supabase project. Do not access, read, modify, or exfiltrate data belonging to other users.
 2. **No denial-of-service.** Do not send traffic volumes intended to degrade service availability. Rate-limit probing is acceptable with prior coordination.
-3. **Coordinate before active exploitation.** Report intent to `security@tages.dev` before attempting to exploit RLS bypasses, token forgery, or Stripe webhook manipulation.
+3. **Coordinate before active exploitation.** Report intent to `security@tages.ai` before attempting to exploit RLS bypasses, token forgery, or Stripe webhook manipulation.
 4. **No production Stripe operations.** Use Stripe test mode keys only. Do not trigger real payment events.
 5. **Scope creep stops at Supabase infrastructure.** If an attack path leads through Supabase-managed infrastructure, stop and report — do not pursue.
 
 ### Coordination
 
-- Initial contact: `security@tages.dev`
+- Initial contact: `security@tages.ai`
 - GitHub Security Advisories: [private report](https://github.com/ryantlee25-droid/tages/security/advisories/new)
 - Acknowledgment SLA: 48 hours
 - Fix SLA: Critical 7 days, High 30 days, Medium 90 days
@@ -298,7 +298,7 @@ tages init \
   --project-id "<test-project-slug>"
 
 # Generate a test CLI token
-# 1. Open dashboard at localhost:3000 (or tages.dev test account)
+# 1. Open dashboard at localhost:3000 (or tages.ai test account)
 # 2. Navigate to Settings > API Tokens > Generate Token
 # 3. Copy the token (shown only once)
 
