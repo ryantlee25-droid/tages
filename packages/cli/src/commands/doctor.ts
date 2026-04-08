@@ -69,7 +69,7 @@ export async function doctorCommand(options: DoctorOptions) {
   const gitDir = path.resolve('.git/hooks/post-commit')
   const hookInstalled = fs.existsSync(gitDir) && fs.readFileSync(gitDir, 'utf-8').includes('tages')
   if (check('Git hook (auto-indexing)', hookInstalled, hookInstalled ? gitDir : 'not installed')) passed++
-  else { failed++; console.log(chalk.dim('         Run `tages init` in a git repo to install the post-commit hook.')) }
+  else { failed++; console.log(chalk.dim('         Run `tages index --install` or re-run `tages init` in a git repo.')) }
 
   // 6. MCP server entry in Claude Code config
   const homeDir = process.env.HOME || process.env.USERPROFILE || ''

@@ -6,6 +6,7 @@ import { createSupabaseClient } from '@tages/shared'
 import { getConfigDir, getProjectsDir, getCacheDir, getAuthPath } from '../config/paths.js'
 import { injectMcpConfig } from '../config/mcp-inject.js'
 import { runGithubOAuth } from '../auth/github-oauth.js'
+import { installPostCommitHook } from '../indexer/install-hook.js'
 
 const DASHBOARD_URL = process.env.TAGES_DASHBOARD_URL || 'https://tages.dev'
 const SUPABASE_URL = process.env.TAGES_SUPABASE_URL || 'https://wezagdgpvwfywjoxztfs.supabase.co'
@@ -55,10 +56,16 @@ export async function initCommand(options: InitOptions) {
       projectSlug: slug,
     })
 
+    // Install post-commit hook for auto-indexing
+    const { installed: hookInstalled, path: hookPath } = installPostCommitHook()
+
     spinner.succeed('Local mode configured')
     console.log()
     console.log(chalk.green('  Project config:'), projectPath)
     console.log(chalk.green('  MCP config:'), mcpPath, created ? '(created)' : '(updated)')
+    if (hookInstalled) {
+      console.log(chalk.green('  Git hook:'), hookPath)
+    }
     console.log()
     console.log(chalk.bold('  Tages is ready!'))
     console.log(chalk.dim('  Memories are stored locally. Run `tages init --cloud` to enable cloud sync.'))
@@ -153,10 +160,16 @@ export async function initCommand(options: InitOptions) {
     projectSlug: slug,
   })
 
+  // Install post-commit hook for auto-indexing
+  const { installed: hookInstalled, path: hookPath } = installPostCommitHook()
+
   console.log()
   console.log(chalk.green('  Auth saved:'), getAuthPath())
   console.log(chalk.green('  Project config:'), projectPath)
   console.log(chalk.green('  MCP config:'), mcpPath, created ? '(created)' : '(updated)')
+  if (hookInstalled) {
+    console.log(chalk.green('  Git hook:'), hookPath)
+  }
   console.log()
   console.log(chalk.bold('  Tages is ready!'))
   console.log(chalk.dim('  Your AI tools will now remember this codebase across sessions.'))
