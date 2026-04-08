@@ -2,6 +2,7 @@ import * as fs from 'fs'
 import chalk from 'chalk'
 import ora from 'ora'
 import { loadProjectConfig } from '../config/project.js'
+import { openCliSync } from '../sync/cli-sync.js'
 
 interface ImportMemoriesOptions {
   format?: string
@@ -41,19 +42,19 @@ export async function importMemoriesCommand(filePath: string, options: ImportMem
 
   spinner.text = 'Importing memories...'
 
-  const cachePath = config.cachePath || `/tmp/tages-${config.projectId}.db`
   // Dynamic imports to avoid ESM eager resolution of cross-package paths
   // @ts-ignore — cross-package import; server must be built first
-  const { SqliteCache } = await import('../../../server/src/cache/sqlite.js')
-  // @ts-ignore — cross-package import; server must be built first
   const { handleImport } = await import('../../../server/src/tools/import.js')
-  const cache = new SqliteCache(cachePath)
+
+  const { cache, flush, close } = await openCliSync(config)
 
   try {
     const { result, content: output } = await handleImport(
       { content, format, strategy, projectId: config.projectId },
       cache, null,
     )
+
+    await flush()
 
     if (result.errors.length > 0) {
       spinner.warn(`Completed with ${result.errors.length} error(s)`)
@@ -69,6 +70,6 @@ export async function importMemoriesCommand(filePath: string, options: ImportMem
     console.log(`  ${chalk.yellow('Skipped:')}  ${result.skipped}`)
     console.log(`  ${chalk.blue('Merged:')}   ${result.merged}`)
   } finally {
-    cache.close()
+    close()
   }
 }
