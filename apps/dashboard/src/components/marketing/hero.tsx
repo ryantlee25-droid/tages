@@ -57,6 +57,10 @@ export function Hero() {
           <p className="text-2xl font-bold text-white">+6.3</p>
           <p className="text-xs text-zinc-500">quality delta (complex tasks)</p>
         </div>
+        <div>
+          <p className="text-2xl font-bold text-white">Any</p>
+          <p className="text-xs text-zinc-500">model or machine</p>
+        </div>
       </div>
 
       {/* Code snippet */}
@@ -68,7 +72,7 @@ export function Hero() {
           <span className="ml-3 text-xs text-zinc-500">Terminal</span>
         </div>
         <div className="space-y-2 p-4 font-mono text-sm">
-          <p className="text-zinc-500"># Add to Claude Code — one command, no account</p>
+          <p className="text-zinc-500"># Add to any MCP client — works with Claude, Qwen, DeepSeek</p>
           <p>
             <span className="text-zinc-500">$</span>{' '}
             <span className="text-green-400">claude mcp add tages</span>{' '}

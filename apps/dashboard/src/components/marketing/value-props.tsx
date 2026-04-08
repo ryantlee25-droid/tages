@@ -2,8 +2,8 @@ import Link from 'next/link'
 
 const VALUES = [
   {
-    title: 'Cross-agent compatible',
-    description: 'Claude Code, Cursor, Codex, Gemini — one memory set works across every MCP-compatible tool. Switch agents without losing context.',
+    title: 'Any model. Any machine.',
+    description: 'Claude, Qwen, DeepSeek, Codex — one memory set works across every MCP-compatible tool. Switch models or machines without losing context. Cloud sync keeps memories in sync wherever you code.',
     icon: (
       <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
@@ -21,7 +21,7 @@ const VALUES = [
   },
   {
     title: 'Local-first, sub-10ms',
-    description: 'SQLite cache means your agent never waits. Works offline. Supabase syncs in the background when connected.',
+    description: 'SQLite cache means your agent never waits. Works fully offline. Supabase syncs in the background when connected — memories follow you across machines.',
     icon: (
       <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
