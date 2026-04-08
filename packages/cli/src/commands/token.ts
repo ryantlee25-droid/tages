@@ -23,6 +23,11 @@ export async function tokenGenerateCommand(options: TokenOptions) {
     process.exit(1)
   }
 
+  if (!config.supabaseUrl) {
+    console.error(chalk.red('Token management requires cloud mode. Run `tages init` (without --local) first.'))
+    process.exit(1)
+  }
+
   const auth = loadAuth()
   if (!auth) {
     console.error(chalk.red('Not authenticated. Run `tages init` first.'))
@@ -60,6 +65,11 @@ export async function tokenListCommand(options: TokenOptions) {
     process.exit(1)
   }
 
+  if (!config.supabaseUrl) {
+    console.error(chalk.red('Token management requires cloud mode. Run `tages init` (without --local) first.'))
+    process.exit(1)
+  }
+
   const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
   const { data } = await supabase
     .from('api_tokens')
@@ -85,6 +95,11 @@ export async function tokenRotateCommand(options: TokenRotateOptions) {
   const config = loadProjectConfig(options.project)
   if (!config) {
     console.error(chalk.red('No project configured. Run `tages init` first.'))
+    process.exit(1)
+  }
+
+  if (!config.supabaseUrl) {
+    console.error(chalk.red('Token management requires cloud mode. Run `tages init` (without --local) first.'))
     process.exit(1)
   }
 
