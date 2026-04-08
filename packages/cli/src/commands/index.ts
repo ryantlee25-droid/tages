@@ -1,12 +1,11 @@
 import chalk from 'chalk'
 import ora from 'ora'
-import * as fs from 'fs'
 import { randomUUID } from 'crypto'
-import { createAuthenticatedClient } from '../auth/session.js'
 import type { Memory, MemoryType } from '@tages/shared'
 import { loadProjectConfig } from '../config/project.js'
 import { analyzeDiff, detectMode, getGitDiff, getCommitsSince } from '../indexer/diff-analyzer.js'
 import { installPostCommitHook } from '../indexer/install-hook.js'
+import { openCliSync } from '../sync/cli-sync.js'
 
 interface IndexOptions {
   since?: string
@@ -77,8 +76,9 @@ export async function indexCommand(options: IndexOptions) {
 
   spinner.start(`Storing ${allMemories.length} memories...`)
 
-  if (config.supabaseUrl && config.supabaseAnonKey) {
-    const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
+  const { cache, flush, close } = await openCliSync(config)
+
+  try {
     const now = new Date().toISOString()
 
     for (const mem of allMemories) {
@@ -97,23 +97,18 @@ export async function indexCommand(options: IndexOptions) {
         updatedAt: now,
       }
 
-      await supabase.from('memories').upsert({
-        project_id: memory.projectId,
-        key: memory.key,
-        value: memory.value,
-        type: memory.type,
-        source: memory.source,
-        file_paths: memory.filePaths,
-        tags: memory.tags,
-        confidence: memory.confidence,
-      }, { onConflict: 'project_id,key', ignoreDuplicates: false })
+      cache.upsertMemory(memory, true)
     }
-  }
 
-  spinner.succeed(`Indexed ${allMemories.length} memories (${mode} mode)`)
+    await flush()
 
-  for (const mem of allMemories) {
-    console.log(`  ${chalk.dim(mem.type.padEnd(14))} ${mem.key}`)
+    spinner.succeed(`Indexed ${allMemories.length} memories (${mode} mode)`)
+
+    for (const mem of allMemories) {
+      console.log(`  ${chalk.dim(mem.type.padEnd(14))} ${mem.key}`)
+    }
+  } finally {
+    close()
   }
 }
 
