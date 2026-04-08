@@ -40,14 +40,28 @@ export default async function ProjectsPage() {
       </div>
 
       {projects.length === 0 ? (
-        <div className="rounded-lg border border-zinc-800 p-12 text-center">
-          <h2 className="text-lg font-medium text-zinc-300">No projects yet</h2>
-          <p className="mt-2 text-sm text-zinc-500">
-            Run <code className="rounded bg-zinc-800 px-1.5 py-0.5">tages init</code> in
-            your project directory to get started.
+        <div className="rounded-lg border border-zinc-800 p-12 text-center max-w-lg mx-auto">
+          <div className="text-4xl mb-4">🧒</div>
+          <h2 className="text-lg font-medium text-zinc-300">Welcome to Tages</h2>
+          <p className="mt-2 text-sm text-zinc-400">
+            Give your AI tools persistent memory about your codebase.
           </p>
-          <p className="mt-4 text-sm text-zinc-500">
-            Or install the CLI: <code className="rounded bg-zinc-800 px-1.5 py-0.5">npm install -g @tages/cli</code>
+          <div className="mt-6 space-y-3 text-left">
+            <div className="rounded-lg bg-zinc-800/50 p-4">
+              <p className="text-xs font-medium text-zinc-300 mb-2">1. Install the CLI</p>
+              <code className="text-xs text-[#3BA3C7]">npm install -g @tages/cli</code>
+            </div>
+            <div className="rounded-lg bg-zinc-800/50 p-4">
+              <p className="text-xs font-medium text-zinc-300 mb-2">2. Initialize in your project</p>
+              <code className="text-xs text-[#3BA3C7]">cd your-project && tages init</code>
+            </div>
+            <div className="rounded-lg bg-zinc-800/50 p-4">
+              <p className="text-xs font-medium text-zinc-300 mb-2">3. Store your first memory</p>
+              <code className="text-xs text-[#3BA3C7]">tages remember &quot;uses-pnpm&quot; &quot;This project uses pnpm&quot;</code>
+            </div>
+          </div>
+          <p className="mt-6 text-xs text-zinc-500">
+            Your projects will appear here once you run <code className="rounded bg-zinc-800 px-1">tages init</code>.
           </p>
         </div>
       ) : (

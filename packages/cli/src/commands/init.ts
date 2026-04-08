@@ -132,8 +132,14 @@ export async function initCommand(options: InitOptions) {
 
     if (createError || !newProject) {
       spinner.fail('Failed to create project')
-      console.error(chalk.red(`  ${createError?.message || 'Unknown error'}`))
-      console.log(chalk.dim('  Cloud sync unavailable. Run `tages init --local` for local-only mode.'))
+      const msg = createError?.message || 'Unknown error'
+      if (msg.includes('violates') || msg.includes('policy') || msg.includes('row-level')) {
+        console.error(chalk.red('  Free tier is limited to 2 projects. Upgrade to Pro for up to 10.'))
+        console.error(chalk.dim(`  Upgrade at: https://app.tages.ai/upgrade`))
+      } else {
+        console.error(chalk.red(`  ${msg}`))
+      }
+      console.log(chalk.dim('  Or run `tages init --local` for local-only mode (unlimited projects).'))
       process.exit(1)
     }
 
