@@ -18,7 +18,26 @@ export function installPostCommitHook(repoRoot?: string): { installed: boolean; 
     return { installed: false, path: '' }
   }
 
-  const hookPath = path.join(root, '.git', 'hooks', 'post-commit')
+  // In git worktrees, .git is a file (not a directory) pointing to the real git dir.
+  // Resolve the actual git directory for hook installation.
+  const dotGit = path.join(root, '.git')
+  let gitDir: string
+  try {
+    const stat = fs.statSync(dotGit)
+    if (stat.isFile()) {
+      // Worktree: .git is a file containing "gitdir: /path/to/real/git/dir"
+      const content = fs.readFileSync(dotGit, 'utf-8').trim()
+      const match = content.match(/^gitdir:\s*(.+)$/)
+      if (!match) return { installed: false, path: '' }
+      gitDir = path.resolve(root, match[1])
+    } else {
+      gitDir = dotGit
+    }
+  } catch {
+    return { installed: false, path: '' }
+  }
+
+  const hookPath = path.join(gitDir, 'hooks', 'post-commit')
   const hookDir = path.dirname(hookPath)
 
   if (!fs.existsSync(hookDir)) {
