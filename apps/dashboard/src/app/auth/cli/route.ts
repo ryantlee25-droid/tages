@@ -46,12 +46,13 @@ export async function GET(request: Request) {
   }
 
   if (redirectUri && !code) {
-    // Step 1: Redirect to GitHub OAuth with this route as callback
+    // Step 1: Start OAuth. Store the CLI redirect_uri in a cookie so
+    // /auth/callback can forward tokens to the CLI after code exchange.
     const supabase = await createClient()
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'github',
       options: {
-        redirectTo: `${origin}/auth/cli?redirect_uri=${encodeURIComponent(redirectUri)}`,
+        redirectTo: `${origin}/auth/callback?cli_redirect=${encodeURIComponent(redirectUri)}`,
       },
     })
 
