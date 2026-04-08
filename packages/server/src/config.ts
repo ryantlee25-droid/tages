@@ -15,7 +15,7 @@ export interface ServerConfig {
   cachePath: string
 }
 
-function getConfigDir(): string {
+export function getConfigDir(): string {
   return path.join(os.homedir(), '.config', 'tages')
 }
 

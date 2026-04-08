@@ -4,7 +4,9 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createSupabaseClient } from '@tages/shared'
 import { z } from 'zod'
 
-import { loadServerConfig } from './config'
+import * as fs from 'fs'
+import * as path from 'path'
+import { loadServerConfig, getConfigDir } from './config'
 import { SqliteCache } from './cache/sqlite'
 import { SupabaseSync } from './sync/supabase-sync'
 import { SessionTracker } from './tracking'
@@ -89,6 +91,23 @@ async function main() {
       config.project.supabaseUrl,
       config.project.supabaseAnonKey,
     )
+
+    // Set user session from auth.json so RLS allows queries
+    try {
+      const authPath = path.join(getConfigDir(), 'auth.json')
+      if (fs.existsSync(authPath)) {
+        const auth = JSON.parse(fs.readFileSync(authPath, 'utf-8'))
+        if (auth.accessToken && auth.refreshToken) {
+          await supabaseClient.auth.setSession({
+            access_token: auth.accessToken,
+            refresh_token: auth.refreshToken,
+          })
+        }
+      }
+    } catch (e) {
+      console.error(`[tages] Warning: could not load auth tokens — sync may fail`)
+    }
+
     sync = new SupabaseSync(supabaseClient, cache, projectId, walPath)
 
     // T1: WAL recovery — replay any incomplete sync ops before hydration
