@@ -3,10 +3,20 @@ import chalk from 'chalk'
 import { getCacheDir, getAuthPath } from '../config/paths.js'
 import { createAuthenticatedClient } from '../auth/session.js'
 
-// @ts-ignore — cross-package import, rootDir expanded in tsconfig
-import { SqliteCache } from '../../../server/src/cache/sqlite.js'
-// @ts-ignore — cross-package import, rootDir expanded in tsconfig
-import { SupabaseSync } from '../../../server/src/sync/supabase-sync.js'
+// Cross-package imports loaded dynamically to avoid ESM eager resolution
+let SqliteCache: any
+let SupabaseSync: any
+
+async function loadServerModules() {
+  if (!SqliteCache) {
+    // @ts-ignore — cross-package import; server must be built first
+    const sqliteModule = await import('../../../server/src/cache/sqlite.js')
+    SqliteCache = sqliteModule.SqliteCache
+    // @ts-ignore — cross-package import; server must be built first
+    const syncModule = await import('../../../server/src/sync/supabase-sync.js')
+    SupabaseSync = syncModule.SupabaseSync
+  }
+}
 
 export interface ProjectConfig {
   projectId: string
@@ -17,7 +27,7 @@ export interface ProjectConfig {
 }
 
 export interface CliSyncContext {
-  cache: SqliteCache
+  cache: any  // SqliteCache instance (dynamically imported)
   flush: () => Promise<void>
   close: () => void
 }
@@ -29,6 +39,7 @@ export interface CliSyncContext {
  * Cloud mode (supabaseUrl present): cache + sync, flush pushes dirty records.
  */
 export async function openCliSync(config: ProjectConfig): Promise<CliSyncContext> {
+  await loadServerModules()
   const cacheDir = getCacheDir()
   if (!fs.existsSync(cacheDir)) {
     fs.mkdirSync(cacheDir, { recursive: true })
