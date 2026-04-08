@@ -43,77 +43,109 @@ export function StatsDashboard({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     async function load() {
-      const supabase = createClient()
+      try {
+        const supabase = createClient()
 
-      const [memoriesResult, sessionsResult, qualityResult] = await Promise.all([
-        supabase.from('memories').select('type, status, confidence, agent_name').eq('project_id', projectId),
-        supabase.from('agent_sessions').select('recall_hits, recall_misses').eq('project_id', projectId),
-        supabase.from('quality_scores').select('score').eq('project_id', projectId),
-      ])
+        const memoriesResult = await supabase
+          .from('memories')
+          .select('type, status, confidence, agent_name')
+          .eq('project_id', projectId)
 
-      const memories = memoriesResult.data ?? []
+        const memories = memoriesResult.data ?? []
 
-      const total = memories.length
-      const live = memories.filter((m) => m.status === 'live').length
-      const pending = memories.filter((m) => m.status === 'pending').length
+        const total = memories.length
+        const live = memories.filter((m) => m.status === 'live').length
+        const pending = memories.filter((m) => m.status === 'pending').length
 
-      // By type
-      const byType: Record<string, number> = {}
-      for (const m of memories) {
-        byType[m.type] = (byType[m.type] || 0) + 1
-      }
-
-      // Confidence distribution
-      const buckets: Record<string, number> = {
-        '0–50%': 0,
-        '50–75%': 0,
-        '75–90%': 0,
-        '90–100%': 0,
-      }
-      for (const m of memories) {
-        const c = m.confidence ?? 1
-        if (c < 0.5) buckets['0–50%']++
-        else if (c < 0.75) buckets['50–75%']++
-        else if (c < 0.9) buckets['75–90%']++
-        else buckets['90–100%']++
-      }
-      const confidenceBuckets = Object.entries(buckets) as [string, number][]
-
-      // Top agents
-      const agentCounts: Record<string, number> = {}
-      for (const m of memories) {
-        if (m.agent_name) {
-          agentCounts[m.agent_name] = (agentCounts[m.agent_name] || 0) + 1
+        // By type
+        const byType: Record<string, number> = {}
+        for (const m of memories) {
+          byType[m.type] = (byType[m.type] || 0) + 1
         }
-      }
-      const topAgents = Object.entries(agentCounts)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 5)
-        .map(([name, count]) => ({ name, count }))
 
-      // Session metrics (from parallel fetch)
-      const sessions = sessionsResult.data ?? []
-      const totalSessions = sessions.length
-      let recallHitRate: number | null = null
-      if (sessions.length > 0) {
-        const totalHits = sessions.reduce((s, r) => s + (r.recall_hits ?? 0), 0)
-        const totalMisses = sessions.reduce((s, r) => s + (r.recall_misses ?? 0), 0)
-        const totalRecalls = totalHits + totalMisses
-        recallHitRate = totalRecalls > 0 ? Math.round((totalHits / totalRecalls) * 100) : null
-      }
+        // Confidence distribution
+        const buckets: Record<string, number> = {
+          '0–50%': 0,
+          '50–75%': 0,
+          '75–90%': 0,
+          '90–100%': 0,
+        }
+        for (const m of memories) {
+          const c = m.confidence ?? 1
+          if (c < 0.5) buckets['0–50%']++
+          else if (c < 0.75) buckets['50–75%']++
+          else if (c < 0.9) buckets['75–90%']++
+          else buckets['90–100%']++
+        }
+        const confidenceBuckets = Object.entries(buckets) as [string, number][]
 
-      // Quality distribution (from parallel fetch)
-      const qualityRows = qualityResult.data ?? []
-      const qualityDistribution = { excellent: 0, good: 0, fair: 0, poor: 0 }
-      for (const q of qualityRows) {
-        if (q.score >= 80) qualityDistribution.excellent++
-        else if (q.score >= 60) qualityDistribution.good++
-        else if (q.score >= 40) qualityDistribution.fair++
-        else qualityDistribution.poor++
-      }
+        // Top agents
+        const agentCounts: Record<string, number> = {}
+        for (const m of memories) {
+          if (m.agent_name) {
+            agentCounts[m.agent_name] = (agentCounts[m.agent_name] || 0) + 1
+          }
+        }
+        const topAgents = Object.entries(agentCounts)
+          .sort(([, a], [, b]) => b - a)
+          .slice(0, 5)
+          .map(([name, count]) => ({ name, count }))
 
-      setStats({ total, live, pending, byType, confidenceBuckets, topAgents, recallHitRate, totalSessions, qualityDistribution })
-      setLoading(false)
+        // Session metrics — table may not exist for all projects
+        let totalSessions = 0
+        let recallHitRate: number | null = null
+        try {
+          const sessionsResult = await supabase
+            .from('agent_sessions')
+            .select('recall_hits, recall_misses')
+            .eq('project_id', projectId)
+          const sessions = sessionsResult.data ?? []
+          totalSessions = sessions.length
+          if (sessions.length > 0) {
+            const totalHits = sessions.reduce((s, r) => s + (r.recall_hits ?? 0), 0)
+            const totalMisses = sessions.reduce((s, r) => s + (r.recall_misses ?? 0), 0)
+            const totalRecalls = totalHits + totalMisses
+            recallHitRate = totalRecalls > 0 ? Math.round((totalHits / totalRecalls) * 100) : null
+          }
+        } catch (err) {
+          console.error('[stats] Failed to load agent_sessions:', err)
+        }
+
+        // Quality distribution — table may not exist for all projects
+        const qualityDistribution = { excellent: 0, good: 0, fair: 0, poor: 0 }
+        try {
+          const qualityResult = await supabase
+            .from('quality_scores')
+            .select('score')
+            .eq('project_id', projectId)
+          const qualityRows = qualityResult.data ?? []
+          for (const q of qualityRows) {
+            if (q.score >= 80) qualityDistribution.excellent++
+            else if (q.score >= 60) qualityDistribution.good++
+            else if (q.score >= 40) qualityDistribution.fair++
+            else qualityDistribution.poor++
+          }
+        } catch (err) {
+          console.error('[stats] Failed to load quality_scores:', err)
+        }
+
+        setStats({ total, live, pending, byType, confidenceBuckets, topAgents, recallHitRate, totalSessions, qualityDistribution })
+      } catch (err) {
+        console.error('[stats] Failed to load:', err)
+        setStats({
+          total: 0,
+          live: 0,
+          pending: 0,
+          byType: {},
+          confidenceBuckets: [['0–50%', 0], ['50–75%', 0], ['75–90%', 0], ['90–100%', 0]],
+          topAgents: [],
+          recallHitRate: null,
+          totalSessions: 0,
+          qualityDistribution: { excellent: 0, good: 0, fair: 0, poor: 0 },
+        })
+      } finally {
+        setLoading(false)
+      }
     }
     load()
   }, [projectId])
@@ -131,7 +163,13 @@ export function StatsDashboard({ projectId }: { projectId: string }) {
     )
   }
 
-  if (!stats) return null
+  if (!stats) {
+    return (
+      <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-8 text-center">
+        <p className="text-sm text-zinc-400">No statistics available yet. Start storing memories to see analytics here.</p>
+      </div>
+    )
+  }
 
   const maxTypeCount = Math.max(...Object.values(stats.byType), 1)
   const maxAgentCount = Math.max(...stats.topAgents.map((a) => a.count), 1)

@@ -47,7 +47,17 @@ export function ProjectNav({ slug, active, projectId }: { slug: string; active: 
         },
         () => loadCount(),
       )
-      .subscribe()
+      .subscribe(async (status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[tages] Realtime subscription failed, falling back to polling')
+          const { count } = await supabase
+            .from('memories')
+            .select('id', { count: 'exact', head: true })
+            .eq('project_id', projectId!)
+            .eq('status', 'pending')
+          setPendingCount(count ?? 0)
+        }
+      })
 
     return () => { supabase.removeChannel(channel) }
   }, [projectId])
