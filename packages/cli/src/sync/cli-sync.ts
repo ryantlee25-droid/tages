@@ -1,20 +1,50 @@
 import * as fs from 'fs'
+import * as path from 'path'
+import { fileURLToPath } from 'url'
+import { createRequire } from 'module'
 import chalk from 'chalk'
 import { getCacheDir, getAuthPath } from '../config/paths.js'
 import { createAuthenticatedClient } from '../auth/session.js'
 
-// Cross-package imports loaded dynamically to avoid ESM eager resolution
+// Cross-package imports: server is CJS, CLI is ESM
+// Resolve to the server package's own dist/ (not the CLI's compiled copy)
 let SqliteCache: any
 let SupabaseSync: any
 
 async function loadServerModules() {
   if (!SqliteCache) {
-    // @ts-ignore — cross-package import; server must be built first
-    const sqliteModule = await import('../../../server/src/cache/sqlite.js')
-    SqliteCache = sqliteModule.SqliteCache
-    // @ts-ignore — cross-package import; server must be built first
-    const syncModule = await import('../../../server/src/sync/supabase-sync.js')
-    SupabaseSync = syncModule.SupabaseSync
+    try {
+      // Resolve server dist: walk up from this file until we find packages/server/dist
+      const __filename = fileURLToPath(import.meta.url)
+      let dir = path.dirname(__filename)
+      let serverDist = ''
+      for (let i = 0; i < 10; i++) {
+        const candidate = path.join(dir, 'packages', 'server', 'dist')
+        if (fs.existsSync(path.join(candidate, 'cache', 'sqlite.js'))) {
+          serverDist = candidate
+          break
+        }
+        dir = path.dirname(dir)
+      }
+      if (!serverDist) throw new Error('Could not find packages/server/dist')
+      const require = createRequire(import.meta.url)
+
+      if (fs.existsSync(path.join(serverDist, 'cache', 'sqlite.js'))) {
+        // Load CJS server dist from ESM CLI
+        SqliteCache = require(path.join(serverDist, 'cache', 'sqlite.js')).SqliteCache
+        SupabaseSync = require(path.join(serverDist, 'sync', 'supabase-sync.js')).SupabaseSync
+      } else {
+        // tsx source execution: dynamic import from source
+        // @ts-ignore — cross-package import
+        const sqliteModule = await import('../../../server/src/cache/sqlite.js')
+        SqliteCache = sqliteModule.SqliteCache
+        // @ts-ignore — cross-package import
+        const syncModule = await import('../../../server/src/sync/supabase-sync.js')
+        SupabaseSync = syncModule.SupabaseSync
+      }
+    } catch (e) {
+      throw new Error(`Failed to load server modules: ${(e as Error).message}`)
+    }
   }
 }
 
