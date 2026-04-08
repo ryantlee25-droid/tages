@@ -78,9 +78,9 @@ export async function GET(request: Request) {
         })
       ).catch(() => {})
 
-      const url = new URL(redirectUri)
-      url.searchParams.set('error', 'session_exchange_failed')
-      return NextResponse.redirect(url.toString())
+      const errUrl = new URL(redirectUri!)
+      errUrl.searchParams.set('error', 'session_exchange_failed')
+      return NextResponse.redirect(errUrl.toString())
     }
 
     // Fire-and-forget: log successful login
@@ -94,7 +94,7 @@ export async function GET(request: Request) {
       })
     ).catch(() => {})
 
-    const url = new URL(redirectUri)
+    const url = new URL(redirectUri!)
     url.searchParams.set('access_token', data.session.access_token)
     url.searchParams.set('refresh_token', data.session.refresh_token)
     url.searchParams.set('user_id', data.session.user.id)
