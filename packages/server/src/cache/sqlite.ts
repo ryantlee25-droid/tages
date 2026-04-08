@@ -121,6 +121,7 @@ export class SqliteCache {
 
     // Upgrade path: add columns if missing on existing DBs
     const upgrades = [
+      'ALTER TABLE memories ADD COLUMN synced_at TEXT',
       'ALTER TABLE memories ADD COLUMN embedding TEXT',
       'ALTER TABLE memories ADD COLUMN status TEXT NOT NULL DEFAULT \'live\'',
       'ALTER TABLE memories ADD COLUMN conditions TEXT',
