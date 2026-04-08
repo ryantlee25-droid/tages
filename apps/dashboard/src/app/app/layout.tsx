@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { CommandPalette } from '@/components/command-palette'
+import { ToastProvider } from '@/components/toast'
 
 export default async function AppLayout({
   children,
@@ -25,6 +26,7 @@ export default async function AppLayout({
   const isPro = profile?.is_pro ?? false
 
   return (
+    <ToastProvider>
     <div className="flex h-screen bg-zinc-950">
       {/* Sidebar */}
       <aside className="hidden w-60 flex-col border-r border-zinc-800 bg-zinc-950 md:flex">
@@ -85,6 +87,7 @@ export default async function AppLayout({
 
       <CommandPalette />
     </div>
+    </ToastProvider>
   )
 }
 
