@@ -13,9 +13,9 @@ const SUPABASE_URL = process.env.TAGES_SUPABASE_URL || 'https://wezagdgpvwfywjox
 const SUPABASE_ANON_KEY = process.env.TAGES_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlemFnZGdwdndmeXdqb3h6dGZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzNDcyNTAsImV4cCI6MjA5MDkyMzI1MH0.iMJ3gnt0w104QxzEaTLJsAYVciPDFJvAzOtIU5tofG0'
 
 interface InitOptions {
-  local?: boolean   // deprecated alias for default behavior; kept for backward compat
-  cloud?: boolean
-  team?: boolean    // implies --cloud, adds teammate invites after project creation
+  local?: boolean   // opt-out of cloud mode; use local-only mode
+  cloud?: boolean   // backward compat alias; same as default (no flags)
+  team?: boolean    // implies cloud, adds teammate invites after project creation
   slug?: string
 }
 
@@ -36,8 +36,8 @@ export async function initCommand(options: InitOptions) {
     options.cloud = true
   }
 
-  if (!options.cloud) {
-    // Default: local-only mode — no Supabase, no auth required
+  if (options.local) {
+    // Local-only mode (--local flag): no Supabase, no auth required
     spinner.start('Setting up local mode...')
 
     const projectConfig = {
@@ -68,7 +68,7 @@ export async function initCommand(options: InitOptions) {
     }
     console.log()
     console.log(chalk.bold('  Tages is ready!'))
-    console.log(chalk.dim('  Memories are stored locally. Run `tages init --cloud` to enable cloud sync.'))
+    console.log(chalk.dim('  Memories are stored locally. Run `tages init` (without --local) to enable cloud sync.'))
     console.log(chalk.dim('  Run `tages remember` to store your first memory.'))
     return
   }
@@ -133,7 +133,7 @@ export async function initCommand(options: InitOptions) {
     if (createError || !newProject) {
       spinner.fail('Failed to create project')
       console.error(chalk.red(`  ${createError?.message || 'Unknown error'}`))
-      console.log(chalk.dim('  Cloud sync unavailable. Run `tages init` (no flags) for local-only mode.'))
+      console.log(chalk.dim('  Cloud sync unavailable. Run `tages init --local` for local-only mode.'))
       process.exit(1)
     }
 

@@ -24,6 +24,11 @@ vi.mock('../config/mcp-inject.js', () => ({
   injectMcpConfig: (...args: unknown[]) => mockInjectMcpConfig(...args),
 }))
 
+// Mock the post-commit hook installer to avoid real git dir access
+vi.mock('../indexer/install-hook.js', () => ({
+  installPostCommitHook: vi.fn().mockReturnValue({ installed: false, path: '' }),
+}))
+
 // Mock open (browser launcher)
 vi.mock('open', () => ({ default: vi.fn() }))
 
@@ -95,20 +100,23 @@ describe('init command', () => {
     cleanupFn()
   })
 
-  it('creates project config in local-only mode (default — no flags)', async () => {
+  it('triggers OAuth and creates cloud config in default mode (no flags)', async () => {
+    const { runGithubOAuth } = await import('../auth/github-oauth.js')
+
     await initCommand({ slug: 'my-app' })
+
+    expect(runGithubOAuth).toHaveBeenCalled()
 
     const projectPath = path.join(tempConfigDir, 'projects', 'my-app.json')
     expect(fs.existsSync(projectPath)).toBe(true)
 
     const config = JSON.parse(fs.readFileSync(projectPath, 'utf-8'))
-    expect(config.projectId).toBe('local-my-app')
+    expect(config.projectId).toBe('mock-project-uuid')
     expect(config.slug).toBe('my-app')
-    expect(config.supabaseUrl).toBe('')
-    expect(config.supabaseAnonKey).toBe('')
+    expect(config.supabaseUrl).toContain('supabase.co')
   })
 
-  it('creates project config in local-only mode (deprecated --local flag)', async () => {
+  it('creates project config in local-only mode (--local flag)', async () => {
     await initCommand({ local: true, slug: 'my-app' })
 
     const projectPath = path.join(tempConfigDir, 'projects', 'my-app.json')
@@ -121,8 +129,8 @@ describe('init command', () => {
     expect(config.supabaseAnonKey).toBe('')
   })
 
-  it('calls injectMcpConfig in local-only mode (default)', async () => {
-    await initCommand({ slug: 'test-app' })
+  it('calls injectMcpConfig in local-only mode (--local flag)', async () => {
+    await initCommand({ local: true, slug: 'test-app' })
 
     expect(mockInjectMcpConfig).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -132,10 +140,10 @@ describe('init command', () => {
     )
   })
 
-  it('does NOT run OAuth in default (local) mode', async () => {
+  it('does NOT run OAuth when --local flag is set', async () => {
     const { runGithubOAuth } = await import('../auth/github-oauth.js')
 
-    await initCommand({ slug: 'no-oauth-app' })
+    await initCommand({ local: true, slug: 'no-oauth-app' })
 
     expect(runGithubOAuth).not.toHaveBeenCalled()
 
@@ -144,35 +152,35 @@ describe('init command', () => {
     expect(fs.existsSync(authPath)).toBe(false)
   })
 
-  it('is idempotent -- running init twice overwrites the config cleanly', async () => {
+  it('is idempotent -- running init twice overwrites the config cleanly (--local)', async () => {
     // First init
-    await initCommand({ slug: 'idem-app' })
+    await initCommand({ local: true, slug: 'idem-app' })
     const projectPath = path.join(tempConfigDir, 'projects', 'idem-app.json')
     const firstConfig = JSON.parse(fs.readFileSync(projectPath, 'utf-8'))
 
     // Second init -- should overwrite, not error
-    await initCommand({ slug: 'idem-app' })
+    await initCommand({ local: true, slug: 'idem-app' })
     const secondConfig = JSON.parse(fs.readFileSync(projectPath, 'utf-8'))
 
     expect(secondConfig.slug).toBe('idem-app')
     expect(secondConfig.projectId).toBe(firstConfig.projectId)
   })
 
-  it('creates the config and projects directories if they do not exist', async () => {
+  it('creates the config and projects directories if they do not exist (--local)', async () => {
     // Remove the directories created by setup
     fs.rmSync(tempConfigDir, { recursive: true, force: true })
     fs.mkdirSync(tempConfigDir) // Re-create just the base (no projects/ subdir)
 
-    await initCommand({ slug: 'fresh' })
+    await initCommand({ local: true, slug: 'fresh' })
 
     const projectsDir = path.join(tempConfigDir, 'projects')
     expect(fs.existsSync(projectsDir)).toBe(true)
     expect(fs.existsSync(path.join(projectsDir, 'fresh.json'))).toBe(true)
   })
 
-  it('uses directory name as slug when --slug is not provided', async () => {
+  it('uses directory name as slug when --slug is not provided (--local)', async () => {
     // basename of cwd will be used
-    await initCommand({})
+    await initCommand({ local: true })
 
     const projectsDir = path.join(tempConfigDir, 'projects')
     const files = fs.readdirSync(projectsDir)
