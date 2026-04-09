@@ -1,6 +1,7 @@
 {
   "name": "tages",
   "private": true,
+  "packageManager": "pnpm@10.33.0",
   "description": "Persistent codebase memory for AI coding agents. MCP server + CLI + dashboard.",
   "scripts": {
     "build": "pnpm -r build",
