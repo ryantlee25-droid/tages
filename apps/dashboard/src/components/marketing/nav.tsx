@@ -9,14 +9,14 @@ export function Nav() {
 
   return (
     <nav className="fixed top-0 z-50 w-full border-b border-zinc-800/50 bg-[#0a0a0a]/80 backdrop-blur-sm">
-      <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-1">
+      <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-2">
         <Link href="/" className="flex items-center gap-1">
           <Image
             src="/logo-hero.png"
             alt="Tages"
             width={240}
             height={160}
-            className="h-28 w-auto"
+            className="h-32 w-auto"
             style={{ filter: 'hue-rotate(-13deg) saturate(0.6)' }}
             priority
           />

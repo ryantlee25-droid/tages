@@ -3,13 +3,13 @@ import Link from 'next/link'
 
 export function Hero() {
   return (
-    <section className="relative flex flex-col items-center px-6 pt-24 pb-16 text-center">
+    <section className="relative flex flex-col items-center px-6 pt-14 pb-16 text-center">
       <Image
         src="/logo-hero.png"
         alt="Tages"
         width={480}
         height={320}
-        className="-mb-36 h-[30rem] w-auto sm:h-[39rem]"
+        className="-mb-28 h-96 w-auto sm:h-[31rem]"
         style={{ filter: 'hue-rotate(-13deg) saturate(0.6)' }}
         priority
       />
