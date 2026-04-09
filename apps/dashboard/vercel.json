@@ -1,4 +1,6 @@
 {
+  "installCommand": "cd ../.. && pnpm install",
+  "buildCommand": "cd ../.. && pnpm --filter dashboard build",
   "redirects": [
     {
       "source": "/:path*",
