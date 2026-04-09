@@ -16,7 +16,7 @@ export function Nav() {
             alt="Tages"
             width={240}
             height={160}
-            className="h-16 w-auto"
+            className="h-28 w-auto"
             style={{ filter: 'hue-rotate(-13deg) saturate(0.6)' }}
             priority
           />

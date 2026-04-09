@@ -9,7 +9,7 @@ export function Hero() {
         alt="Tages"
         width={480}
         height={320}
-        className="mb-8 h-40 w-auto sm:h-52"
+        className="mb-8 h-80 w-auto sm:h-[26rem]"
         style={{ filter: 'hue-rotate(-13deg) saturate(0.6)' }}
         priority
       />

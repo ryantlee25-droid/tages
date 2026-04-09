@@ -40,7 +40,7 @@ const PROBLEMS = [
 export function Problem() {
   return (
     <section className="px-6 py-20">
-      <div className="mx-auto max-w-4xl">
+      <div className="mx-auto max-w-6xl">
         <h2 className="text-center text-3xl font-bold text-white">
           AI agents have goldfish memory
         </h2>
