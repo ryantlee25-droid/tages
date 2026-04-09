@@ -4,7 +4,7 @@ const PLANS = [
   {
     name: 'Free',
     price: '$0',
-    period: 'forever',
+    period: '',
     description: 'For solo developers. Works offline.',
     features: [
       'Up to 2 projects',
