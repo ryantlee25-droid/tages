@@ -1,0 +1,14 @@
+{
+  "name": "tages",
+  "description": "Persistent codebase memory for AI coding agents. Automatically remembers conventions, architecture decisions, and project context across sessions.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Ryan Lee"
+  },
+  "homepage": "https://tages.ai",
+  "repository": "https://github.com/ryantlee25-droid/tages",
+  "license": "MIT",
+  "keywords": ["memory", "context", "mcp", "codebase", "conventions"],
+  "mcpServers": "../.mcp.json",
+  "skills": "../skills/"
+}

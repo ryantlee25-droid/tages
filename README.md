@@ -51,9 +51,28 @@ Plus: entity, execution, operational, environment, preference (11 types total).
 
 ## How It Works
 
-1. **Install** — `tages init` connects to your project and configures MCP
+1. **Install** — `tages init` connects to your project, or install the Claude Code plugin for zero-config setup
 2. **Remember** — Store decisions and conventions manually, via git hooks, or by importing CLAUDE.md
 3. **Recall** — Every session gets full project context in <10ms from local SQLite cache
+
+### Zero-Config Auto-Detection
+
+When running as a Claude Code plugin or MCP server, Tages automatically detects which project you're in:
+
+1. **`.tages/config.json`** — explicit marker file (created by `tages link`)
+2. **Git remote** — matches the repo name against registered projects
+3. **Directory name** — matches the folder name against registered project slugs
+4. **Auto-create** — if authenticated, creates a new cloud project automatically; otherwise uses local-only mode
+
+No `tages init` required per directory. Use `tages link [slug]` to explicitly bind a directory to a project.
+
+### Claude Code Plugin
+
+Install Tages as a Claude Code plugin for automatic session memory:
+
+```
+/plugin https://github.com/ryantlee25-droid/tages
+```
 
 ## Works With
 
@@ -110,6 +129,7 @@ supabase/
 - **Audit logging** — Auth events, exports, and token validation tracked
 
 See [SECURITY.md](SECURITY.md) for our full security policy and responsible disclosure process.
+See [PRIVACY.md](PRIVACY.md) for our privacy policy.
 
 ## Pricing
 

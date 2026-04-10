@@ -53,9 +53,13 @@ const mockSupabase = {
     }),
   }),
 }
-vi.mock('@tages/shared', () => ({
-  createSupabaseClient: vi.fn(() => mockSupabase),
-}))
+vi.mock('@tages/shared', async () => {
+  const actual = await vi.importActual('@tages/shared') as Record<string, unknown>
+  return {
+    ...actual,
+    createSupabaseClient: vi.fn(() => mockSupabase),
+  }
+})
 
 let tempConfigDir: string
 let cleanupFn: () => void

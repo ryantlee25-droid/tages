@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "tages": {
+      "command": "npx",
+      "args": ["@tages/server"]
+    }
+  }
+}
