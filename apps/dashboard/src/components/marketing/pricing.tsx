@@ -189,26 +189,26 @@ export function PricingComparison() {
         </p>
 
         <div className="mt-12 overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full">
             <thead>
               <tr className="border-b border-zinc-800">
-                <th className="pb-3 pr-6 text-left text-zinc-500 font-medium" />
-                <th className="pb-3 px-4 text-left font-semibold" style={{ color: '#3BA3C7' }}>Tages</th>
-                <th className="pb-3 px-4 text-left text-zinc-400 font-medium">MemPalace</th>
-                <th className="pb-3 px-4 text-left text-zinc-400 font-medium">Mem0</th>
-                <th className="pb-3 px-4 text-left text-zinc-400 font-medium">Zep</th>
-                <th className="pb-3 px-4 text-left text-zinc-400 font-medium">Supermemory</th>
+                <th className="pb-3 pr-6 text-left text-zinc-500 font-medium whitespace-nowrap text-xs sm:text-sm" />
+                <th className="pb-3 px-4 text-left font-semibold whitespace-nowrap text-xs sm:text-sm" style={{ color: '#3BA3C7' }}>Tages</th>
+                <th className="pb-3 px-4 text-left text-zinc-400 font-medium whitespace-nowrap text-xs sm:text-sm">MemPalace</th>
+                <th className="pb-3 px-4 text-left text-zinc-400 font-medium whitespace-nowrap text-xs sm:text-sm">Mem0</th>
+                <th className="pb-3 px-4 text-left text-zinc-400 font-medium whitespace-nowrap text-xs sm:text-sm">Zep</th>
+                <th className="pb-3 px-4 text-left text-zinc-400 font-medium whitespace-nowrap text-xs sm:text-sm">Supermemory</th>
               </tr>
             </thead>
             <tbody>
               {COMPARISON.map((row) => (
                 <tr key={row.feature} className="border-b border-zinc-800/50">
-                  <td className="py-3 pr-6 text-zinc-500 font-medium">{row.feature}</td>
-                  <td className="py-3 px-4 text-white font-medium">{row.tages}</td>
-                  <td className="py-3 px-4 text-zinc-400">{row.mempalace}</td>
-                  <td className="py-3 px-4 text-zinc-400">{row.mem0}</td>
-                  <td className="py-3 px-4 text-zinc-400">{row.zep}</td>
-                  <td className="py-3 px-4 text-zinc-400">{row.supermemory}</td>
+                  <td className="py-3 pr-6 text-zinc-500 font-medium text-xs sm:text-sm">{row.feature}</td>
+                  <td className="py-3 px-4 text-white font-medium text-xs sm:text-sm">{row.tages}</td>
+                  <td className="py-3 px-4 text-zinc-400 text-xs sm:text-sm">{row.mempalace}</td>
+                  <td className="py-3 px-4 text-zinc-400 text-xs sm:text-sm">{row.mem0}</td>
+                  <td className="py-3 px-4 text-zinc-400 text-xs sm:text-sm">{row.zep}</td>
+                  <td className="py-3 px-4 text-zinc-400 text-xs sm:text-sm">{row.supermemory}</td>
                 </tr>
               ))}
             </tbody>

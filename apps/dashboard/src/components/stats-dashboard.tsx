@@ -153,7 +153,7 @@ export function StatsDashboard({ projectId }: { projectId: string }) {
   if (loading) {
     return (
       <div className="space-y-4">
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {[...Array(3)].map((_, i) => (
             <div key={i} className="h-24 animate-pulse rounded-lg bg-zinc-800" />
           ))}
@@ -177,7 +177,7 @@ export function StatsDashboard({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-6">
       {/* Summary cards */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-5">
           <p className="text-xs text-zinc-500">Total Memories</p>
           <p className="mt-1 text-3xl font-bold text-white">{stats.total}</p>
@@ -193,7 +193,7 @@ export function StatsDashboard({ projectId }: { projectId: string }) {
       </div>
 
       {/* Session & Quality metrics */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-5">
           <p className="text-xs text-zinc-500">Sessions</p>
           <p className="mt-1 text-3xl font-bold text-white">{stats.totalSessions}</p>

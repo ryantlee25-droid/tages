@@ -43,8 +43,8 @@ export function TeamOverview({
             to invite teammates.
           </p>
         ) : (
-          <div className="rounded-lg border border-zinc-800 overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-lg border border-zinc-800">
+            <table className="w-full min-w-[500px] text-sm">
               <thead>
                 <tr className="border-b border-zinc-800 bg-zinc-900/50">
                   <th className="px-4 py-2 text-left text-xs font-medium text-zinc-400 uppercase tracking-wider">
@@ -61,7 +61,7 @@ export function TeamOverview({
               <tbody className="divide-y divide-zinc-800">
                 {members.map((member) => (
                   <tr key={member.email} className="hover:bg-zinc-900/30 transition-colors">
-                    <td className="px-4 py-3 text-zinc-200">{member.email}</td>
+                    <td className="px-4 py-3 text-xs text-zinc-200 sm:text-sm">{member.email}</td>
                     <td className="px-4 py-3">
                       <span
                         className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
@@ -75,7 +75,7 @@ export function TeamOverview({
                         {member.role}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-zinc-500 text-xs">
+                    <td className="px-4 py-3 text-xs text-zinc-500">
                       {new Date(member.createdAt).toLocaleDateString()}
                     </td>
                   </tr>
@@ -92,8 +92,8 @@ export function TeamOverview({
         {weeklyMemories.length === 0 ? (
           <p className="text-sm text-zinc-500">No memories recorded this week.</p>
         ) : (
-          <div className="rounded-lg border border-zinc-800 overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-lg border border-zinc-800">
+            <table className="w-full min-w-[500px] text-sm">
               <thead>
                 <tr className="border-b border-zinc-800 bg-zinc-900/50">
                   <th className="px-4 py-2 text-left text-xs font-medium text-zinc-400 uppercase tracking-wider">
@@ -109,8 +109,8 @@ export function TeamOverview({
                   .sort((a, b) => b.count - a.count)
                   .map((item) => (
                     <tr key={item.source} className="hover:bg-zinc-900/30 transition-colors">
-                      <td className="px-4 py-3 text-zinc-200">{item.source}</td>
-                      <td className="px-4 py-3 text-right text-zinc-300 font-mono">{item.count}</td>
+                      <td className="px-4 py-3 text-xs text-zinc-200 sm:text-sm">{item.source}</td>
+                      <td className="px-4 py-3 text-right font-mono text-xs text-zinc-300 sm:text-sm">{item.count}</td>
                     </tr>
                   ))}
               </tbody>
@@ -125,8 +125,8 @@ export function TeamOverview({
         {topRecalled.length === 0 ? (
           <p className="text-sm text-zinc-500">No recall data yet for {projectSlug}.</p>
         ) : (
-          <div className="rounded-lg border border-zinc-800 overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto rounded-lg border border-zinc-800">
+            <table className="w-full min-w-[500px] text-sm">
               <thead>
                 <tr className="border-b border-zinc-800 bg-zinc-900/50">
                   <th className="px-4 py-2 text-left text-xs font-medium text-zinc-400 uppercase tracking-wider">
@@ -142,8 +142,8 @@ export function TeamOverview({
                   .sort((a, b) => b.count - a.count)
                   .map((item) => (
                     <tr key={item.key} className="hover:bg-zinc-900/30 transition-colors">
-                      <td className="px-4 py-3 text-zinc-200 font-mono text-xs">{item.key}</td>
-                      <td className="px-4 py-3 text-right text-zinc-300 font-mono">{item.count}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-zinc-200">{item.key}</td>
+                      <td className="px-4 py-3 text-right font-mono text-xs text-zinc-300 sm:text-sm">{item.count}</td>
                     </tr>
                   ))}
               </tbody>

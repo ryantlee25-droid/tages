@@ -63,7 +63,7 @@ export function SecurityPage() {
             database. Only your application can decrypt it.
           </p>
           <p>
-            To enable encryption, set the <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-sm font-mono text-zinc-200">TAGES_ENCRYPTION_KEY</code> environment
+            To enable encryption, set the <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs sm:text-sm font-mono text-zinc-200">TAGES_ENCRYPTION_KEY</code> environment
             variable to a 32-byte hex key. Without this variable, data is stored in plaintext
             (protected by Supabase RLS policies and your database credentials).
           </p>
@@ -93,7 +93,7 @@ export function SecurityPage() {
             CLI tokens are hashed with SHA-256 before storage. Raw tokens are never persisted.
             Tokens support configurable expiry and can be rotated at any time with:
           </p>
-          <div className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 font-mono text-sm text-zinc-300">
+          <div className="overflow-x-auto rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 font-mono text-xs sm:text-sm text-zinc-300">
             tages token rotate --expires-in 30
           </div>
           <p>
@@ -146,7 +146,7 @@ export function SecurityPage() {
             connect directly to your Supabase instance. This is the highest-isolation option
             for teams with strict data residency requirements.
           </p>
-          <div className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 font-mono text-sm text-zinc-300">
+          <div className="overflow-x-auto rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 font-mono text-xs sm:text-sm text-zinc-300">
             npm install -g @tages/cli{'\n'}tages init --supabase-url YOUR_URL --supabase-key YOUR_KEY
           </div>
         </SecuritySection>

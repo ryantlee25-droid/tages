@@ -292,7 +292,7 @@ export function MemoryGraphView({ projectId }: { projectId: string }) {
       {selected && (
         <div className="fixed inset-0 z-50 flex justify-end">
           <div className="absolute inset-0 bg-black/50" onClick={() => setSelected(null)} />
-          <div className="relative w-full max-w-md overflow-y-auto bg-zinc-900 p-6 shadow-xl">
+          <div className="relative w-full max-w-full overflow-y-auto bg-zinc-900 p-4 shadow-xl sm:max-w-md sm:p-6">
             <div className="flex items-start justify-between">
               <div>
                 <h3 className="text-lg font-medium text-white">{selected.key}</h3>

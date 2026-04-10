@@ -191,7 +191,7 @@ export function ExamplesPage() {
         <p className="mt-2 text-zinc-400">
           Two commands. Your agents start remembering.
         </p>
-        <div className="mt-4 inline-block overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 px-6 py-3 font-mono text-sm">
+        <div className="mt-4 inline-block overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-950 px-6 py-3 font-mono text-xs sm:text-sm">
           <span className="text-zinc-500">$</span>{' '}
           <span className="text-green-400">npm install -g @tages/cli</span>{' '}
           <span className="text-zinc-600">&&</span>{' '}
