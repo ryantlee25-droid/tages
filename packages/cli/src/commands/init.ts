@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import chalk from 'chalk'
 import ora from 'ora'
-import { createSupabaseClient } from '@tages/shared'
+import { createSupabaseClient, createCloudProject, createLocalProject } from '@tages/shared'
 import { getConfigDir, getProjectsDir, getCacheDir, getAuthPath } from '../config/paths.js'
 import { injectMcpConfig } from '../config/mcp-inject.js'
 import { runGithubOAuth } from '../auth/github-oauth.js'
@@ -40,12 +40,7 @@ export async function initCommand(options: InitOptions) {
     // Local-only mode (--local flag): no Supabase, no auth required
     spinner.start('Setting up local mode...')
 
-    const projectConfig = {
-      projectId: `local-${slug}`,
-      slug,
-      supabaseUrl: '',
-      supabaseAnonKey: '',
-    }
+    const projectConfig = createLocalProject(slug)
 
     const projectPath = path.join(getProjectsDir(), `${slug}.json`)
     fs.writeFileSync(projectPath, JSON.stringify(projectConfig, null, 2) + '\n', { mode: 0o600 })
@@ -104,47 +99,21 @@ export async function initCommand(options: InitOptions) {
   // Set the session so RLS works for this user
   await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
 
-  // Check if project already exists for this user
-  const { data: existingProjects } = await supabase
-    .from('projects')
-    .select('id, slug, name')
-    .eq('slug', slug)
-    .eq('owner_id', userId)
-
   let projectId: string
 
-  if (existingProjects && existingProjects.length > 0) {
-    // Project already exists — reuse it
-    projectId = existingProjects[0].id as string
-    spinner.succeed(`Found existing project: ${existingProjects[0].name}`)
-  } else {
-    // Create new project
-    const { data: newProject, error: createError } = await supabase
-      .from('projects')
-      .insert({
-        name: slug.charAt(0).toUpperCase() + slug.slice(1),
-        slug,
-        owner_id: userId,
-        default_branch: 'main',
-      })
-      .select('id')
-      .single()
-
-    if (createError || !newProject) {
-      spinner.fail('Failed to create project')
-      const msg = createError?.message || 'Unknown error'
-      if (msg.includes('violates') || msg.includes('policy') || msg.includes('row-level')) {
-        console.error(chalk.red('  Free tier is limited to 2 projects. Upgrade to Pro for up to 10.'))
-        console.error(chalk.dim(`  Upgrade at: https://app.tages.ai/upgrade`))
-      } else {
-        console.error(chalk.red(`  ${msg}`))
-      }
-      console.log(chalk.dim('  Or run `tages init --local` for local-only mode (unlimited projects).'))
-      process.exit(1)
+  try {
+    const cloudProject = await createCloudProject(slug, userId, supabase, SUPABASE_URL, SUPABASE_ANON_KEY)
+    projectId = cloudProject.projectId
+    spinner.succeed(`Project ready: ${slug}`)
+  } catch (err) {
+    spinner.fail('Failed to create project')
+    const msg = (err as Error).message
+    console.error(chalk.red(`  ${msg}`))
+    if (msg.includes('Free tier')) {
+      console.error(chalk.dim(`  Upgrade at: https://app.tages.ai/upgrade`))
     }
-
-    projectId = newProject.id as string
-    spinner.succeed(`Created project: ${slug}`)
+    console.log(chalk.dim('  Or run `tages init --local` for local-only mode (unlimited projects).'))
+    process.exit(1)
   }
 
   // Save project config with real Supabase credentials

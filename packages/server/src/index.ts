@@ -6,7 +6,7 @@ import { z } from 'zod'
 
 import * as fs from 'fs'
 import * as path from 'path'
-import { loadServerConfig, getConfigDir } from './config'
+import { loadServerConfig, getConfigDir, getCachePath, resolveProject } from './config'
 import { SqliteCache } from './cache/sqlite'
 import { SupabaseSync } from './sync/supabase-sync'
 import { SessionTracker } from './tracking'
@@ -63,15 +63,29 @@ import {
   MemoryAuditSchema, SharpenMemorySchema, PostSessionSchema,
 } from './schemas'
 
+const HYDRATION_TTL_MS = 60_000
+
 async function main() {
-  const config = loadServerConfig(process.env.TAGES_PROJECT_SLUG)
+  // Project resolution: env var (backward compat) → auto-detect from cwd
+  let config = loadServerConfig(process.env.TAGES_PROJECT_SLUG)
+  let detectionMethod = 'env'
+
+  if (!config) {
+    const cwd = process.env.TAGES_CWD || process.cwd()
+    const resolved = await resolveProject(cwd)
+    config = {
+      project: resolved.config,
+      cachePath: getCachePath(resolved.config.slug),
+    }
+    detectionMethod = resolved.detectionMethod
+  }
 
   // Initialize SQLite cache (works even without Supabase)
-  const cachePath = config?.cachePath || '/tmp/tages-default.db'
+  const cachePath = config.cachePath
   const cache = new SqliteCache(cachePath)
   const queryLog = new QueryLog(cachePath)
-  const projectId = config?.project.projectId || 'local'
-  const plan = config?.project.plan
+  const projectId = config.project.projectId
+  const plan = config.project.plan
 
   // Tier gate helper — wraps pro-only tool handlers
   function withGate<T>(toolName: string, handler: (args: T) => Promise<{ content: Array<{ type: 'text'; text: string }> }>) {
@@ -86,7 +100,7 @@ async function main() {
   let sync: SupabaseSync | null = null
   let supabaseClient = null
   const walPath = cachePath.replace('.db', '-wal.db')
-  if (config?.project.supabaseUrl && config?.project.supabaseAnonKey) {
+  if (config.project.supabaseUrl && config.project.supabaseAnonKey) {
     supabaseClient = createSupabaseClient(
       config.project.supabaseUrl,
       config.project.supabaseAnonKey,
@@ -116,10 +130,16 @@ async function main() {
       console.error(`[tages] WAL recovery: replayed ${recovered} operations`)
     }
 
-    // Hydrate cache from Supabase
-    const count = await sync.hydrate()
-    if (count > 0) {
-      console.error(`[tages] Hydrated ${count} memories from Supabase`)
+    // Hydrate cache from Supabase (with staleness guard)
+    const lastSync = cache.getLastSyncedAt(projectId)
+    const syncAge = lastSync ? Date.now() - new Date(lastSync).getTime() : Infinity
+    if (syncAge < HYDRATION_TTL_MS) {
+      console.error(`[tages] Cache fresh (${Math.round(syncAge / 1000)}s old) — skipping hydration`)
+    } else {
+      const count = await sync.hydrate()
+      if (count > 0) {
+        console.error(`[tages] Hydrated ${count} memories from Supabase`)
+      }
     }
 
     // Start background sync

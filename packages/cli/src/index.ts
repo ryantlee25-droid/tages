@@ -29,6 +29,7 @@ import { templatesListCommand, templatesMatchCommand, templatesApplyCommand } fr
 import { archiveListCommand, archiveStatsCommand } from './commands/archive.js'
 import { federateCommand, federationListCommand, federationImportCommand, federationOverridesCommand } from './commands/federation-cmd.js'
 import { analyticsSummaryCommand, analyticsSessionCommand, analyticsTrendsCommand } from './commands/analytics.js'
+import { linkCommand } from './commands/link.js'
 import { migrateCommand } from './commands/migrate.js'
 import { sessionWrapCommand } from './commands/session-wrap.js'
 import { briefCommand } from './commands/brief.js'
@@ -50,6 +51,11 @@ program
   .option('--team', 'Cloud mode with team member invites')
   .option('--slug <slug>', 'Project slug (defaults to directory name)')
   .action(initCommand)
+
+program
+  .command('link [slug]')
+  .description('Link this directory to a registered project (writes .tages/config.json)')
+  .action(linkCommand)
 
 program
   .command('remember')
