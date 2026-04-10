@@ -21,18 +21,18 @@ claude mcp add tages -- npx -y @tages/server
 
 ## Why Tages?
 
-| | Tages | MemPalace | Mem0 |
+| | Tages | Zep | Mem0 |
 |---|---|---|---|
-| Install | One line (`claude mcp add`) | One line (`pip install`) | API key + SDK |
-| Local-only mode | Yes (SQLite, zero config) | Yes (ChromaDB) | No (cloud-only) |
-| Team sharing | Yes (RBAC, federation) | No | No |
-| Dashboard | Yes (Next.js, analytics) | No | Basic |
+| Install | One line (`claude mcp add`) | Docker + API key | API key + SDK |
+| Local-only mode | Yes (SQLite, zero config) | Self-hosted only | No (cloud-only) |
+| Team sharing | Yes (RBAC, federation) | Yes (cloud) | No |
+| Dashboard | Yes (Next.js, analytics) | Yes | Basic |
 | Quality control | Audit, sharpen, enforce | No | No |
-| Memory types | 11 structured types | Free-form | Structured |
-| MCP tools | 56 | 19 | N/A |
-| Search | Trigram + semantic + decay | Vector + palace graph | Vector |
-| Workflow integration | Git hooks, CI/CD, briefs | Manual mining | SDK calls |
-| Pricing | Free local / $14 Pro | Free | $19-$249/mo |
+| Memory types | 11 structured types | Knowledge graph (Graphiti) | Structured |
+| MCP tools | 56 | N/A | N/A |
+| Search | Trigram + semantic + decay | Temporal knowledge graph | Vector |
+| Workflow integration | Git hooks, CI/CD, briefs | SDK calls | SDK calls |
+| Pricing | Free local / $14 Pro | Open-source / Cloud | $19-$249/mo |
 
 ## What It Remembers
 

@@ -26,6 +26,13 @@
     "open": "^11.0.0",
     "ora": "^9.3.0"
   },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ryantlee25-droid/tages.git",
+    "directory": "packages/cli"
+  },
+  "keywords": ["mcp", "ai", "memory", "codebase", "cli", "tages"],
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.19.0",

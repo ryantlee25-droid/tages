@@ -12,3 +12,4 @@ packages/server/coverage/
 supabase/.temp/
 .tages/
 .mcp.json
+auth.json
