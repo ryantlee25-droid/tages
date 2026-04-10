@@ -9,7 +9,7 @@ export function Hero() {
         alt="Tages"
         width={480}
         height={320}
-        className="-mb-28 h-48 sm:h-72 lg:h-96 w-auto"
+        className="-mb-10 sm:-mb-20 lg:-mb-28 h-48 sm:h-72 lg:h-96 w-auto"
         style={{ filter: 'hue-rotate(-13deg) saturate(0.6)' }}
         priority
       />
@@ -17,17 +17,17 @@ export function Hero() {
         One command to install. Works offline. Syncs when connected.
       </div>
 
-      <h1 className="max-w-3xl text-5xl font-bold leading-tight tracking-tight text-white sm:text-6xl">
+      <h1 className="max-w-3xl text-3xl font-bold leading-tight tracking-tight text-white sm:text-5xl lg:text-6xl">
         Memory isn&apos;t storage.{' '}
         <span style={{ color: '#3BA3C7' }}>It&apos;s a team practice.</span>
       </h1>
-      <p className="mt-6 max-w-xl text-lg text-zinc-400">
+      <p className="mt-4 sm:mt-6 max-w-xl text-base sm:text-lg text-zinc-400">
         When three developers use AI agents on the same codebase, those agents need to share
         what they know. Tages gives them persistent, quality-controlled, shared memory:
         conventions, decisions, architecture, past mistakes.
       </p>
 
-      <div className="mt-10 flex flex-col sm:flex-row gap-3">
+      <div className="mt-6 sm:mt-10 flex flex-col sm:flex-row gap-3">
         <Link
           href="/examples"
           className="rounded-lg px-8 py-3.5 text-sm font-medium text-white transition-all hover:opacity-90 hover:shadow-lg hover:shadow-[#3BA3C7]/20"
@@ -44,7 +44,7 @@ export function Hero() {
       </div>
 
       {/* Stats */}
-      <div className="mt-12 flex flex-col sm:flex-row gap-4 sm:gap-8 items-center text-center sm:text-left">
+      <div className="mt-8 sm:mt-12 flex flex-col sm:flex-row gap-4 sm:gap-8 items-center text-center sm:text-left">
         <div>
           <p className="text-2xl font-bold text-white">20</p>
           <p className="text-xs text-zinc-500">free MCP tools</p>
@@ -60,7 +60,7 @@ export function Hero() {
       </div>
 
       {/* Code snippet */}
-      <div className="mt-16 w-full max-w-lg overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-left shadow-2xl">
+      <div className="mt-10 sm:mt-16 w-full max-w-lg overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 text-left shadow-2xl">
         <div className="flex items-center gap-1.5 border-b border-zinc-800 px-4 py-3">
           <div className="h-3 w-3 rounded-full bg-zinc-700" />
           <div className="h-3 w-3 rounded-full bg-zinc-700" />
