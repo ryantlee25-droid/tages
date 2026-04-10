@@ -11,5 +11,6 @@ dist/
 packages/server/coverage/
 supabase/.temp/
 .tages/
-.mcp.json
+# .mcp.json — not ignored; used by Claude Code plugin
 auth.json
+.vercel
