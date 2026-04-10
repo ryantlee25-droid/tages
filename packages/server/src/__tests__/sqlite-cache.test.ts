@@ -221,4 +221,40 @@ describe('SqliteCache', () => {
       expect(results.length).toBe(1)
     })
   })
+
+  describe('getAccessCounts', () => {
+    it('returns empty map for project with no memories', () => {
+      const counts = cache.getAccessCounts('nonexistent-project')
+      expect(counts.size).toBe(0)
+    })
+
+    it('returns correct access counts keyed by memory id', () => {
+      const mem1 = makeMemory({ key: 'access-key-1', value: 'v1' })
+      const mem2 = makeMemory({ key: 'access-key-2', value: 'v2' })
+      cache.upsertMemory(mem1)
+      cache.upsertMemory(mem2)
+
+      // mem1 accessed twice, mem2 accessed once
+      cache.updateAccessTime(mem1.id)
+      cache.updateAccessTime(mem1.id)
+      cache.updateAccessTime(mem2.id)
+
+      const counts = cache.getAccessCounts(TEST_PROJECT)
+      expect(counts.get(mem1.id)).toBe(2)
+      expect(counts.get(mem2.id)).toBe(1)
+    })
+
+    it('does not include memories from a different project', () => {
+      const OTHER_PROJECT = 'other-project-id'
+      const mem1 = makeMemory({ key: 'my-key', value: 'mine' })
+      const mem2 = makeMemory({ key: 'other-key', value: 'theirs', projectId: OTHER_PROJECT })
+      cache.upsertMemory(mem1)
+      cache.upsertMemory(mem2)
+      cache.updateAccessTime(mem2.id)
+
+      const counts = cache.getAccessCounts(TEST_PROJECT)
+      expect(counts.has(mem2.id)).toBe(false)
+      expect(counts.has(mem1.id)).toBe(true)
+    })
+  })
 })

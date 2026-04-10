@@ -1,8 +1,14 @@
 import type { Memory } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
+import { scoreAndSort } from '../search/memory-scorer'
+import type { ScoredMemory } from '../search/memory-scorer'
 
-const DEFAULT_BUDGET = 3000
+export function adaptiveBudget(memoryCount: number): number {
+  if (memoryCount < 50) return 4000
+  if (memoryCount < 200) return 6000
+  return 8000
+}
 
 /**
  * Generate a token-budgeted project brief for system prompt injection.
@@ -22,9 +28,8 @@ export async function handleBrief(
   cache: SqliteCache,
   sync: SupabaseSync | null,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
-  const budget = args.budget || DEFAULT_BUDGET
-
   const allMemories = cache.getAllForProject(projectId)
+  const budget = args.budget || adaptiveBudget(allMemories.length)
 
   if (allMemories.length === 0) {
     return {
@@ -32,16 +37,15 @@ export async function handleBrief(
     }
   }
 
-  // Group by type
-  const grouped: Record<string, Memory[]> = {}
-  for (const m of allMemories) {
-    if (!grouped[m.type]) grouped[m.type] = []
-    grouped[m.type].push(m)
-  }
+  const accessCounts = cache.getAccessCounts(projectId)
+  const scored = scoreAndSort(allMemories, accessCounts)
 
-  // Sort each group by confidence descending
-  for (const items of Object.values(grouped)) {
-    items.sort((a, b) => (b.confidence ?? 0.5) - (a.confidence ?? 0.5))
+  // Group scored memories by type (preserving score order within each group)
+  const grouped: Record<string, ScoredMemory[]> = {}
+  for (const sm of scored) {
+    const t = sm.memory.type
+    if (!grouped[t]) grouped[t] = []
+    grouped[t].push(sm)
   }
 
   const sections: string[] = []
@@ -52,34 +56,39 @@ export async function handleBrief(
   estimatedTokens += estimateTokens(header)
 
   // ── 1. GOTCHAS (anti_pattern + lesson) — imperative, terse ──
-  const gotchaItems = [...(grouped.anti_pattern || []), ...(grouped.lesson || [])]
-  if (gotchaItems.length > 0) {
-    const section = formatImperativeSection('STOP — Read Before Coding', gotchaItems)
+  const gotchaScored = [...(grouped.anti_pattern || []), ...(grouped.lesson || [])]
+  if (gotchaScored.length > 0) {
+    const { top, compact } = splitTiers(gotchaScored)
+    const section = formatImperativeSection('STOP — Read Before Coding', top) + formatCompactBlock(compact)
     estimatedTokens = appendIfBudget(sections, section, estimatedTokens, budget)
   }
 
   // ── 2. INTEGRATION RECIPES (execution + pattern) — step-by-step wiring ──
-  const recipeItems = [...(grouped.execution || []), ...(grouped.pattern || [])]
-  if (recipeItems.length > 0) {
-    const section = formatRecipeSection('Integration Recipes', recipeItems)
+  const recipeScored = [...(grouped.execution || []), ...(grouped.pattern || [])]
+  if (recipeScored.length > 0) {
+    const { top, compact } = splitTiers(recipeScored)
+    const section = formatRecipeSection('Integration Recipes', top) + formatCompactBlock(compact)
     estimatedTokens = appendIfBudget(sections, section, estimatedTokens, budget)
   }
 
   // ── 3. CONVENTIONS — terse rules, code-formatted where possible ──
   if (grouped.convention) {
-    const section = formatConventionSection('Conventions', grouped.convention)
+    const { top, compact } = splitTiers(grouped.convention)
+    const section = formatConventionSection('Conventions', top) + formatCompactBlock(compact)
     estimatedTokens = appendIfBudget(sections, section, estimatedTokens, budget)
   }
 
   // ── 4. ARCHITECTURE — descriptive, lower priority ──
   if (grouped.architecture) {
-    const section = formatSection('Architecture', grouped.architecture)
+    const { top, compact } = splitTiers(grouped.architecture)
+    const section = formatSection('Architecture', top) + formatCompactBlock(compact)
     estimatedTokens = appendIfBudget(sections, section, estimatedTokens, budget)
   }
 
   // ── 5. DECISIONS ──
   if (grouped.decision) {
-    const section = formatSection('Decisions', grouped.decision)
+    const { top, compact } = splitTiers(grouped.decision)
+    const section = formatSection('Decisions', top) + formatCompactBlock(compact)
     estimatedTokens = appendIfBudget(sections, section, estimatedTokens, budget)
   }
 
@@ -91,13 +100,14 @@ export async function handleBrief(
     { types: ['environment'], title: 'Environment' },
     { types: ['preference'], title: 'Preferences' },
   ]) {
-    const items: Memory[] = []
+    const remainingScored: ScoredMemory[] = []
     for (const t of group.types) {
-      if (grouped[t]) items.push(...grouped[t])
+      if (grouped[t]) remainingScored.push(...grouped[t])
       covered.add(t)
     }
-    if (items.length === 0) continue
-    const section = formatSection(group.title, items)
+    if (remainingScored.length === 0) continue
+    const { top, compact } = splitTiers(remainingScored)
+    const section = formatSection(group.title, top) + formatCompactBlock(compact)
     estimatedTokens = appendIfBudget(sections, section, estimatedTokens, budget)
   }
 
@@ -112,6 +122,25 @@ export async function handleBrief(
   return {
     content: [{ type: 'text', text: sections.join('\n') }],
   }
+}
+
+// ── Tiered formatting helpers ──
+
+export function splitTiers(items: ScoredMemory[]): { top: Memory[]; compact: Memory[] } {
+  const topCount = Math.max(3, Math.ceil(items.length * 0.2))
+  return {
+    top: items.slice(0, topCount).map(s => s.memory),
+    compact: items.slice(topCount).map(s => s.memory),
+  }
+}
+
+export function formatCompactBlock(memories: Memory[]): string {
+  if (memories.length === 0) return ''
+  const lines = memories.map(m => {
+    const truncated = m.value.length > 120 ? m.value.slice(0, 120) + '...' : m.value
+    return `${m.key}: ${truncated}`
+  })
+  return '\n' + lines.join('\n') + '\n'
 }
 
 // ── Formatters ──

@@ -20,22 +20,21 @@ Restore persistent codebase memory at the start of a session. Calls Tages MCP to
 
 ### Step 1: Hydrate Context
 
-Call these four tools in parallel to load project memory:
+Call the brief tool to load a ranked, token-budgeted project context:
 
 ```
-recall(query: "project overview and key context")
-conventions(project_id: <current project>)
-architecture(project_id: <current project>)
-decisions(project_id: <current project>)
+brief()
 ```
+
+This returns the most important memories — gotchas, conventions, architecture decisions, and patterns — ranked by confidence, recency, and usage. High-value memories appear in full detail; lower-priority ones are summarized as compact key-value pairs. The token budget adapts to project size automatically.
 
 ### Step 2: Handle the Result
 
-**Tools return data (happy path):**
+**Tool returns data (happy path):**
 
-Absorb the returned memories into your working context. Summarize briefly to the user:
+Absorb the returned brief into your working context. Summarize briefly to the user:
 
-> Loaded N memories for this project — conventions, architecture decisions, and prior context.
+> Loaded project context — conventions, architecture decisions, and prior knowledge.
 
 Do not dump the full memory contents unless asked. Use them silently to inform your work.
 

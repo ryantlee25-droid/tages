@@ -716,6 +716,17 @@ export class SqliteCache {
     return { lastAccessedAt: row.last_accessed_at, accessCount: row.access_count }
   }
 
+  getAccessCounts(projectId: string): Map<string, number> {
+    const rows = this.db.prepare(
+      'SELECT id, access_count FROM memories WHERE project_id = ?'
+    ).all(projectId) as Array<{ id: string; access_count: number }>
+    const counts = new Map<string, number>()
+    for (const row of rows) {
+      counts.set(row.id, row.access_count)
+    }
+    return counts
+  }
+
   getStaleMemories(projectId: string, olderThanDays: number, maxAccessCount = 2): Memory[] {
     const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString()
     const rows = this.db.prepare(`
