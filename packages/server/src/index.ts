@@ -7,6 +7,7 @@ import { z } from 'zod'
 import * as fs from 'fs'
 import * as path from 'path'
 import { loadServerConfig, getConfigDir, getCachePath, resolveProject } from './config'
+import { shouldHydrate } from './hydration'
 import { SqliteCache } from './cache/sqlite'
 import { SupabaseSync } from './sync/supabase-sync'
 import { SessionTracker } from './tracking'
@@ -134,14 +135,14 @@ async function main() {
 
     // Hydrate cache from Supabase (with staleness guard)
     const lastSync = cache.getLastSyncedAt(projectId)
-    const syncAge = lastSync ? Date.now() - new Date(lastSync).getTime() : Infinity
-    if (syncAge < HYDRATION_TTL_MS) {
-      console.error(`[tages] Cache fresh (${Math.round(syncAge / 1000)}s old) — skipping hydration`)
-    } else {
+    if (shouldHydrate(lastSync, HYDRATION_TTL_MS)) {
       const count = await sync.hydrate()
       if (count > 0) {
         console.error(`[tages] Hydrated ${count} memories from Supabase`)
       }
+    } else {
+      const age = lastSync ? Date.now() - new Date(lastSync).getTime() : 0
+      console.error(`[tages] Cache fresh (${Math.round(age / 1000)}s old) — skipping hydration`)
     }
 
     // Start background sync
