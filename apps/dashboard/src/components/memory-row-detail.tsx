@@ -59,7 +59,7 @@ export function MemoryRowDetail({
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative w-full max-w-md bg-zinc-900 p-6 shadow-xl">
+      <div className="relative flex w-full max-w-full flex-col overflow-y-auto bg-zinc-900 p-4 shadow-xl sm:max-w-md sm:p-6">
         <div className="flex items-start justify-between">
           <div>
             <h3 className="text-lg font-medium text-white">{memory.key}</h3>

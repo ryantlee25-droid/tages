@@ -63,12 +63,12 @@ export function ProjectNav({ slug, active, projectId }: { slug: string; active: 
   }, [projectId])
 
   return (
-    <div className="mb-6 flex gap-1 overflow-x-auto border-b border-zinc-800">
+    <div className="mb-6 flex gap-1 overflow-x-auto border-b border-zinc-800 pb-1 [-webkit-overflow-scrolling:touch]">
       {TABS.map((tab) => (
         <Link
           key={tab.key}
           href={`/app/projects/${slug}${tab.href}`}
-          className={`relative flex shrink-0 items-center gap-1.5 border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+          className={`relative flex shrink-0 items-center gap-1.5 border-b-2 px-4 py-2 text-xs font-medium transition-colors sm:text-sm ${
             active === tab.key
               ? 'border-[#3BA3C7] text-white'
               : 'border-transparent text-zinc-400 hover:text-zinc-200'

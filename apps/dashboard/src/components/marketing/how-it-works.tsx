@@ -38,7 +38,7 @@ export function HowItWorks() {
               <div className="flex-1">
                 <h3 className="text-xl font-semibold text-white">{s.title}</h3>
                 <p className="mt-1 text-sm text-zinc-400">{s.description}</p>
-                <pre className="mt-4 overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-900 p-4 font-mono text-sm text-zinc-300">
+                <pre className="mt-4 overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-900 p-4 font-mono text-xs sm:text-sm text-zinc-300">
                   {s.code}
                 </pre>
               </div>

@@ -9,7 +9,7 @@ export function Hero() {
         alt="Tages"
         width={480}
         height={320}
-        className="-mb-28 h-96 w-auto sm:h-[31rem]"
+        className="-mb-28 h-48 sm:h-72 lg:h-96 w-auto"
         style={{ filter: 'hue-rotate(-13deg) saturate(0.6)' }}
         priority
       />
@@ -27,7 +27,7 @@ export function Hero() {
         conventions, decisions, architecture, past mistakes.
       </p>
 
-      <div className="mt-10 flex gap-4">
+      <div className="mt-10 flex flex-col sm:flex-row gap-3">
         <Link
           href="/examples"
           className="rounded-lg px-8 py-3.5 text-sm font-medium text-white transition-all hover:opacity-90 hover:shadow-lg hover:shadow-[#3BA3C7]/20"
@@ -44,7 +44,7 @@ export function Hero() {
       </div>
 
       {/* Stats */}
-      <div className="mt-12 flex gap-8 text-center">
+      <div className="mt-12 flex flex-col sm:flex-row gap-4 sm:gap-8 items-center text-center sm:text-left">
         <div>
           <p className="text-2xl font-bold text-white">20</p>
           <p className="text-xs text-zinc-500">free MCP tools</p>

@@ -141,7 +141,7 @@ export function ConflictResolver({ projectId }: { projectId: string }) {
               </div>
 
               {/* Side-by-side diff */}
-              <div className="mb-4 grid grid-cols-2 gap-3">
+              <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="rounded-lg border border-zinc-700 p-3">
                   <p className="mb-1 text-xs font-medium text-[#3BA3C7]">{conflict.a_key}</p>
                   <p className="text-xs text-zinc-300">{conflict.a_value}</p>
