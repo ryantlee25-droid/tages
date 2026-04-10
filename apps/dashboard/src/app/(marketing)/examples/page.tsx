@@ -5,8 +5,8 @@ import { Footer } from '@/components/marketing/footer'
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Examples — Tages',
-  description: 'See real examples of what AI agents remember with Tages. Conventions, decisions, architecture, anti-patterns — the context that prevents mistakes.',
+  title: 'Examples | Tages',
+  description: 'See real examples of what AI agents remember with Tages. Conventions, decisions, architecture, anti-patterns: the context that prevents mistakes.',
 }
 
 export default async function Examples() {

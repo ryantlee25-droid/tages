@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
+import { ConfirmDialog } from './confirm-dialog'
 
 interface Conflict {
   id: string
@@ -22,6 +23,7 @@ export function ConflictResolver({ projectId }: { projectId: string }) {
   const [loading, setLoading] = useState(true)
   const [resolving, setResolving] = useState<Set<string>>(new Set())
   const [mergeModal, setMergeModal] = useState<{ conflict: Conflict; draft: string } | null>(null)
+  const [confirmAction, setConfirmAction] = useState<{ type: 'keep_newer' | 'keep_older'; conflictId: string } | null>(null)
 
   const supabase = createClient()
 
@@ -153,14 +155,14 @@ export function ConflictResolver({ projectId }: { projectId: string }) {
               {/* Action buttons */}
               <div className="flex gap-2">
                 <button
-                  onClick={() => resolve(conflict, 'keep_newer')}
+                  onClick={() => setConfirmAction({ type: 'keep_newer', conflictId: conflict.id })}
                   disabled={busy}
                   className="rounded px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-700 disabled:opacity-50"
                 >
                   Keep Newer
                 </button>
                 <button
-                  onClick={() => resolve(conflict, 'keep_older')}
+                  onClick={() => setConfirmAction({ type: 'keep_older', conflictId: conflict.id })}
                   disabled={busy}
                   className="rounded px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-700 disabled:opacity-50"
                 >
@@ -183,6 +185,31 @@ export function ConflictResolver({ projectId }: { projectId: string }) {
           )
         })}
       </div>
+
+      {/* Confirm dialog for destructive actions */}
+      {confirmAction && (() => {
+        const conflict = conflicts.find((c) => c.id === confirmAction.conflictId)
+        if (!conflict) return null
+        const isNewer = confirmAction.type === 'keep_newer'
+        return (
+          <ConfirmDialog
+            open={true}
+            title={isNewer ? 'Keep Newer Version' : 'Keep Older Version'}
+            message={
+              isNewer
+                ? 'This will permanently discard the older version of this memory.'
+                : 'This will permanently discard the newer version of this memory.'
+            }
+            confirmLabel={isNewer ? 'Keep Newer' : 'Keep Older'}
+            variant="danger"
+            onConfirm={() => {
+              setConfirmAction(null)
+              resolve(conflict, confirmAction.type)
+            }}
+            onCancel={() => setConfirmAction(null)}
+          />
+        )
+      })()}
 
       {/* Merge modal */}
       {mergeModal && (

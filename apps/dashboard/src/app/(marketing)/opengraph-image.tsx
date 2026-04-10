@@ -1,7 +1,7 @@
 import { ImageResponse } from 'next/og'
 
 export const runtime = 'edge'
-export const alt = 'Tages — Persistent codebase memory for AI agents'
+export const alt = 'Tages | Persistent codebase memory for AI agents'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 
@@ -37,7 +37,7 @@ export default async function Image() {
           Persistent codebase memory for AI coding agents
         </div>
         <div style={{ display: 'flex', fontSize: 18, color: '#52525b', marginTop: 32 }}>
-          tages.dev
+          tages.ai
         </div>
       </div>
     ),

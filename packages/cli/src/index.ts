@@ -40,7 +40,7 @@ const program = new Command()
 program
   .name('tages')
   .description('Persistent codebase memory for AI coding agents')
-  .version('0.1.0')
+  .version('0.2.0')
 
 program
   .command('init')

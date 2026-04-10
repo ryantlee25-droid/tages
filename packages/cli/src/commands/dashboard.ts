@@ -2,7 +2,7 @@ import chalk from 'chalk'
 import open from 'open'
 import { loadProjectConfig } from '../config/project.js'
 
-const DASHBOARD_URL = process.env.TAGES_DASHBOARD_URL || 'https://dashboard-weld-nine-65.vercel.app'
+const DASHBOARD_URL = process.env.TAGES_DASHBOARD_URL || 'https://app.tages.ai'
 
 interface DashboardOptions {
   project?: string

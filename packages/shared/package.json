@@ -11,6 +11,13 @@
     "prepublishOnly": "tsc",
     "typecheck": "tsc --noEmit"
   },
+  "description": "Shared types and Supabase client for Tages",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ryantlee25-droid/tages.git",
+    "directory": "packages/shared"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.0"
   },

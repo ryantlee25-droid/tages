@@ -7,7 +7,7 @@ import { loadProjectConfig } from '../config/project.js'
 import { getProjectsDir, getCacheDir, getAuthPath } from '../config/paths.js'
 import { runGithubOAuth } from '../auth/github-oauth.js'
 
-const DASHBOARD_URL = process.env.TAGES_DASHBOARD_URL || 'https://dashboard-weld-nine-65.vercel.app'
+const DASHBOARD_URL = process.env.TAGES_DASHBOARD_URL || 'https://app.tages.ai'
 const SUPABASE_URL = process.env.TAGES_SUPABASE_URL || 'https://wezagdgpvwfywjoxztfs.supabase.co'
 const SUPABASE_ANON_KEY = process.env.TAGES_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlemFnZGdwdndmeXdqb3h6dGZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzNDcyNTAsImV4cCI6MjA5MDkyMzI1MH0.iMJ3gnt0w104QxzEaTLJsAYVciPDFJvAzOtIU5tofG0'
 

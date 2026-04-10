@@ -18,8 +18,8 @@ export default async function HomePage() {
   return (
     <>
       <Hero />
-      <Problem />
       <HowItWorks />
+      <Problem />
       <ValueProps />
       <Pricing />
       <Footer />

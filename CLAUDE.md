@@ -6,7 +6,7 @@ Tages is an open-source MCP server + CLI + dashboard that gives AI coding agents
 
 **Repo**: https://github.com/ryantlee25-droid/tages
 **Stack**: pnpm monorepo — Node.js/TypeScript
-**npm packages**: `tages` (CLI), `@tages/server` (MCP server), `@tages/shared` (types)
+**npm packages**: `@tages/cli` (CLI), `@tages/server` (MCP server), `@tages/shared` (types)
 
 ## Architecture
 
@@ -55,7 +55,7 @@ pnpm typecheck        # tsc --noEmit across all packages
 pnpm --filter server test  # server tests only
 ```
 
-### CLI (tages)
+### CLI (@tages/cli)
 
 Core: `init`, `remember`, `recall`, `forget`, `status`, `dashboard`
 Advanced: `dedup`, `impact`, `risk`, `enforce`, `quality`, `templates`, `archive`, `federation`
@@ -72,12 +72,3 @@ Auth: `token rotate [--expires-in <days>]`
 - Supabase `.from().insert()` returns PromiseLike not Promise — wrap with `Promise.resolve()` for `.catch()`
 - Cross-package CLI imports use `@ts-ignore` with expanded rootDir (`../../`)
 - Migrations use sequential numbers (0001-0042), cast TEXT params to `::uuid` for uuid columns
-
-## Current Status
-
-All 3 weeks of the original plan are complete. Security hardening Groups 1-2 (13 tasks) shipped.
-Group 3 (competitive differentiators) is planned but not started.
-
-## Full Plan
-
-The 3-week implementation plan + security hardening plan is at `~/.claude/projects/-Users-ryan/PLAN.md`.

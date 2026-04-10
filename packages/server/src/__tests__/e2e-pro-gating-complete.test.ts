@@ -7,8 +7,7 @@ import * as path from 'path'
 // The upgrade message prefix defined in tier-gate.ts
 const UPGRADE_MSG_PREFIX = 'This tool requires Tages Pro'
 
-// SENTINEL: update this URL after domain cutover to tages.ai
-const UPGRADE_URL_SENTINEL = 'dashboard-weld-nine-65.vercel.app'
+const UPGRADE_URL_SENTINEL = 'app.tages.ai'
 
 /**
  * Minimal valid args for each Pro tool.

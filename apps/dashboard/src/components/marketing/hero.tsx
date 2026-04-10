@@ -3,18 +3,18 @@ import Link from 'next/link'
 
 export function Hero() {
   return (
-    <section className="relative flex flex-col items-center px-6 pt-32 pb-20 text-center">
+    <section className="relative flex flex-col items-center px-6 pt-14 pb-16 text-center">
       <Image
         src="/logo-hero.png"
         alt="Tages"
         width={480}
         height={320}
-        className="mb-8 h-40 w-auto sm:h-52"
+        className="-mb-28 h-96 w-auto sm:h-[31rem]"
         style={{ filter: 'hue-rotate(-13deg) saturate(0.6)' }}
         priority
       />
       <div className="mb-6 inline-flex items-center rounded-full border border-[#3BA3C7]/30 bg-[#3BA3C7]/10 px-4 py-1.5 text-sm text-[#3BA3C7]">
-        One command to install. No account needed.
+        One command to install. Works offline. Syncs when connected.
       </div>
 
       <h1 className="max-w-3xl text-5xl font-bold leading-tight tracking-tight text-white sm:text-6xl">
@@ -23,7 +23,7 @@ export function Hero() {
       </h1>
       <p className="mt-6 max-w-xl text-lg text-zinc-400">
         When three developers use AI agents on the same codebase, those agents need to share
-        what they know. Tages gives them persistent, quality-controlled, shared memory —
+        what they know. Tages gives them persistent, quality-controlled, shared memory:
         conventions, decisions, architecture, past mistakes.
       </p>
 
@@ -54,8 +54,8 @@ export function Hero() {
           <p className="text-xs text-zinc-500">local recall</p>
         </div>
         <div>
-          <p className="text-2xl font-bold text-white">+6.3</p>
-          <p className="text-xs text-zinc-500">quality delta (complex tasks)</p>
+          <p className="text-2xl font-bold text-white">Any</p>
+          <p className="text-xs text-zinc-500">model or machine</p>
         </div>
       </div>
 
@@ -68,7 +68,7 @@ export function Hero() {
           <span className="ml-3 text-xs text-zinc-500">Terminal</span>
         </div>
         <div className="space-y-2 p-4 font-mono text-sm">
-          <p className="text-zinc-500"># Add to Claude Code — one command, no account</p>
+          <p className="text-zinc-500"># Add to any MCP client (Claude, Qwen, DeepSeek)</p>
           <p>
             <span className="text-zinc-500">$</span>{' '}
             <span className="text-green-400">claude mcp add tages</span>{' '}

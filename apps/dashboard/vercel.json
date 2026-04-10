@@ -1,0 +1,48 @@
+{
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "tagesai.app"
+        }
+      ],
+      "destination": "https://tages.ai/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "tagesai.dev"
+        }
+      ],
+      "destination": "https://tages.ai/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "tagesai.com"
+        }
+      ],
+      "destination": "https://tages.ai/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "www.tages.ai"
+        }
+      ],
+      "destination": "https://tages.ai/:path*",
+      "permanent": true
+    }
+  ]
+}

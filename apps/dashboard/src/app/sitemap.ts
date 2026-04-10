@@ -3,31 +3,31 @@ import type { MetadataRoute } from 'next'
 export default function sitemap(): MetadataRoute.Sitemap {
   return [
     {
-      url: 'https://dashboard-weld-nine-65.vercel.app',
+      url: 'https://app.tages.ai',
       lastModified: new Date(),
       changeFrequency: 'weekly',
       priority: 1,
     },
     {
-      url: 'https://dashboard-weld-nine-65.vercel.app/auth/login',
+      url: 'https://app.tages.ai/auth/login',
       lastModified: new Date(),
       changeFrequency: 'monthly',
       priority: 0.5,
     },
     {
-      url: 'https://dashboard-weld-nine-65.vercel.app/security',
+      url: 'https://app.tages.ai/security',
       lastModified: new Date(),
       changeFrequency: 'monthly',
       priority: 0.6,
     },
     {
-      url: 'https://dashboard-weld-nine-65.vercel.app/examples',
+      url: 'https://app.tages.ai/examples',
       lastModified: new Date(),
       changeFrequency: 'monthly',
       priority: 0.8,
     },
     {
-      url: 'https://dashboard-weld-nine-65.vercel.app/pricing',
+      url: 'https://app.tages.ai/pricing',
       lastModified: new Date(),
       changeFrequency: 'monthly',
       priority: 0.9,

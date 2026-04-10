@@ -1,4 +1,6 @@
 import Link from 'next/link'
+import { createClient } from '@/lib/supabase/server'
+import { redirect } from 'next/navigation'
 
 const PLANS = [
   {
@@ -7,7 +9,7 @@ const PLANS = [
     period: '/month',
     description: 'For professional developers.',
     features: [
-      'Unlimited projects',
+      'Up to 10 projects',
       '50,000 memories',
       'Supabase cloud sync',
       'Fuzzy + semantic search',
@@ -30,12 +32,29 @@ const PLANS = [
       'SSO (SAML/OIDC)',
       'Dashboard analytics',
     ],
-    href: 'mailto:support@tages.dev?subject=Tages Team plan',
+    href: 'mailto:support@tages.ai?subject=Tages Team plan',
     highlighted: false,
   },
 ]
 
-export default function UpgradePage() {
+export default async function UpgradePage() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+
+  if (!user) {
+    redirect('/auth/login')
+  }
+
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('is_pro')
+    .eq('user_id', user.id)
+    .single()
+
+  if (profile?.is_pro) {
+    redirect('/app/projects')
+  }
+
   return (
     <div className="flex min-h-full items-center justify-center p-8">
       <div className="max-w-2xl">

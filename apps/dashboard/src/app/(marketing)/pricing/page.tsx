@@ -5,7 +5,7 @@ import { Footer } from '@/components/marketing/footer'
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Pricing — Tages',
+  title: 'Pricing | Tages',
   description: 'Simple pricing for AI coding agent memory. Free for solo devs, $14/mo for pros, $29/seat for teams. Self-hosted is free forever.',
 }
 

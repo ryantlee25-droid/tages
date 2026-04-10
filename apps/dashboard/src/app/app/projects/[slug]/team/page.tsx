@@ -42,7 +42,7 @@ export default async function TeamPage({ params }: { params: Promise<{ slug: str
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-6">Team — {slug}</h1>
+      <h1 className="text-2xl font-bold mb-6">Team: {slug}</h1>
       <TeamOverview
         members={(members || []).map((m) => ({
           email: m.email || m.user_id || 'Unknown',

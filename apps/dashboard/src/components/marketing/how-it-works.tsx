@@ -3,7 +3,7 @@ const STEPS = [
     step: 1,
     title: 'Add to Claude Code',
     code: `claude mcp add tages -- npx -y @tages/server\n\n# Or install the full CLI:\nnpm install -g @tages/cli && tages init`,
-    description: 'One line. No account needed. Memories stored locally in SQLite. Free forever.',
+    description: 'MCP-only path needs no account. Or install the CLI and run tages init for cloud sync + dashboard.',
   },
   {
     step: 2,

@@ -60,7 +60,7 @@ export function SecurityPage() {
           <p>
             Tages supports optional AES-256-GCM field-level encryption for memory values stored
             in Supabase. When enabled, memory content is encrypted before it ever reaches the
-            database — only your application can decrypt it.
+            database. Only your application can decrypt it.
           </p>
           <p>
             To enable encryption, set the <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-sm font-mono text-zinc-200">TAGES_ENCRYPTION_KEY</code> environment
@@ -90,7 +90,7 @@ export function SecurityPage() {
             SameSite=Strict cookies to prevent cross-site request forgery.
           </p>
           <p>
-            CLI tokens are hashed with SHA-256 before storage — raw tokens are never persisted.
+            CLI tokens are hashed with SHA-256 before storage. Raw tokens are never persisted.
             Tokens support configurable expiry and can be rotated at any time with:
           </p>
           <div className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 font-mono text-sm text-zinc-300">
@@ -122,16 +122,16 @@ export function SecurityPage() {
         <SecuritySection title="Access control">
           <p>
             Every table in the Tages schema has Row-Level Security (RLS) enabled with per-user
-            and per-project policies. Users can only read and write their own data — this is
+            and per-project policies. Users can only read and write their own data. This is
             enforced at the database layer, not just in application code.
           </p>
           <p>
             Projects support role-based access control with three roles:
           </p>
           <ul className="ml-4 list-disc space-y-1 text-zinc-400">
-            <li><strong className="text-zinc-200">Owner</strong> — full control, can manage members and delete the project</li>
-            <li><strong className="text-zinc-200">Admin</strong> — can read and write memories, manage most settings</li>
-            <li><strong className="text-zinc-200">Member</strong> — read-only access to project memories</li>
+            <li><strong className="text-zinc-200">Owner</strong>: full control, can manage members and delete the project</li>
+            <li><strong className="text-zinc-200">Admin</strong>: can read and write memories, manage most settings</li>
+            <li><strong className="text-zinc-200">Member</strong>: read-only access to project memories</li>
           </ul>
         </SecuritySection>
 
@@ -142,25 +142,25 @@ export function SecurityPage() {
             OAuth app, and your own encryption key.
           </p>
           <p>
-            When self-hosting, the cloud dashboard at tages.dev is never involved. Your agents
+            When self-hosting, the cloud dashboard at tages.ai is never involved. Your agents
             connect directly to your Supabase instance. This is the highest-isolation option
             for teams with strict data residency requirements.
           </p>
           <div className="rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 font-mono text-sm text-zinc-300">
-            npx tages init --supabase-url YOUR_URL --supabase-key YOUR_KEY
+            npm install -g @tages/cli{'\n'}tages init --supabase-url YOUR_URL --supabase-key YOUR_KEY
           </div>
         </SecuritySection>
 
         <SecuritySection title="Responsible disclosure">
           <p>
             We take security reports seriously. If you discover a vulnerability, please report
-            it privately — do not open a public GitHub issue.
+            it privately. Do not open a public GitHub issue.
           </p>
           <div className="mt-2 space-y-2 text-sm">
             <p>
               <strong className="text-zinc-200">Email:</strong>{' '}
-              <a href="mailto:security@tages.dev" className="text-[#3BA3C7] hover:underline">
-                security@tages.dev
+              <a href="mailto:security@tages.ai" className="text-[#3BA3C7] hover:underline">
+                security@tages.ai
               </a>
             </p>
             <p>
@@ -198,11 +198,11 @@ export function SecurityPage() {
           We&apos;re happy to answer questions from security teams evaluating Tages.
         </p>
         <a
-          href="mailto:security@tages.dev"
+          href="mailto:security@tages.ai"
           className="mt-6 inline-flex items-center rounded-lg px-6 py-2.5 text-sm font-medium text-white transition-all hover:opacity-90"
           style={{ backgroundColor: '#3BA3C7' }}
         >
-          Contact security@tages.dev
+          Contact security@tages.ai
         </a>
       </div>
     </div>

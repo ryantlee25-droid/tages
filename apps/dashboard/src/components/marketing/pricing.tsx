@@ -4,25 +4,26 @@ const PLANS = [
   {
     name: 'Free',
     price: '$0',
-    period: 'forever',
-    description: 'For solo developers. No account needed.',
+    period: '',
+    description: 'For solo developers. Works offline.',
     features: [
       'Up to 2 projects',
       '10,000 memories',
       '20 core MCP tools',
-      'SQLite local-only',
+      'SQLite local-first (unlimited offline projects)',
       'tages brief generation',
       'Community support',
     ],
     cta: 'Get started',
     href: '/auth/login',
-    highlighted: false,
+    highlighted: true,
   },
   {
     name: 'Pro',
     price: '$14',
     period: '/month',
     description: 'For professional developers.',
+    badge: 'Coming soon',
     features: [
       'All 56 MCP tools',
       'Up to 10 projects',
@@ -31,9 +32,9 @@ const PLANS = [
       'Fuzzy + semantic search',
       'Quality scoring + analytics',
     ],
-    cta: 'Start free trial',
-    href: '/api/stripe/checkout?plan=pro',
-    highlighted: true,
+    cta: 'Join waitlist',
+    href: 'mailto:support@tages.ai',
+    highlighted: false,
   },
   {
     name: 'Team',
@@ -44,13 +45,13 @@ const PLANS = [
     features: [
       'Everything in Pro',
       'Up to 20 projects',
-      '100,000 memories per project',
+      '100,000 memories',
       'Team memory federation',
       'RBAC + audit logging',
-      'SSO (SAML/OIDC)',
+      'SSO (SAML/OIDC) [planned]',
     ],
     cta: 'Join waitlist',
-    href: 'mailto:support@tages.dev',
+    href: 'mailto:support@tages.ai',
     highlighted: false,
   },
   {
@@ -91,7 +92,7 @@ const FAQ = [
   },
   {
     q: 'What happens if I exceed my memory limit?',
-    a: 'On Free, older memories are archived when you hit the cap. On Pro, you get a warning at 80% and can upgrade or clean up. Team caps at 100K memories per project.',
+    a: 'On Free, older memories are archived when you hit the cap. On Pro, you get a warning at 80% and can upgrade or clean up. Team includes 100K total memories.',
   },
   {
     q: 'Can I migrate from Mem0 or Zep?',
@@ -99,7 +100,7 @@ const FAQ = [
   },
   {
     q: 'What does "system prompt injection" mean?',
-    a: 'Our benchmarks proved that MCP tool calls at runtime don\'t improve agent code quality. tages brief generates a cached context file injected into the system prompt, keeping project knowledge pinned at the top of every turn.',
+    a: 'tages brief generates a cached context file injected into the system prompt, keeping project knowledge pinned at the top of every turn. No runtime tool calls needed for core context.',
   },
   {
     q: 'Is self-hosted really free?',
@@ -184,7 +185,7 @@ export function PricingComparison() {
       <div className="mx-auto max-w-5xl">
         <h2 className="text-center text-3xl font-bold text-white">How Tages compares</h2>
         <p className="mt-3 text-center text-zinc-400">
-          The only memory platform built for teams. Others store facts — Tages manages quality.
+          The only memory platform built for teams. Others store facts. Tages manages quality.
         </p>
 
         <div className="mt-12 overflow-x-auto">

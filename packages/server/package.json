@@ -24,6 +24,13 @@
     "better-sqlite3": "^12.8.0",
     "zod": "^4.3.6"
   },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ryantlee25-droid/tages.git",
+    "directory": "packages/server"
+  },
+  "keywords": ["mcp", "ai", "memory", "codebase", "agents", "mcp-server"],
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
     "@vitest/coverage-v8": "^4.1.2",

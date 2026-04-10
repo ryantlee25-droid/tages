@@ -75,7 +75,7 @@ export function ExamplesPage() {
         </h1>
         <p className="mt-6 text-lg text-zinc-400">
           These are real memories from production projects. This is what your AI tools
-          see at the start of every session — the context that prevents mistakes.
+          see at the start of every session. The context that prevents mistakes.
         </p>
       </div>
 
@@ -138,12 +138,12 @@ export function ExamplesPage() {
             },
             {
               type: 'pattern', memoryKey: 'room-spawn-pattern', typeColor: TYPE_COLORS.pattern,
-              value: 'When adding spawnable entities to rooms (enemies, NPCs, bosses), add spawn data directly to room definitions in data/rooms/<zone>.ts. NEVER create a separate spawn system — rooms own their spawn tables.',
+              value: 'When adding spawnable entities to rooms (enemies, NPCs, bosses), add spawn data directly to room definitions in data/rooms/<zone>.ts. NEVER create a separate spawn system. Rooms own their spawn tables.',
               files: ['data/rooms/'],
             },
             {
               type: 'architecture', memoryKey: 'combat-system', typeColor: TYPE_COLORS.architecture,
-              value: '6 status effects: bleed, burn, stun, frighten, poison, weaken. Hemorrhagic shock = bleed+burn combo. This is the ONLY condition combo — do not add more. Conditions tick each combat round.',
+              value: '6 status effects: bleed, burn, stun, frighten, poison, weaken. Hemorrhagic shock = bleed+burn combo. This is the ONLY condition combo. Do not add more. Conditions tick each combat round.',
               files: ['lib/conditions.ts'],
             },
             {
@@ -153,7 +153,7 @@ export function ExamplesPage() {
             },
             {
               type: 'convention', memoryKey: 'rich-text-tags', typeColor: TYPE_COLORS.convention,
-              value: 'ALWAYS use rt helper for terminal output: rt.item(), rt.npc(), rt.enemy(), rt.condition(), rt.keyword(). NEVER output raw text for game entities — the terminal parser colorizes tagged content.',
+              value: 'ALWAYS use rt helper for terminal output: rt.item(), rt.npc(), rt.enemy(), rt.condition(), rt.keyword(). NEVER output raw text for game entities. The terminal parser colorizes tagged content.',
               files: ['lib/richText.ts', 'components/Terminal.tsx'],
             },
           ]}
@@ -179,7 +179,7 @@ export function ExamplesPage() {
             },
             {
               type: 'decision', memoryKey: 'no-procedural-gen', typeColor: TYPE_COLORS.decision,
-              value: 'Procedural generation was built and then deleted. Replaced with hand-crafted content for better quality. Do NOT reintroduce — this was a deliberate design decision.',
+              value: 'Procedural generation was built and then deleted. Replaced with hand-crafted content for better quality. Do NOT reintroduce. This was a deliberate design decision.',
             },
           ]}
         />
