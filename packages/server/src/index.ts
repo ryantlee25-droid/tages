@@ -80,6 +80,8 @@ async function main() {
     detectionMethod = resolved.detectionMethod
   }
 
+  console.error(`[tages] Project '${config.project.slug}' resolved via ${detectionMethod}`)
+
   // Initialize SQLite cache (works even without Supabase)
   const cachePath = config.cachePath
   const cache = new SqliteCache(cachePath)

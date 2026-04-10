@@ -21,7 +21,7 @@ export async function createCloudProject(
 ): Promise<ProjectConfig> {
   // Check if project already exists for this user
   const { data: existing } = await Promise.resolve(
-    supabase.from('projects').select('id, slug, name').eq('slug', slug).eq('owner_id', userId)
+    supabase.from('projects').select('id, slug, name, plan').eq('slug', slug).eq('owner_id', userId)
   )
 
   if (existing && existing.length > 0) {
@@ -30,7 +30,7 @@ export async function createCloudProject(
       slug,
       supabaseUrl,
       supabaseAnonKey,
-      plan: 'free',
+      plan: (existing[0].plan as 'free' | 'pro' | 'team') || 'free',
     }
   }
 

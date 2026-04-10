@@ -133,6 +133,18 @@ function loadAuth(): { accessToken: string; refreshToken: string; userId: string
   }
 }
 
+/**
+ * Normalize a directory name into a valid project slug.
+ */
+function sanitizeSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    || 'unnamed'
+}
+
 const DEFAULT_SUPABASE_URL = 'https://wezagdgpvwfywjoxztfs.supabase.co'
 const DEFAULT_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlemFnZGdwdndmeXdqb3h6dGZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzNDcyNTAsImV4cCI6MjA5MDkyMzI1MH0.iMJ3gnt0w104QxzEaTLJsAYVciPDFJvAzOtIU5tofG0'
 
@@ -187,7 +199,7 @@ export async function resolveProject(cwd: string): Promise<ResolvedProject> {
   }
 
   // Strategy 3: Directory name match
-  const dirName = path.basename(cwd)
+  const dirName = sanitizeSlug(path.basename(cwd))
   const dirMatch = registered.find(p => p.slug === dirName)
   if (dirMatch) {
     console.error(`[tages] Detected project '${dirMatch.slug}' via directory name`)
