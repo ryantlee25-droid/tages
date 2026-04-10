@@ -61,26 +61,25 @@ function setupFs(opts: {
     return opts.projectConfigExists ?? false
   })
 
-  vi.mocked(fsModule.readFileSync).mockImplementation((p: fsModule.PathLike | number) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  vi.mocked(fsModule.readFileSync).mockImplementation(((p: any) => {
     const s = String(p)
-    if (s.endsWith('/.tages/config.json')) return (opts.markerContent ?? '{}') as unknown as Buffer
+    if (s.endsWith('/.tages/config.json')) return opts.markerContent ?? '{}'
     if (s.endsWith('/auth.json')) {
-      return (opts.authContent ?? JSON.stringify({
+      return opts.authContent ?? JSON.stringify({
         accessToken: 'tok', refreshToken: 'ref', userId: 'uid'
-      })) as unknown as Buffer
+      })
     }
-    // Return matching project config
     for (const proj of projects) {
-      if (s.endsWith(`/${proj.slug}.json`)) {
-        return JSON.stringify(proj) as unknown as Buffer
-      }
+      if (s.endsWith(`/${proj.slug}.json`)) return JSON.stringify(proj)
     }
-    return '{}' as unknown as Buffer
-  })
+    return '{}'
+  }) as any)
 
-  vi.mocked(fsModule.readdirSync).mockImplementation(() =>
-    projects.map(p => `${p.slug}.json`) as unknown as fsModule.Dirent[]
-  )
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  vi.mocked(fsModule.readdirSync).mockImplementation((() =>
+    projects.map(p => `${p.slug}.json`)
+  ) as any)
 
   vi.mocked(fsModule.mkdirSync).mockReturnValue(undefined)
   vi.mocked(fsModule.writeFileSync).mockReturnValue(undefined)
@@ -160,7 +159,7 @@ describe('resolveProject()', () => {
     it('returns git-remote match for HTTPS URL', async () => {
       setupFs({ markerExists: false })
       vi.mocked(childProcess.execSync).mockReturnValue(
-        'https://github.com/owner/tages.git\n' as unknown as Buffer
+        'https://github.com/owner/tages.git\n' as any
       )
 
       const result = await resolveProject('/home/user/somewhere')
@@ -171,7 +170,7 @@ describe('resolveProject()', () => {
     it('returns git-remote match for SSH URL', async () => {
       setupFs({ markerExists: false })
       vi.mocked(childProcess.execSync).mockReturnValue(
-        'git@github.com:owner/tages.git\n' as unknown as Buffer
+        'git@github.com:owner/tages.git\n' as any
       )
 
       const result = await resolveProject('/home/user/somewhere')
@@ -182,7 +181,7 @@ describe('resolveProject()', () => {
     it('returns git-remote match for HTTPS URL without .git suffix', async () => {
       setupFs({ markerExists: false })
       vi.mocked(childProcess.execSync).mockReturnValue(
-        'https://github.com/owner/the-remnant\n' as unknown as Buffer
+        'https://github.com/owner/the-remnant\n' as any
       )
 
       const result = await resolveProject('/home/user/somewhere')
@@ -204,7 +203,7 @@ describe('resolveProject()', () => {
     it('falls through when remote URL yields no registered match', async () => {
       setupFs({ markerExists: false })
       vi.mocked(childProcess.execSync).mockReturnValue(
-        'https://github.com/owner/unknown-repo.git\n' as unknown as Buffer
+        'https://github.com/owner/unknown-repo.git\n' as any
       )
 
       const result = await resolveProject('/home/user/projects/tages')
