@@ -77,8 +77,6 @@ Claude Code, Cursor, Codex, Gemini — anything that speaks [MCP](https://modelc
 
 In five head-to-head benchmarks, agents with Tages context scored up to **9.1/10 vs 2.8/10 without** — quality deltas scaling from +1.0 on simple tasks to +6.3 on complex ones. The biggest gains were in convention compliance, integration wiring, and gotcha avoidance. Agents without memory consistently created orphaned code that didn't wire into existing subsystems.
 
-Full methodology and raw data: [docs/benchmarks.md](docs/benchmarks.md)
-
 ## Setup Guides
 
 - [Quickstart](docs/quickstart.md)
@@ -125,41 +123,6 @@ See [SECURITY.md](SECURITY.md) for our full security policy and responsible disc
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
-
-## Release Notes
-
-### 2026-04-07 — Competitive positioning: free tier, team flow, feature gating
-
-**Free tier overhaul:**
-- `tages init` defaults to cloud mode (GitHub OAuth). Use `--local` to skip auth and store memories locally only.
-- MCP-only install: `claude mcp add tages -- npx -y @tages/server` — zero CLI needed
-- 20 core tools free (remember, recall, forget, conventions, architecture, decisions, brief, pre-check, etc.)
-- 36 advanced tools (federation, analytics, impact analysis, quality scoring) gated behind Pro
-- 10,000 memory limit enforced on free tier with upgrade prompt
-
-**Team onboarding:**
-- `tages init --team` — cloud auth + teammate invites + shared MCP config snippet
-- New team overview dashboard page: weekly memory creation, member activity
-
-**Positioning:**
-- README hero rewrite: "Memory isn't storage. It's a team practice."
-- Added "Why Tages?" comparison table vs MemPalace and Mem0
-- Quickstart now leads with MCP-only install path
-
-**Tests:** 543 passing (459 server + 84 CLI), up from 521
-
-### 2026-04-06 — Pre-launch E2E fixes + Benchmark 4 & 5
-
-**Bug fixes:**
-- Fix workspace reference mismatch: `@tages/shared` now uses `workspace:*` in cli and server package.json (was `^0.1.0`, causing `pnpm install --frozen-lockfile` failures)
-- Fix MCP server config resolution: pass `TAGES_PROJECT_SLUG` env var to `loadServerConfig()` so the server uses the correct project instead of falling through to the first alphabetical config file
-- Add startup logging to MCP server for transport connection readiness
-
-**Benchmarks:**
-- Benchmark 4 (TheDocGen changelog pipeline): +4.0 quality delta, 17 conventions, 6 gotchas
-- Benchmark 5 (TheDocGen API reference generator): +6.3 quality delta, 19 conventions, 8 gotchas — largest delta recorded
-- New formal benchmark rubric with 3 scoring clusters (memory-dependent, code quality, operational)
-- Cross-benchmark trend analysis confirms superlinear complexity-to-value relationship
 
 ## License
 

@@ -11,3 +11,4 @@ dist/
 packages/server/coverage/
 supabase/.temp/
 .tages/
+.mcp.json
