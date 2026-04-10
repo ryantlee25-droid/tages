@@ -110,6 +110,7 @@ supabase/
 - **Audit logging** — Auth events, exports, and token validation tracked
 
 See [SECURITY.md](SECURITY.md) for our full security policy and responsible disclosure process.
+See [PRIVACY.md](PRIVACY.md) for our privacy policy.
 
 ## Pricing
 
