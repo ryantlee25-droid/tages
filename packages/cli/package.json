@@ -1,6 +1,6 @@
 {
   "name": "@tages/cli",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "CLI for Tages — persistent codebase memory for AI coding agents",
   "type": "module",
   "bin": {
