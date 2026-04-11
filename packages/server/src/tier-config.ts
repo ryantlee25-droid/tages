@@ -25,3 +25,6 @@ export const PRO_TOOLS: readonly string[] = [
 ] as const
 
 export const ALL_TOOLS = [...FREE_TOOLS, ...PRO_TOOLS] as const
+
+/** Team tier gets all tools (same as Pro for now — placeholder for team-specific tools later) */
+export const TEAM_TOOLS = ALL_TOOLS

@@ -9,6 +9,7 @@ const UPGRADE_MSG = 'This tool requires Tages Pro. Run `tages init --cloud` and 
 
 export function gateCheck(plan: string | undefined, toolName: string): GateResult | null {
   const effectivePlan = plan || 'free'
+  // 'team' plan is treated identically to 'pro' at the gate level
   if (effectivePlan !== 'free') return null
   if ((FREE_TOOLS as readonly string[]).includes(toolName)) return null
 
