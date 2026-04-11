@@ -125,6 +125,23 @@ async function main() {
       console.error(`[tages] Warning: could not load auth tokens — sync may fail`)
     }
 
+    // Accept any pending team invites for this user
+    try {
+      const { data: { user } } = await supabaseClient.auth.getUser()
+      const email = user?.email || user?.user_metadata?.email
+      if (email && user?.id) {
+        const { data: acceptCount } = await supabaseClient.rpc('accept_pending_invites', {
+          user_email: email,
+          uid: user.id,
+        })
+        if (acceptCount && acceptCount > 0) {
+          console.error(`[tages] Accepted ${acceptCount} pending team invite(s)`)
+        }
+      }
+    } catch (e) {
+      console.error(`[tages] Warning: could not check pending invites — ${(e as Error).message}`)
+    }
+
     sync = new SupabaseSync(supabaseClient, cache, projectId, walPath)
 
     // T1: WAL recovery — replay any incomplete sync ops before hydration

@@ -163,15 +163,34 @@ export async function initCommand(options: InitOptions) {
 
     const emails = emailInput.split(',').map((e: string) => e.trim()).filter(Boolean)
 
+    // Check seat limit before inviting
+    const { data: seatLimit } = await supabase.rpc('seat_limit_for_project', { pid: projectId })
+    const { data: currentMembers } = await supabase
+      .from('team_members')
+      .select('id', { count: 'exact' })
+      .eq('project_id', projectId)
+      .eq('status', 'active')
+
+    const currentCount = currentMembers?.length ?? 0
+    const limit = seatLimit ?? 2
+    const remainingSeats = limit - currentCount
+
+    if (remainingSeats <= 0) {
+      console.log(chalk.yellow(`\n  Seat limit reached (${currentCount}/${limit}). Upgrade plan for more seats.`))
+    } else if (emails.length > remainingSeats) {
+      console.log(chalk.yellow(`\n  Only ${remainingSeats} seat(s) available. Inviting first ${remainingSeats} of ${emails.length}.`))
+      emails.splice(remainingSeats)
+    }
+
     if (emails.length > 0) {
       const { inviteTeamMembers } = await import('../auth/invite.js')
-      const result = await inviteTeamMembers(supabase, projectId, emails)
+      const result = await inviteTeamMembers(supabase, projectId, emails, userId)
 
       if (result.invited.length > 0) {
         console.log()
         console.log(chalk.green(`  Invited ${result.invited.length} teammate(s):`))
         for (const email of result.invited) {
-          console.log(chalk.dim(`    ${email}`))
+          console.log(chalk.dim(`    ${email} (pending)`))
         }
       }
 

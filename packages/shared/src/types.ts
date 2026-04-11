@@ -97,8 +97,12 @@ export interface ArchitectureSnapshot {
 export interface TeamMember {
   id: string
   projectId: string
-  userId: string
+  userId: string | null
+  email: string
   role: 'owner' | 'admin' | 'member'
+  status: 'pending' | 'active' | 'revoked'
+  invitedBy?: string
+  invitedAt?: string
   createdAt: string
 }
 
