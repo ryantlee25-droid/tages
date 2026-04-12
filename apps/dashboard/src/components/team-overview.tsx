@@ -21,6 +21,7 @@ interface TeamOverviewProps {
   weeklyMemories: WeeklyMemory[]
   topRecalled: TopRecalled[]
   projectSlug: string
+  seatUsage?: { used: number; limit: number } | null
 }
 
 export function TeamOverview({
@@ -28,12 +29,20 @@ export function TeamOverview({
   weeklyMemories,
   topRecalled,
   projectSlug,
+  seatUsage,
 }: TeamOverviewProps) {
   return (
     <div className="space-y-8">
       {/* Members Section */}
       <section>
-        <h2 className="text-lg font-semibold text-white mb-4">Members</h2>
+        <h2 className="text-lg font-semibold text-white mb-4">
+          Members
+          {seatUsage && (
+            <span className="ml-2 text-sm font-normal text-zinc-400">
+              ({seatUsage.used} / {seatUsage.limit} seats)
+            </span>
+          )}
+        </h2>
         {members.length === 0 ? (
           <p className="text-sm text-zinc-500">
             No team members yet. Run{' '}
