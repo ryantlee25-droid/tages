@@ -60,6 +60,7 @@ export function TeamMembers({
         .from('team_members')
         .update({ status: 'revoked' })
         .eq('id', memberId)
+        .eq('project_id', projectId)
       if (error) throw error
       await loadMembers()
       toast('Team member removed.', 'success')
@@ -93,6 +94,7 @@ export function TeamMembers({
         .from('team_members')
         .update({ role })
         .eq('id', id)
+        .eq('project_id', projectId)
       if (error) throw error
       await loadMembers()
       toast(`Role changed to ${role}.`, 'success')

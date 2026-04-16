@@ -50,6 +50,11 @@ export function InviteMember({
       return
     }
 
+    if (atSeatLimit) {
+      toast('Seat limit reached. Upgrade your plan to invite more members.', 'error')
+      return
+    }
+
     setLoading(true)
     try {
       const { data: { user } } = await supabase.auth.getUser()
@@ -97,7 +102,7 @@ export function InviteMember({
         />
         <button
           type="submit"
-          disabled={loading || !email.trim()}
+          disabled={loading || !email.trim() || atSeatLimit}
           className="rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
           style={{ backgroundColor: '#3BA3C7' }}
         >
