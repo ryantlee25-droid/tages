@@ -272,6 +272,16 @@ function createFolderShortcut(config: ProjectConfig, dashboardPath: string): str
   return null
 }
 
+function createShareableDashboardCopy(config: ProjectConfig, sourceDashboardPath: string): string | null {
+  const folder = process.cwd()
+  if (!fs.existsSync(folder)) return null
+
+  const safeSlug = config.slug.replace(/[^a-zA-Z0-9-_]/g, '-')
+  const shareablePath = path.join(folder, `Tages-${safeSlug}-local-dashboard.html`)
+  fs.copyFileSync(sourceDashboardPath, shareablePath)
+  return shareablePath
+}
+
 function renderLocalDashboardHtml(config: ProjectConfig, memories: Memory[]): string {
   const typeMap = new Map<string, Memory[]>()
   const agentMap = new Map<string, Memory[]>()
@@ -419,15 +429,23 @@ async function openLocalDashboard(config: ProjectConfig, installShortcut = false
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true })
   const outPath = path.join(outDir, `${config.slug}-local-dashboard.html`)
   fs.writeFileSync(outPath, renderLocalDashboardHtml(config, memories), 'utf-8')
+  let openPath = outPath
 
   if (installShortcut) {
-    const shortcut = createFolderShortcut(config, outPath)
-    if (shortcut) console.log(chalk.green(`  Shortcut created in folder: ${shortcut}`))
-    else console.log(chalk.yellow('  Could not create shortcut on this OS.'))
+    const shareablePath = createShareableDashboardCopy(config, outPath)
+    if (!shareablePath) {
+      console.log(chalk.yellow('  Could not create shareable dashboard copy in current folder.'))
+    } else {
+      openPath = shareablePath
+      console.log(chalk.green(`  Shareable dashboard file created: ${shareablePath}`))
+      const shortcut = createFolderShortcut(config, shareablePath)
+      if (shortcut) console.log(chalk.green(`  Shortcut created in folder: ${shortcut}`))
+      else console.log(chalk.yellow('  Could not create shortcut on this OS.'))
+    }
   }
 
-  console.log(chalk.dim(`  Opening local dashboard ${outPath}...`))
-  await open(outPath)
+  console.log(chalk.dim(`  Opening local dashboard ${openPath}...`))
+  await open(openPath)
 }
 
 export async function dashboardCommand(options: DashboardOptions) {
