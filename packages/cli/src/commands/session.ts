@@ -58,6 +58,14 @@ interface ParsedTaggedInput {
 const DEFAULT_HANDOFF_KEY = 'session-handoff-active'
 const LEGACY_SESSION_KEY = 'session-context-active'
 
+function slugify(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+}
+
 function splitItems(values?: string[]): string[] {
   if (!values || values.length === 0) return []
   const items: string[] = []
@@ -378,8 +386,10 @@ export function capture_session_context(args: {
   current_goal?: string
   active_constraints?: string[]
   recent_decisions?: string[]
+  open_questions?: string[]
   known_issues?: string[]
   working_state_summary?: string
+  project_label?: string
   optional_tags?: string[]
 }): SessionContextMemory {
   return capture_session_handoff({
@@ -387,8 +397,10 @@ export function capture_session_context(args: {
     current_goal: args.current_goal,
     active_constraints: args.active_constraints,
     recent_decisions: args.recent_decisions,
+    open_questions: args.open_questions,
     known_issues: args.known_issues,
     working_state_summary: args.working_state_summary,
+    project_label: args.project_label,
     optional_tags: args.optional_tags,
   })
 }
@@ -475,9 +487,18 @@ export async function sessionSaveCommand(input: string | undefined, options: Ses
     optional_tags: options.tags,
   })
 
-  const key = options.key || DEFAULT_HANDOFF_KEY
+  const inferredLabel = (options.label || sessionHandoff.project_label || '').trim()
+  const key = options.key || (
+    inferredLabel
+      ? `session-handoff-${slugify(inferredLabel) || 'active'}`
+      : DEFAULT_HANDOFF_KEY
+  )
   const now = new Date().toISOString()
-  const value = JSON.stringify(sessionHandoff)
+  const value = JSON.stringify({
+    ...sessionHandoff,
+    current_goal: sessionHandoff.current_objective,
+    working_state_summary: sessionHandoff.working_summary,
+  })
 
   const { cache, flush, close } = await openCliSync(config)
   try {

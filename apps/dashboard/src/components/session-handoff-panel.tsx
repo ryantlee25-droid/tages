@@ -408,7 +408,11 @@ export function SessionHandoffPanel({ projectId }: { projectId: string }) {
       const payload = {
         project_id: projectId,
         key: loadedKey || computedKey,
-        value: JSON.stringify(handoff),
+        value: JSON.stringify({
+          ...handoff,
+          current_goal: handoff.current_objective,
+          working_state_summary: handoff.working_summary,
+        }),
         type: 'session_context',
         source: 'manual',
         status: 'live',

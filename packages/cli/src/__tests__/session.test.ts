@@ -156,6 +156,29 @@ describe('session command', () => {
     expect(mockClose).toHaveBeenCalled()
   })
 
+  it('session save derives topic-scoped key from label when key is omitted', async () => {
+    writeProjectConfig(tempConfigDir, TEST_LOCAL_CONFIG)
+    mockGetByKey.mockReturnValue(null)
+
+    await sessionSaveCommand('objective: Continue campaign', {
+      label: 'Veil of the Towers',
+      tags: ['provider:chatgpt'],
+    })
+
+    expect(mockUpsertMemory).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: 'session-handoff-veil-of-the-towers',
+        type: 'session_context',
+      }),
+      true,
+    )
+
+    const saved = mockUpsertMemory.mock.calls[0]?.[0] as Memory
+    const parsed = JSON.parse(saved.value) as Record<string, unknown>
+    expect(parsed.current_goal).toBe(parsed.current_objective)
+    expect(parsed.working_state_summary).toBe(parsed.working_summary)
+  })
+
   it('session load returns latest saved session context', async () => {
     writeProjectConfig(tempConfigDir, TEST_LOCAL_CONFIG)
     mockGetByKey.mockReturnValue(null)
