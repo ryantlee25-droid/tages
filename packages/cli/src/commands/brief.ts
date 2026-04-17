@@ -97,6 +97,7 @@ async function generateBrief(
     .from('memories')
     .select('key, value, type, file_paths, confidence')
     .eq('project_id', config.projectId)
+    .neq('type', 'session_context')
     .order('confidence', { ascending: false })
 
   if (!memories || memories.length === 0) {

@@ -6,6 +6,11 @@ const TYPE_COLORS: Record<string, string> = {
   lesson: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
   preference: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20',
   pattern: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
+  execution: 'bg-red-500/10 text-red-400 border-red-500/20',
+  operational: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  environment: 'bg-sky-500/10 text-sky-400 border-sky-500/20',
+  anti_pattern: 'bg-rose-500/10 text-rose-400 border-rose-500/20',
+  session_context: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
 }
 
 export function TypeBadge({ type }: { type: string }) {

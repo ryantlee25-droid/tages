@@ -14,6 +14,7 @@ export type MemoryType =
   | 'operational'
   | 'environment'
   | 'anti_pattern'
+  | 'session_context'
 
 export type MemorySource =
   | 'manual'

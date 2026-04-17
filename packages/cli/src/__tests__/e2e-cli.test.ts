@@ -26,11 +26,12 @@ describe('E2E: CLI commands', () => {
 
   function run(args: string, opts: { allowFail?: boolean } = {}): { stdout: string; code: number } {
     try {
-      const stdout = execSync(`pnpm exec tsx packages/cli/src/index.ts ${args}`, {
+      const stdout = execSync(`pnpm --filter @tages/cli exec tsx src/index.ts ${args}`, {
         cwd: PROJECT_ROOT,
         env: {
           ...process.env,
           HOME: tmpHome,
+          USERPROFILE: tmpHome,
           TAGES_CACHE_PATH: tmpCachePath,
         },
         timeout: 10000,
@@ -68,6 +69,22 @@ describe('E2E: CLI commands', () => {
     const { stdout, code } = run('status --project tages-e2e-test')
     expect(code).toBe(0)
     expect(stdout.length).toBeGreaterThan(0)
+  }, 15000)
+
+  it('tages handoff prints continuity output', () => {
+    const { stdout, code } = run('handoff --project tages-e2e-test')
+    expect(code).toBe(0)
+    expect(stdout).toContain('Chat Continuity Handoff')
+  }, 15000)
+
+  it('tages session save/load rehydrates temporary context', () => {
+    const save = run('session save "goal: Continue Veil of the Towers" --tags provider:chatgpt veil-of-the-towers --project tages-e2e-test')
+    expect(save.code).toBe(0)
+
+    const load = run('session load --project tages-e2e-test')
+    expect(load.code).toBe(0)
+    expect(load.stdout).toContain('SESSION HANDOFF (SHORT-LIVED)')
+    expect(load.stdout).toContain('Continue Veil of the Towers')
   }, 15000)
 
   it('tages doctor exits and prints health check results', () => {

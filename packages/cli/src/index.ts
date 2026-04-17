@@ -35,12 +35,14 @@ import { sessionWrapCommand } from './commands/session-wrap.js'
 import { briefCommand } from './commands/brief.js'
 import { auditCommand } from './commands/audit.js'
 import { sharpenCommand } from './commands/sharpen.js'
+import { handoffCommand } from './commands/handoff.js'
+import { sessionLoadCommand, sessionSaveCommand } from './commands/session.js'
 
 const program = new Command()
 
 program
   .name('tages')
-  .description('Persistent codebase memory for AI coding agents')
+  .description('Persistent project memory for AI agents')
   .version('0.2.0')
 
 program
@@ -59,7 +61,7 @@ program
 
 program
   .command('remember')
-  .description('Store a memory about this codebase')
+  .description('Store a memory about this project or workflow')
   .argument('<key>', 'A short, descriptive key')
   .argument('<value>', 'The memory content')
   .option('-t, --type <type>', 'Memory type', 'convention')
@@ -70,7 +72,7 @@ program
 
 program
   .command('recall')
-  .description('Search codebase memories')
+  .description('Search stored memories')
   .argument('[query]', 'Search query (use "*" or --all to list all)')
   .option('-t, --type <type>', 'Filter by type')
   .option('-l, --limit <n>', 'Max results', '5')
@@ -101,6 +103,8 @@ program
   .command('dashboard')
   .description('Open the dashboard in your browser')
   .option('-p, --project <slug>', 'Project slug')
+  .option('--local-view', 'Force the local browser dashboard (memory banks + links) even for cloud projects')
+  .option('--install-shortcut', 'Create a clickable shortcut file in the current folder for the local memory dashboard')
   .action(dashboardCommand)
 
 program
@@ -389,6 +393,48 @@ program
   .option('-f, --force', 'Force regeneration even if cached brief is fresh')
   .option('--check', 'Check mode: output file path for hook consumption')
   .action(briefCommand)
+
+program
+  .command('handoff')
+  .description('Generate a continuity handoff from long-term memories for starting a new chat')
+  .argument('[focus]', 'Optional focus query (for example: "session 12", "waterdeep", "villains")')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('-l, --limit <n>', 'Max memories to include (1-200)', '40')
+  .option('-f, --format <format>', 'Output format: chatgpt, markdown', 'chatgpt')
+  .option('-o, --output <path>', 'Write handoff to a file instead of stdout')
+  .action(handoffCommand)
+
+const sessionCmd = program
+  .command('session')
+  .description('Session handoff commands (save where you are, load into a fresh chat)')
+
+sessionCmd
+  .command('save')
+  .description('Save a short-lived session handoff from current working context')
+  .argument('[input]', 'Optional raw notes text to compress')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('-k, --key <key>', 'Memory key to update (default: session-handoff-active)')
+  .option('--objective <text>', 'Current objective')
+  .option('--goal <text>', 'Legacy alias for --objective')
+  .option('--label <text>', 'Optional project/topic label')
+  .option('--constraints <items...>', 'Active constraints (space-separated, or quote with semicolons)')
+  .option('--decisions <items...>', 'Recent decisions (space-separated, or quote with semicolons)')
+  .option('--questions <items...>', 'Open questions (space-separated, or quote with semicolons)')
+  .option('--issues <items...>', 'Known issues (space-separated, or quote with semicolons)')
+  .option('--summary <text>', 'Explicit working summary')
+  .option('--working-summary <text>', 'Alias for --summary')
+  .option('--tags <items...>', 'Optional tags (for provider/agent labels, e.g. provider:chatgpt)')
+  .option('--input-file <path>', 'Read additional notes from a text file')
+  .action(sessionSaveCommand)
+
+sessionCmd
+  .command('load')
+  .description('Load latest session handoff as a concise prompt-ready block')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('-k, --key <key>', 'Specific memory key to load')
+  .option('-f, --format <format>', 'Output format: prompt, json', 'prompt')
+  .option('-o, --output <path>', 'Write output to a file')
+  .action(sessionLoadCommand)
 
 // Memory Quality Flywheel
 program

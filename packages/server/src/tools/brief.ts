@@ -28,7 +28,7 @@ export async function handleBrief(
   cache: SqliteCache,
   sync: SupabaseSync | null,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
-  const allMemories = cache.getAllForProject(projectId)
+  const allMemories = cache.getAllForProject(projectId).filter(m => m.type !== 'session_context')
   const budget = args.budget || adaptiveBudget(allMemories.length)
 
   if (allMemories.length === 0) {

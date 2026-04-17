@@ -17,6 +17,7 @@ interface ImportOptions {
 const VALID_TYPES: MemoryType[] = [
   'convention', 'decision', 'architecture', 'entity',
   'lesson', 'preference', 'pattern', 'execution',
+  'operational', 'environment', 'anti_pattern', 'session_context',
 ]
 
 export async function importCommand(file: string, options: ImportOptions) {

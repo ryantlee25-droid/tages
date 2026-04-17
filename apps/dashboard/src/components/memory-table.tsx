@@ -7,6 +7,8 @@ import { MemoryRowDetail } from './memory-row-detail'
 import { useToast } from './toast'
 import { ConfirmDialog } from './confirm-dialog'
 
+type ChatProvider = 'chatgpt' | 'claude' | 'codex' | 'gemini'
+
 interface Memory {
   id: string
   key: string
@@ -22,10 +24,31 @@ interface Memory {
   updated_at: string
 }
 
-const MEMORY_TYPES = ['all', 'convention', 'decision', 'architecture', 'entity', 'lesson', 'preference', 'pattern', 'execution']
+const MEMORY_TYPES = [
+  'all',
+  'convention',
+  'decision',
+  'architecture',
+  'entity',
+  'lesson',
+  'preference',
+  'pattern',
+  'execution',
+  'operational',
+  'environment',
+  'anti_pattern',
+  'session_context',
+]
 type StatusFilter = 'live' | 'pending' | 'all'
 
 const PAGE_SIZE = 50
+
+const PROVIDER_OPTIONS: Array<{ value: ChatProvider; label: string; url: string }> = [
+  { value: 'chatgpt', label: 'ChatGPT', url: 'https://chatgpt.com' },
+  { value: 'claude', label: 'Claude', url: 'https://claude.ai/new' },
+  { value: 'codex', label: 'Codex', url: 'https://chatgpt.com/codex' },
+  { value: 'gemini', label: 'Gemini', url: 'https://gemini.google.com' },
+]
 
 export function MemoryTable({ projectId }: { projectId: string }) {
   const [memories, setMemories] = useState<Memory[]>([])
@@ -39,6 +62,7 @@ export function MemoryTable({ projectId }: { projectId: string }) {
   const [page, setPage] = useState(0)
   const [hasMore, setHasMore] = useState(false)
   const [confirmRejectId, setConfirmRejectId] = useState<string | null>(null)
+  const [chatProvider, setChatProvider] = useState<ChatProvider>('chatgpt')
 
   const { toast } = useToast()
   const supabase = createClient()
@@ -180,6 +204,46 @@ export function MemoryTable({ projectId }: { projectId: string }) {
     }
   }
 
+  function currentProvider() {
+    return PROVIDER_OPTIONS.find((p) => p.value === chatProvider) || PROVIDER_OPTIONS[0]
+  }
+
+  function buildContinueBlock(memory: Memory): string {
+    const value = memory.value.length > 1200
+      ? `${memory.value.slice(0, 1197)}...`
+      : memory.value
+
+    const lines = [
+      'MEMORY CONTEXT SNAPSHOT',
+      `Memory key: ${memory.key}`,
+      `Memory type: ${memory.type}`,
+      `Source: ${memory.source}`,
+      `Context: ${value}`,
+    ]
+
+    if (memory.tags?.length) {
+      lines.push(`Tags: ${memory.tags.join(', ')}`)
+    }
+    if (memory.file_paths?.length) {
+      lines.push(`Related files: ${memory.file_paths.join(', ')}`)
+    }
+
+    lines.push('Instruction: Start from this context in the new session. Ask clarifying questions before assumptions.')
+    return lines.join('\n')
+  }
+
+  async function continueFromMemory(memory: Memory) {
+    const provider = currentProvider()
+    const block = buildContinueBlock(memory)
+    try {
+      await navigator.clipboard.writeText(block)
+      toast(`Copied context. Opening ${provider.label}.`, 'success')
+    } catch {
+      toast('Could not copy context automatically. Opening chat anyway.', 'error')
+    }
+    window.open(provider.url, '_blank', 'noopener,noreferrer')
+  }
+
   const totalShowing = memories.length
 
   return (
@@ -193,6 +257,20 @@ export function MemoryTable({ projectId }: { projectId: string }) {
           onChange={(e) => setSearch(e.target.value)}
           className="flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-zinc-500 focus:outline-none"
         />
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-zinc-400">Open in</span>
+          <select
+            value={chatProvider}
+            onChange={(e) => setChatProvider(e.target.value as ChatProvider)}
+            className="rounded-md border border-zinc-700 bg-zinc-800 px-2 py-2 text-xs text-white focus:border-zinc-500 focus:outline-none"
+          >
+            {PROVIDER_OPTIONS.map((provider) => (
+              <option key={provider.value} value={provider.value}>
+                {provider.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* Type tabs */}
@@ -289,9 +367,23 @@ export function MemoryTable({ projectId }: { projectId: string }) {
                         >
                           Reject
                         </button>
+                        <button
+                          onClick={() => continueFromMemory(memory)}
+                          className="rounded px-2 py-1 text-[10px] font-medium text-[#3BA3C7] hover:bg-[#3BA3C7]/10"
+                        >
+                          Continue
+                        </button>
                       </div>
                     ) : (
-                      <span className="text-xs text-zinc-500">{memory.source}</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-zinc-500">{memory.source}</span>
+                        <button
+                          onClick={() => continueFromMemory(memory)}
+                          className="rounded px-2 py-1 text-[10px] font-medium text-[#3BA3C7] hover:bg-[#3BA3C7]/10"
+                        >
+                          Continue
+                        </button>
+                      </div>
                     )}
                     <span className="text-xs text-zinc-600">
                       {new Date(memory.created_at).toLocaleDateString()}
@@ -322,6 +414,8 @@ export function MemoryTable({ projectId }: { projectId: string }) {
       {selected && (
         <MemoryRowDetail
           memory={selected}
+          chatProviderLabel={currentProvider().label}
+          onContinue={continueFromMemory}
           onClose={() => setSelected(null)}
           onUpdate={() => { setPage(0); loadMemories(0, false) }}
         />

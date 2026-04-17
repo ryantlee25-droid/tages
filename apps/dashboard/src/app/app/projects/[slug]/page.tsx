@@ -3,6 +3,7 @@ import { isValidSlug } from '@/lib/validate-slug'
 import { notFound } from 'next/navigation'
 import { MemoryTable } from '@/components/memory-table'
 import { ProjectNav } from '@/components/project-nav'
+import { SessionHandoffPanel } from '@/components/session-handoff-panel'
 
 export default async function ProjectPage({
   params,
@@ -33,6 +34,8 @@ export default async function ProjectPage({
       </div>
 
       <ProjectNav slug={slug} active="memories" projectId={project.id} />
+
+      <SessionHandoffPanel projectId={project.id} />
 
       <MemoryTable projectId={project.id} />
     </div>

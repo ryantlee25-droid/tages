@@ -1,6 +1,30 @@
 # Tages
 
-**Team memory for AI coding agents.**
+**Team memory for AI agents.**
+
+## Start Here (Shared Downloads Folder)
+
+If someone shares a Tages handoff folder with you, you can use it without setup tools.
+
+1. Put the shared folder in `Downloads`.
+2. Open the file that ends with `-local-dashboard.html`.
+3. Use **Continue From Any Memory** or **Session Handoff Blocks** and click `Continue`.
+
+### Open in Chrome
+
+1. Open Chrome.
+2. Press `Ctrl+O` (`Cmd+O` on Mac).
+3. Select the `-local-dashboard.html` file from your `Downloads` folder.
+4. Optional: bookmark the tab so it is one click next time.
+
+### Open in Firefox
+
+1. Open Firefox.
+2. Press `Ctrl+O` (`Cmd+O` on Mac).
+3. Select the `-local-dashboard.html` file from your `Downloads` folder.
+4. Optional: pin the tab for quick reuse.
+
+This is a local HTML view, not a browser extension, so there is nothing to install in Chrome Web Store or Firefox Add-ons.
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-521%20passing-brightgreen.svg)]()
@@ -78,6 +102,22 @@ Install Tages as a Claude Code plugin for automatic session memory:
 
 Claude Code, Cursor, Codex, Gemini — anything that speaks [MCP](https://modelcontextprotocol.io).
 
+## Session Handoff (Continuity Across Chats)
+
+For long-running non-coding workflows (campaigns, writing projects, research tracks), use Tages as a continuity layer:
+
+```bash
+tages remember "canon-city" "Campaign starts in Waterdeep." --type entity
+tages remember "no-retcon" "Never rewrite outcomes from prior sessions." --type anti_pattern
+tages session save "Goal: Continue Veil of the Towers. Issue: Missing rune key from Session 12." --tags provider:chatgpt veil-of-the-towers
+tages session load
+tages dashboard --local-view --install-shortcut
+```
+
+`tages session save/load` handles short-lived handoff state, while long-term memories (`decision`, `convention`, etc.) stay separate.
+For a no-terminal flow, open the web dashboard project page and use the **Session Handoff** panel: `Save Handoff`, `Load Handoff`, then `Copy Restore Block`.
+`tages dashboard --local-view --install-shortcut` also creates a clickable shortcut file in your current folder for local handoff blocks.
+
 ## Features
 
 - **56 MCP tools** — remember, recall, audit, sharpen, import, federation, analytics, and more
@@ -86,6 +126,9 @@ Claude Code, Cursor, Codex, Gemini — anything that speaks [MCP](https://modelc
 - **Auto-indexing** — git hooks extract decisions from commits via Ollama or Claude Haiku
 - **Import** — seed from existing CLAUDE.md, ARCHITECTURE.md, or JSON files
 - **`tages brief`** — generate a cached context document for system prompt injection
+- **`tages handoff`** — generate a paste-ready continuity handoff for starting a new chat (ChatGPT/Claude/etc.)
+- **Session Handoff panel (dashboard)** — save/load/copy handoff context in a few clicks
+- **`tages session save/load`** — CLI handoff flow for capture and restore
 - **`tages audit`** — score your memory coverage and get suggestions for improvement
 - **`tages sharpen`** — rewrite memories into imperative form for better agent consumption
 - **Local-first** — SQLite cache for sub-10ms queries, works offline

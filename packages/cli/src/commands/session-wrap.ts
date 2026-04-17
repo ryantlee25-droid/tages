@@ -268,6 +268,7 @@ function getTypeColor(type: string) {
     execution: chalk.red,
     operational: chalk.yellowBright,
     environment: chalk.blueBright,
+    session_context: chalk.cyanBright,
   }
   return (colors[type] || chalk.white)
 }

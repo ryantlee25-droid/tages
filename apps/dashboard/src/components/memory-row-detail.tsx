@@ -10,6 +10,7 @@ interface Memory {
   value: string
   type: string
   source: string
+  status: string
   agent_name: string | null
   file_paths: string[]
   tags: string[]
@@ -20,10 +21,14 @@ interface Memory {
 
 export function MemoryRowDetail({
   memory,
+  chatProviderLabel,
+  onContinue,
   onClose,
   onUpdate,
 }: {
   memory: Memory
+  chatProviderLabel: string
+  onContinue: (memory: Memory) => void | Promise<void>
   onClose: () => void
   onUpdate: () => void
 }) {
@@ -121,6 +126,15 @@ export function MemoryRowDetail({
           <p>Confidence: {(memory.confidence * 100).toFixed(0)}%</p>
           <p>Created: {new Date(memory.created_at).toLocaleString()}</p>
           <p>Updated: {new Date(memory.updated_at).toLocaleString()}</p>
+        </div>
+
+        <div className="mt-4">
+          <button
+            onClick={() => onContinue(memory)}
+            className="rounded-md border border-[#3BA3C7]/40 px-3 py-1.5 text-xs font-medium text-[#3BA3C7] hover:bg-[#3BA3C7]/10"
+          >
+            Continue In {chatProviderLabel}
+          </button>
         </div>
 
         <div className="mt-6 border-t border-zinc-800 pt-4">

@@ -4,7 +4,10 @@ import { RememberSchema, RecallSchema, ForgetSchema, ContextSchema, SessionEndSc
 describe('Schemas', () => {
   describe('MemoryTypeSchema', () => {
     it('accepts valid types', () => {
-      for (const type of ['convention', 'decision', 'architecture', 'entity', 'lesson', 'preference', 'pattern']) {
+      for (const type of [
+        'convention', 'decision', 'architecture', 'entity', 'lesson', 'preference',
+        'pattern', 'execution', 'operational', 'environment', 'anti_pattern', 'session_context',
+      ]) {
         expect(MemoryTypeSchema.parse(type)).toBe(type)
       }
     })

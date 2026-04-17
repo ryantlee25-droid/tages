@@ -3,7 +3,7 @@ import { z } from 'zod'
 export const MemoryTypeSchema = z.enum([
   'convention', 'decision', 'architecture',
   'entity', 'lesson', 'preference', 'pattern', 'execution',
-  'operational', 'environment', 'anti_pattern',
+  'operational', 'environment', 'anti_pattern', 'session_context',
 ])
 
 export const MemorySourceSchema = z.enum([

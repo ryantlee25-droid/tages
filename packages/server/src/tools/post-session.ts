@@ -110,7 +110,7 @@ export async function handlePostSession(
     }
   }
 
-  const allMemories = cache.getAllForProject(projectId)
+  const allMemories = cache.getAllForProject(projectId).filter(m => m.type !== 'session_context')
 
   if (allMemories.length === 0) {
     return {

@@ -28,11 +28,12 @@ describe('E2E: CLI Full Coverage', () => {
   ): { stdout: string; code: number } {
     const cwd = opts.cwd ?? PROJECT_ROOT
     try {
-      const stdout = execSync(`pnpm exec tsx packages/cli/src/index.ts ${args}`, {
+      const stdout = execSync(`pnpm --filter @tages/cli exec tsx src/index.ts ${args}`, {
         cwd,
         env: {
           ...process.env,
           HOME: tmpHome,
+          USERPROFILE: tmpHome,
           TAGES_CACHE_PATH: tmpCachePath,
           // GIT_DIR override prevents hook installer from finding a broken worktree .git file
           GIT_DIR: path.join(tmpHome, 'fakegit'),
@@ -80,6 +81,10 @@ describe('E2E: CLI Full Coverage', () => {
         'quality',
         'migrate',
         'brief',
+        'handoff',
+        'session',
+        'session save',
+        'session load',
         'audit',
         'sharpen',
         'session-wrap',
@@ -153,6 +158,20 @@ describe('E2E: CLI Full Coverage', () => {
     it('tages brief exits 0 or produces human-readable output', () => {
       const { stdout } = run('brief --project h2-test', { allowFail: true })
       expect(stdout.length).toBeGreaterThan(0)
+    }, 15000)
+
+    it('tages handoff exits 0 or produces human-readable output', () => {
+      const { stdout } = run('handoff --project h2-test', { allowFail: true })
+      expect(stdout.length).toBeGreaterThan(0)
+    }, 15000)
+
+    it('tages session save/load works in local mode', () => {
+      const save = run('session save "goal: Continue Veil of the Towers" --tags provider:chatgpt veil-of-the-towers --project h2-test', { allowFail: true })
+      expect(save.stdout.length).toBeGreaterThan(0)
+
+      const load = run('session load --project h2-test', { allowFail: true })
+      expect(load.stdout.length).toBeGreaterThan(0)
+      expect(load.stdout).toContain('SESSION HANDOFF (SHORT-LIVED)')
     }, 15000)
 
     it('tages doctor exits or contains diagnostic info', () => {

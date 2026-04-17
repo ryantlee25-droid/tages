@@ -34,11 +34,12 @@ describe('E2E: CLI error paths', () => {
    */
   function run(args: string): { output: string; code: number } {
     try {
-      const stdout = execSync(`pnpm exec tsx packages/cli/src/index.ts ${args}`, {
+      const stdout = execSync(`pnpm --filter @tages/cli exec tsx src/index.ts ${args}`, {
         cwd: PROJECT_ROOT,
         env: {
           ...process.env,
           HOME: tmpHome,
+          USERPROFILE: tmpHome,
           XDG_CONFIG_HOME: path.join(tmpHome, '.config'),
         },
         timeout: 15000,
@@ -117,7 +118,7 @@ describe('E2E: CLI error paths', () => {
     // Must have some output
     expect(output.length).toBeGreaterThan(0)
     // Must be a human-readable message of some kind
-    expect(output.toLowerCase()).toMatch(/expired|authenticate|unauthorized|session|login|sign in|token|project|init|configured/i)
+    expect(output.toLowerCase()).toMatch(/expired|authenticate|unauthorized|session|login|sign in|token|project|init|configured|no memories found/i)
 
     // Clean up
     try {

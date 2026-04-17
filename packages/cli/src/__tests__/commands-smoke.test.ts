@@ -101,6 +101,13 @@ let mockError: { message: string } | null = null
 const mockSupabase = {
   from: vi.fn(() => makeMockChain(mockData, mockError)),
   rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
+  auth: {
+    setSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+    getSession: vi.fn().mockResolvedValue({
+      data: { session: { access_token: 'mock-access', refresh_token: 'mock-refresh' } },
+      error: null,
+    }),
+  },
 }
 
 function resetMockSupabase() {
@@ -108,6 +115,11 @@ function resetMockSupabase() {
   mockError = null
   mockSupabase.from = vi.fn(() => makeMockChain(mockData, mockError))
   mockSupabase.rpc = vi.fn().mockResolvedValue({ data: [], error: null })
+  mockSupabase.auth.setSession = vi.fn().mockResolvedValue({ data: { session: null }, error: null })
+  mockSupabase.auth.getSession = vi.fn().mockResolvedValue({
+    data: { session: { access_token: 'mock-access', refresh_token: 'mock-refresh' } },
+    error: null,
+  })
 }
 
 vi.mock('@tages/shared', () => ({
