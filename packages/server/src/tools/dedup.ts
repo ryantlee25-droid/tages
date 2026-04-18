@@ -36,6 +36,7 @@ export async function handleConsolidate(
   projectId: string,
   cache: SqliteCache,
   sync: SupabaseSync | null,
+  callerUserId?: string,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const survivor = cache.getByKey(projectId, args.survivorKey)
   const victim = cache.getByKey(projectId, args.victimKey)
@@ -49,11 +50,16 @@ export async function handleConsolidate(
 
   const result = applyConsolidation(survivor, victim, args.mergedValue)
 
+  // Stamp authorship on the merged survivor
+  const surviving = callerUserId
+    ? { ...result.surviving, updatedBy: callerUserId }
+    : result.surviving
+
   // Save merged survivor
-  cache.upsertMemory(result.surviving, true)
+  cache.upsertMemory(surviving, true)
   if (sync) {
-    const ok = await sync.remoteInsert(result.surviving)
-    if (ok) cache.markSynced([result.surviving.id])
+    const ok = await sync.remoteInsert(surviving)
+    if (ok) cache.markSynced([surviving.id])
   }
 
   // Delete victim

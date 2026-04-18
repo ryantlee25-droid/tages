@@ -13,7 +13,23 @@ interface Conflict {
   a_value: string
   b_key: string
   b_value: string
+  a_updated_by: string | null
+  b_updated_by: string | null
+  a_updated_at: string | null
+  b_updated_at: string | null
   created_at: string
+}
+
+function relativeTime(iso: string | null): string {
+  if (!iso) return ''
+  const diffMs = Date.now() - new Date(iso).getTime()
+  const diffMins = Math.floor(diffMs / 60_000)
+  if (diffMins < 1) return 'just now'
+  if (diffMins < 60) return `${diffMins}m ago`
+  const diffHours = Math.floor(diffMins / 60)
+  if (diffHours < 24) return `${diffHours}h ago`
+  const diffDays = Math.floor(diffHours / 24)
+  return `${diffDays}d ago`
 }
 
 type Strategy = 'keep_newer' | 'keep_older' | 'merge'
@@ -79,9 +95,12 @@ export function ConflictResolver({ projectId }: { projectId: string }) {
       }
     } else if (strategy === 'merge' && mergedValue) {
       // Update memory A with merged value, delete memory B
+      const { data: { user } } = await supabase.auth.getUser()
+      const mergePayload: Record<string, unknown> = { value: mergedValue, updated_at: new Date().toISOString() }
+      if (user?.id) mergePayload.updated_by = user.id
       await supabase
         .from('memories')
-        .update({ value: mergedValue, updated_at: new Date().toISOString() })
+        .update(mergePayload)
         .eq('id', conflict.memory_a_id)
       await supabase.from('memories').delete().eq('id', conflict.memory_b_id)
     }
@@ -144,10 +163,22 @@ export function ConflictResolver({ projectId }: { projectId: string }) {
               <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="rounded-lg border border-zinc-700 p-3">
                   <p className="mb-1 text-xs font-medium text-[#3BA3C7]">{conflict.a_key}</p>
+                  {(conflict.a_updated_by || conflict.a_updated_at) && (
+                    <p className="mb-1 text-xs text-zinc-500">
+                      {conflict.a_updated_by ?? 'Unknown'}
+                      {conflict.a_updated_at ? ` · ${relativeTime(conflict.a_updated_at)}` : ''}
+                    </p>
+                  )}
                   <p className="text-xs text-zinc-300">{conflict.a_value}</p>
                 </div>
                 <div className="rounded-lg border border-zinc-700 p-3">
                   <p className="mb-1 text-xs font-medium text-purple-400">{conflict.b_key}</p>
+                  {(conflict.b_updated_by || conflict.b_updated_at) && (
+                    <p className="mb-1 text-xs text-zinc-500">
+                      {conflict.b_updated_by ?? 'Unknown'}
+                      {conflict.b_updated_at ? ` · ${relativeTime(conflict.b_updated_at)}` : ''}
+                    </p>
+                  )}
                   <p className="text-xs text-zinc-300">{conflict.b_value}</p>
                 </div>
               </div>

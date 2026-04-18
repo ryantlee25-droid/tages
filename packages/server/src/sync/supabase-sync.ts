@@ -333,6 +333,8 @@ interface DbRow {
   verified_at: string | null
   created_at: string
   updated_at: string
+  created_by: string | null
+  updated_by: string | null
 }
 
 function dbRowToMemory(row: DbRow): Memory {
@@ -356,6 +358,8 @@ function dbRowToMemory(row: DbRow): Memory {
     verifiedAt: row.verified_at || undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    createdBy: row.created_by || undefined,
+    updatedBy: row.updated_by || undefined,
   }
 }
 
@@ -380,5 +384,7 @@ function memoryToDbRow(memory: Memory): DbRow {
     verified_at: memory.verifiedAt || null,
     created_at: memory.createdAt,
     updated_at: memory.updatedAt,
+    created_by: memory.createdBy || null,
+    updated_by: memory.updatedBy || null,
   }
 }

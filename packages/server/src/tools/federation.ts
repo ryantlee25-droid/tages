@@ -28,6 +28,7 @@ export async function handleImportFederated(
   projectId: string,
   cache: SqliteCache,
   sync: SupabaseSync | null,
+  callerUserId?: string,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const entry = globalFederationManager.importFromFederated(args.key, projectId)
   if (!entry) {
@@ -39,6 +40,7 @@ export async function handleImportFederated(
     projectId,
     id: `${entry.memory.id}-${projectId}`,
     updatedAt: new Date().toISOString(),
+    ...(callerUserId ? { updatedBy: callerUserId } : {}),
   }
   cache.upsertMemory(local, true)
 

@@ -38,9 +38,12 @@ export function MemoryRowDetail({
   async function handleSave() {
     if (value === memory.value) return
     setSaving(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    const updatePayload: Record<string, unknown> = { value, updated_at: new Date().toISOString() }
+    if (user?.id) updatePayload.updated_by = user.id
     await supabase
       .from('memories')
-      .update({ value, updated_at: new Date().toISOString() })
+      .update(updatePayload)
       .eq('id', memory.id)
     setSaving(false)
     setSaved(true)

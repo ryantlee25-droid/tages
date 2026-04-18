@@ -58,6 +58,8 @@ export interface Memory {
   createdAt: string
   updatedAt: string
   encrypted?: boolean
+  createdBy?: string
+  updatedBy?: string
 }
 
 export interface Project {
