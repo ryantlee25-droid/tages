@@ -4,18 +4,25 @@ import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useToast } from '@/components/toast'
 
+type InviteRole = 'member' | 'admin'
+
 export function InviteMember({
   projectId,
+  currentUserRole,
   onInvited,
 }: {
   projectId: string
+  currentUserRole: 'owner' | 'admin' | 'member'
   onInvited: () => void
 }) {
   const [email, setEmail] = useState('')
+  const [role, setRole] = useState<InviteRole>('member')
   const [loading, setLoading] = useState(false)
   const [seatInfo, setSeatInfo] = useState<{ used: number; limit: number } | null>(null)
   const supabase = createClient()
   const { toast } = useToast()
+
+  const canInviteAdmin = currentUserRole === 'owner'
 
   useEffect(() => {
     async function checkSeats() {
@@ -57,30 +64,40 @@ export function InviteMember({
 
     setLoading(true)
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error('Not authenticated')
+      const res = await fetch(`/api/projects/${projectId}/invite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: trimmed, role }),
+      })
 
-      const { error } = await Promise.resolve(
-        supabase.from('team_members').insert({
-          project_id: projectId,
-          email: trimmed,
-          role: 'member',
-          status: 'pending',
-          invited_by: user.id,
-        })
-      )
-      if (error) throw error
-      toast(`Invite sent to ${trimmed}.`, 'success')
-      setEmail('')
-      onInvited()
+      if (res.ok) {
+        toast(`Invite sent to ${trimmed}.`, 'success')
+        setEmail('')
+        setRole('member')
+        onInvited()
+        return
+      }
+
+      let message = ''
+      try {
+        const body = await res.json()
+        message = typeof body?.error === 'string' ? body.error : ''
+      } catch {
+        // no body
+      }
+
+      if (res.status === 409) {
+        toast('Already invited; pending.', 'error')
+      } else if (res.status === 422) {
+        toast('Seat limit reached — upgrade plan or remove a member to invite.', 'error')
+      } else if (res.status === 403) {
+        toast("You don't have permission to assign that role.", 'error')
+      } else {
+        toast(message || 'Failed to send invite.', 'error')
+      }
     } catch (err: any) {
       console.error('[invite-member] invite failed', err)
-      const msg: string = err?.message ?? ''
-      if (msg.includes('Seat limit reached')) {
-        toast('Your team is at its seat limit. Remove a member or add more seats in billing to invite.', 'error')
-      } else {
-        toast(msg || 'Failed to send invite.', 'error')
-      }
+      toast(err?.message || 'Failed to send invite.', 'error')
     } finally {
       setLoading(false)
     }
@@ -105,6 +122,17 @@ export function InviteMember({
           disabled={loading}
           className="flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white placeholder-zinc-500 focus:border-[#3BA3C7] focus:outline-none focus:ring-1 focus:ring-[#3BA3C7]"
         />
+        {canInviteAdmin && (
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value as InviteRole)}
+            disabled={loading}
+            className="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white focus:border-[#3BA3C7] focus:outline-none focus:ring-1 focus:ring-[#3BA3C7]"
+          >
+            <option value="member">member</option>
+            <option value="admin">admin</option>
+          </select>
+        )}
         <button
           type="submit"
           disabled={loading || !email.trim() || atSeatLimit}
