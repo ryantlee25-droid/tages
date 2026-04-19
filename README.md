@@ -146,6 +146,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-04-19
+
+- Fixed GitHub OAuth login redirecting to the marketing homepage instead of `/app/projects` after callback. Root cause: `SameSite=Strict` cookies are withheld by the browser on cross-site top-level navigations (i.e. GitHub's redirect back to `/auth/callback?code=...`), so the PKCE verifier and refreshed session cookies never reached the server. Reverted to Supabase's default `SameSite=Lax`, which is the correct setting for SSR auth cookies. `HttpOnly + Secure + Lax` still blocks CSRF on state-changing requests.
+
 ### 2026-04-17
 
 - Split literal Stripe-style test fixtures in `safety.test.ts` and `observe.test.ts` via string concatenation so GitHub secret scanning no longer flags them. The fixtures are intentional test inputs, not real credentials.

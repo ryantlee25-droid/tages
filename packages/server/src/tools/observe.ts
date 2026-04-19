@@ -41,6 +41,7 @@ export async function handleObserve(
   cache: SqliteCache,
   sync: SupabaseSync | null,
   callerUserId?: string,
+  autoSaveThreshold?: number | null,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const text = args.observation.trim()
   if (text.length < 15) {
@@ -108,10 +109,33 @@ export async function handleObserve(
     if (ok) cache.markSynced([memory.id])
   }
 
+  // Immediate auto-save: if the just-stored memory already meets the threshold,
+  // promote it to live without waiting for the next sweep.
+  if (autoSaveThreshold != null && memory.confidence >= autoSaveThreshold) {
+    const now = new Date().toISOString()
+    cache.updateMemoryStatus(memory.id, 'live', now)
+    if (sync) {
+      // Best-effort remote update; sync.flush() will catch any remaining dirty records.
+      const supabase = (sync as unknown as { supabase: import('@supabase/supabase-js').SupabaseClient }).supabase
+      if (supabase) {
+        await Promise.resolve(
+          supabase.from('memories').update({ status: 'live', verified_at: now }).eq('id', memory.id)
+        ).catch(() => undefined)
+      }
+    }
+    console.error(`[tages] Auto-saved observed memory "${key}" (confidence ${memory.confidence} >= threshold ${autoSaveThreshold})`)
+    return {
+      content: [{
+        type: 'text',
+        text: `Staged and auto-saved "${key}" (${matchedType}) — confidence ${Math.round(memory.confidence * 100)}% met auto-save threshold.`,
+      }],
+    }
+  }
+
   return {
     content: [{
       type: 'text',
-      text: `Noted (pending verification): "${key}" (${matchedType})`,
+      text: `Staged memory '${key}' for review. Run \`tages pending\` to verify or approve in bulk.`,
     }],
   }
 }
