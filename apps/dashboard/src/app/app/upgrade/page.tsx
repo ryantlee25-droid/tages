@@ -95,7 +95,7 @@ export default async function UpgradePage() {
             <div className="flex flex-col rounded-xl border border-zinc-600 bg-zinc-900/30 p-6">
               <h3 className="text-lg font-semibold text-white">Team</h3>
               <div className="mt-2">
-                <span className="text-3xl font-bold text-white">$29</span>
+                <span className="text-3xl font-bold text-white">$19</span>
                 <span className="text-sm text-zinc-500">/seat/mo</span>
               </div>
               <p className="mt-2 text-sm text-zinc-400">For shared codebases.</p>
