@@ -96,24 +96,29 @@ export async function POST(request: Request) {
         customer?: string | null
         id: string
         status: string
+        metadata?: Record<string, string>
         items: { data: Array<{ price: { id: string }; quantity?: number | null }> }
       }
       const customerId = subscription.customer as string | undefined
 
-      if (!customerId) {
-        console.error('[webhook] customer.subscription.updated: missing customer id')
-        return NextResponse.json({ received: true })
+      // Primary lookup: customer_id (written by checkout.session.completed).
+      // Fallback: metadata.user_id on the subscription (set at checkout creation).
+      // This handles the race where 'updated' arrives before 'completed' persists the customer_id.
+      let userId: string | undefined
+      if (customerId) {
+        const { data: profiles } = await supabase
+          .from('user_profiles')
+          .select('user_id')
+          .eq('stripe_customer_id', customerId)
+          .limit(1)
+        userId = profiles?.[0]?.user_id
+      }
+      if (!userId && subscription.metadata?.user_id) {
+        userId = subscription.metadata.user_id
       }
 
-      const { data: profiles } = await supabase
-        .from('user_profiles')
-        .select('user_id')
-        .eq('stripe_customer_id', customerId)
-        .limit(1)
-
-      const userId = profiles?.[0]?.user_id
       if (!userId) {
-        console.error('[webhook] customer.subscription.updated: no user found for customer', customerId)
+        console.error('[webhook] customer.subscription.updated: no user found', { customerId, metadata: subscription.metadata })
         return NextResponse.json({ received: true })
       }
 

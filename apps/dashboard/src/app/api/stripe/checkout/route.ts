@@ -73,6 +73,11 @@ export async function POST(request: Request) {
     mode: 'subscription',
     customer_email: user.email,
     metadata: { user_id: user.id, plan },
+    // Also stamp on the subscription itself so webhook handlers can recover
+    // user_id from subscription.updated events if the customer_id lookup misses.
+    subscription_data: {
+      metadata: { user_id: user.id, plan },
+    },
     line_items: [{
       price: PRICE_MAP[plan]!,
       quantity,
