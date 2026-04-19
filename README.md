@@ -149,6 +149,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 ### 2026-04-19
 
 - Fixed GitHub OAuth login redirecting to the marketing homepage instead of `/app/projects` after callback. Root cause: `SameSite=Strict` cookies are withheld by the browser on cross-site top-level navigations (i.e. GitHub's redirect back to `/auth/callback?code=...`), so the PKCE verifier and refreshed session cookies never reached the server. Reverted to Supabase's default `SameSite=Lax`, which is the correct setting for SSR auth cookies. `HttpOnly + Secure + Lax` still blocks CSRF on state-changing requests.
+- **Invite-flow overhaul (Team plan):** Team invites now send a one-time Supabase magic-link email rather than inserting directly into `team_members`. Pending invites expire after 30 days; expired rows are skipped by `accept_pending_invites`. Owners and admins can revoke a pending invite before it is accepted (new DELETE RLS policy). The invite role dropdown enforces RBAC at both the UI and server layers — owners can invite admin or member, admins can only invite member. Dashboard sign-ins now call `accept_pending_invites` via the OAuth callback, so web-only sign-ups resolve dangling invites automatically (previously only the MCP server did this on startup). Requires migrations `0055_invite_expiry.sql` and `0056_invite_delete_policy.sql` applied to your Supabase project.
 
 ### 2026-04-17
 
