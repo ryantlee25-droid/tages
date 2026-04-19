@@ -55,6 +55,17 @@ export async function handleBrief(
   sections.push(header)
   estimatedTokens += estimateTokens(header)
 
+  // ── Memory Hygiene guidance — always included (informational, all tiers) ──
+  const hygieneSection = `## Memory Hygiene
+
+- Use \`remember(key, value)\` for verified, explicit decisions the user has confirmed.
+- Use \`observe(key, value)\` for passive capture of patterns, conventions, or learnings you infer but haven't confirmed. These land in the pending queue for user review.
+- Do not use \`remember\` for speculative observations — stage them via \`observe\` instead.
+- If the user pauses and reflects ("we just decided X", "the bug was caused by Y"), that's a signal to \`observe\` — let them review after.
+- Never call \`session_end\` unless the user explicitly asks — they have their own session boundaries.
+`
+  estimatedTokens = appendIfBudget(sections, hygieneSection, estimatedTokens, budget)
+
   // ── 1. GOTCHAS (anti_pattern + lesson) — imperative, terse ──
   const gotchaScored = [...(grouped.anti_pattern || []), ...(grouped.lesson || [])]
   if (gotchaScored.length > 0) {
