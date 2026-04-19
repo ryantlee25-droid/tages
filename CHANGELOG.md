@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Features
+- **Stripe billing end-to-end** — Pro ($14/mo) and Team ($29/seat/mo, 1–20 seats) checkout flows live. Webhook handles subscription.updated for plan changes and seat count sync. Customer portal linked from upgrade page.
+- **Seat picker** — Team checkout includes a 1–20 seat selector with live monthly total.
+- **Marketing pricing CTAs** — "Coming soon" / mailto links replaced with real checkout.
+
+### Fixes
+- Plan propagation: webhook now syncs `user_profiles.plan` → all owned `projects.plan` rows so MCP tier gate and seat-limit function see the upgraded tier (previously a no-op sync left projects on 'free').
+
 ## 0.1.0 (2026-04-06)
 
 ### Features

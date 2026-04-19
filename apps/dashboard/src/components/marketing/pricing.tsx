@@ -23,7 +23,6 @@ const PLANS = [
     price: '$14',
     period: '/month',
     description: 'For professional developers.',
-    badge: 'Coming soon',
     features: [
       'All 56 MCP tools',
       'Up to 10 projects',
@@ -32,26 +31,25 @@ const PLANS = [
       'Fuzzy + semantic search',
       'Quality scoring + analytics',
     ],
-    cta: 'Join waitlist',
-    href: 'mailto:support@tages.ai',
+    cta: 'Get Pro',
+    href: '/app/upgrade',
     highlighted: false,
   },
   {
     name: 'Team',
     price: '$29',
     period: '/seat/mo',
-    description: 'For shared codebases.',
-    badge: 'Coming soon',
+    description: 'For shared codebases. 1–20 seats.',
     features: [
       'Everything in Pro',
-      'Up to 20 projects',
-      '100,000 memories',
+      '100,000 memories per project',
       'Team memory federation',
       'RBAC + audit logging',
-      'SSO (SAML/OIDC) [planned]',
+      'Centralized seat billing',
+      'Priority support',
     ],
-    cta: 'Join waitlist',
-    href: 'mailto:support@tages.ai',
+    cta: 'Get Team',
+    href: '/app/upgrade',
     highlighted: false,
   },
   {
@@ -134,11 +132,6 @@ export function Pricing() {
                   style={{ backgroundColor: '#3BA3C7' }}
                 >
                   Most popular
-                </span>
-              )}
-              {'badge' in plan && plan.badge && (
-                <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full border border-zinc-600 bg-zinc-800 px-3 py-0.5 text-xs font-medium text-zinc-300">
-                  {plan.badge}
                 </span>
               )}
               <h3 className="text-lg font-semibold text-white">{plan.name}</h3>
