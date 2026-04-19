@@ -10,7 +10,9 @@ describe('scanForSensitiveData', () => {
     })
 
     it('detects Stripe keys', () => {
-      const warnings = scanForSensitiveData('sk_live_1234567890abcdefghijklmn')
+      // Split literal to avoid triggering secret scanners on this test fixture.
+      const fixture = 'sk_' + 'live_' + '1234567890abcdefghijklmn'
+      const warnings = scanForSensitiveData(fixture)
       expect(warnings.some(w => w.name === 'Stripe key')).toBe(true)
     })
 

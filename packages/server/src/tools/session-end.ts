@@ -13,6 +13,7 @@ export async function handleSessionEnd(
   projectId: string,
   cache: SqliteCache,
   sync: SupabaseSync | null,
+  callerUserId?: string,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const shouldExtract = args.extractMemories !== false
   const extracted = shouldExtract ? extractMemoriesFromSummary(args.summary) : []
@@ -33,6 +34,7 @@ export async function handleSessionEnd(
         tags: ['session-extract'],
         createdAt: now,
         updatedAt: now,
+        ...(callerUserId ? { createdBy: callerUserId, updatedBy: callerUserId } : {}),
       }
 
       cache.upsertMemory(memory, true)

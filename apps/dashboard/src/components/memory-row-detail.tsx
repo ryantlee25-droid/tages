@@ -38,9 +38,18 @@ export function MemoryRowDetail({
   async function handleSave() {
     if (value === memory.value) return
     setSaving(true)
+    let userId: string | undefined
+    try {
+      const { data } = await supabase.auth.getUser()
+      userId = data.user?.id
+    } catch {
+      // transient auth failure — proceed without attribution
+    }
+    const updatePayload: Record<string, unknown> = { value, updated_at: new Date().toISOString() }
+    if (userId) updatePayload.updated_by = userId
     await supabase
       .from('memories')
-      .update({ value, updated_at: new Date().toISOString() })
+      .update(updatePayload)
       .eq('id', memory.id)
     setSaving(false)
     setSaved(true)

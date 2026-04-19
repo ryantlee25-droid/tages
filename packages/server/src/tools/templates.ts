@@ -47,6 +47,7 @@ export async function handleApplyTemplate(
   projectId: string,
   cache: SqliteCache,
   sync: SupabaseSync | null,
+  callerUserId?: string,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const template = engine.getTemplate(args.templateId)
   if (!template) {
@@ -64,7 +65,10 @@ export async function handleApplyTemplate(
     }
   }
 
-  const memory = engine.applyTemplate(template, filled, projectId, args.filePaths ?? [])
+  const baseMemory = engine.applyTemplate(template, filled, projectId, args.filePaths ?? [])
+  const memory = callerUserId
+    ? { ...baseMemory, createdBy: callerUserId, updatedBy: callerUserId }
+    : baseMemory
   cache.upsertMemory(memory, true)
   cache.logTemplateFill(projectId, args.templateId, memory.key)
 

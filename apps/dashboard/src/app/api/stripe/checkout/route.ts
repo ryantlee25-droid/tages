@@ -14,12 +14,26 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  // Determine plan from query param (default: pro)
   const url = new URL(request.url)
   const plan = url.searchParams.get('plan') || 'pro'
 
   if (plan !== 'pro' && plan !== 'team') {
     return NextResponse.json({ error: 'Invalid plan. Use "pro" or "team".' }, { status: 400 })
+  }
+
+  // Parse quantity param
+  const rawQuantity = url.searchParams.get('quantity')
+  let quantity = rawQuantity ? parseInt(rawQuantity, 10) : 1
+  if (isNaN(quantity) || quantity < 1) quantity = 1
+
+  // Pro always has quantity 1
+  if (plan === 'pro') {
+    quantity = 1
+  }
+
+  // Team: validate seat count
+  if (plan === 'team' && (quantity < 1 || quantity > 20)) {
+    return NextResponse.json({ error: 'Team plan requires 1–20 seats' }, { status: 400 })
   }
 
   // Stripe not configured — reject unless TAGES_DEMO_MODE is explicitly enabled
@@ -40,7 +54,13 @@ export async function POST(request: Request) {
       is_pro: true,
       plan,
       pro_since: new Date().toISOString(),
+      subscription_quantity: quantity,
     })
+    // Also propagate plan to owned projects
+    await adminClient
+      .from('projects')
+      .update({ plan })
+      .eq('owner_id', user.id)
     return NextResponse.redirect(`${origin}/app/projects?upgraded=true`, 303)
   }
 
@@ -53,9 +73,14 @@ export async function POST(request: Request) {
     mode: 'subscription',
     customer_email: user.email,
     metadata: { user_id: user.id, plan },
+    // Also stamp on the subscription itself so webhook handlers can recover
+    // user_id from subscription.updated events if the customer_id lookup misses.
+    subscription_data: {
+      metadata: { user_id: user.id, plan },
+    },
     line_items: [{
       price: PRICE_MAP[plan]!,
-      quantity: 1,
+      quantity,
     }],
     success_url: `${origin}/app/projects?upgraded=true`,
     cancel_url: `${origin}/app/upgrade`,
@@ -63,3 +88,7 @@ export async function POST(request: Request) {
 
   return NextResponse.redirect(session.url!, 303)
 }
+
+// Allow GET — users arrive here via <Link> clicks from the upgrade page
+// and marketing pricing CTAs. Both verbs run the same checkout session creation.
+export const GET = POST

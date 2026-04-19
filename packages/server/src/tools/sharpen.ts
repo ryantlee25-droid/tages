@@ -62,6 +62,7 @@ export async function handleSharpenMemory(
   projectId: string,
   cache: SqliteCache,
   sync: SupabaseSync | null,
+  callerUserId?: string,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const memory = cache.getByKey(projectId, args.key)
   if (!memory) {
@@ -97,6 +98,7 @@ export async function handleSharpenMemory(
     value: rewritten,
     tags: newTags,
     updatedAt: new Date().toISOString(),
+    ...(callerUserId ? { updatedBy: callerUserId } : {}),
   }
 
   cache.upsertMemory(updated, true)

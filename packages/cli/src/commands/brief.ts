@@ -1,6 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import chalk from 'chalk'
 import ora from 'ora'
 import { createAuthenticatedClient } from '../auth/session.js'
@@ -56,7 +56,7 @@ function isBriefFresh(briefPath: string): boolean {
   // Check if there are git changes since the brief was generated
   const briefTime = stat.mtime.toISOString()
   try {
-    const diff = execSync(`git log --oneline --since="${briefTime}" 2>/dev/null`, {
+    const diff = execFileSync('git', ['log', '--oneline', `--since=${briefTime}`], {
       encoding: 'utf-8',
       cwd: path.dirname(briefPath),
     }).trim()

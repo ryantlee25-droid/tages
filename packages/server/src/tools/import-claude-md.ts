@@ -165,6 +165,7 @@ export async function handleImportClaudeMd(
   },
   cache: SqliteCache,
   _sync: SupabaseSync | null,
+  callerUserId?: string,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const strategy = args.strategy ?? 'skip'
 
@@ -219,6 +220,7 @@ export async function handleImportClaudeMd(
           type: item.type as any,
           updatedAt: now,
           source: 'import' as MemorySource,
+          ...(callerUserId ? { updatedBy: callerUserId } : {}),
         })
         imported++
       }
@@ -237,6 +239,7 @@ export async function handleImportClaudeMd(
         confidence: 1.0,
         createdAt: now,
         updatedAt: now,
+        ...(callerUserId ? { createdBy: callerUserId, updatedBy: callerUserId } : {}),
       }
       cache.upsertMemory(memory)
       imported++
