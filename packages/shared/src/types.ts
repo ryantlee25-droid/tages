@@ -21,7 +21,7 @@ export type MemorySource =
   | 'agent'
   | 'import'
 
-export type MemoryStatus = 'live' | 'pending'
+export type MemoryStatus = 'live' | 'pending' | 'archived'
 
 export interface MemoryExample {
   input: string
