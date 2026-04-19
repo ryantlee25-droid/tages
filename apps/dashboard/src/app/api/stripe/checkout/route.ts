@@ -21,22 +21,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid plan. Use "pro" or "team".' }, { status: 400 })
   }
 
-  // Parse quantity param
   const rawQuantity = url.searchParams.get('quantity')
   let quantity = rawQuantity ? parseInt(rawQuantity, 10) : 1
   if (isNaN(quantity) || quantity < 1) quantity = 1
 
-  // Pro always has quantity 1
   if (plan === 'pro') {
     quantity = 1
   }
 
-  // Team: validate seat count
   if (plan === 'team' && (quantity < 1 || quantity > 20)) {
     return NextResponse.json({ error: 'Team plan requires 1–20 seats' }, { status: 400 })
   }
 
-  // Stripe not configured — reject unless TAGES_DEMO_MODE is explicitly enabled
+  // Demo-mode fallback (no Stripe credentials configured)
   if (!process.env.STRIPE_SECRET_KEY || !PRICE_MAP[plan]) {
     if (process.env.TAGES_DEMO_MODE !== 'true') {
       return NextResponse.json(
@@ -56,7 +53,6 @@ export async function POST(request: Request) {
       pro_since: new Date().toISOString(),
       subscription_quantity: quantity,
     })
-    // Also propagate plan to owned projects
     await adminClient
       .from('projects')
       .update({ plan })
@@ -64,17 +60,43 @@ export async function POST(request: Request) {
     return NextResponse.redirect(`${origin}/app/projects?upgraded=true`, 303)
   }
 
-  // Real Stripe flow
   const { getStripe } = await import('@/lib/stripe')
   const stripe = getStripe()
   const origin = url.origin
+
+  // If user already has an active subscription, update it in place instead
+  // of creating a duplicate. Stripe handles proration automatically.
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('stripe_subscription_id, subscription_status')
+    .eq('user_id', user.id)
+    .single()
+
+  const hasActiveSub = profile?.stripe_subscription_id
+    && (profile.subscription_status === 'active' || profile.subscription_status === 'trialing')
+
+  if (hasActiveSub) {
+    // Fetch the existing subscription to get its item ID, then swap the price.
+    const existing = await stripe.subscriptions.retrieve(profile.stripe_subscription_id!)
+    const itemId = existing.items.data[0]?.id
+    if (!itemId) {
+      return NextResponse.json({ error: 'Existing subscription has no line items' }, { status: 500 })
+    }
+
+    await stripe.subscriptions.update(profile.stripe_subscription_id!, {
+      items: [{ id: itemId, price: PRICE_MAP[plan]!, quantity }],
+      proration_behavior: 'create_prorations',
+      metadata: { user_id: user.id, plan },
+    })
+
+    // Webhook fires customer.subscription.updated to sync the DB.
+    return NextResponse.redirect(`${origin}/app/upgrade?updated=true`, 303)
+  }
 
   const session = await stripe.checkout.sessions.create({
     mode: 'subscription',
     customer_email: user.email,
     metadata: { user_id: user.id, plan },
-    // Also stamp on the subscription itself so webhook handlers can recover
-    // user_id from subscription.updated events if the customer_id lookup misses.
     subscription_data: {
       metadata: { user_id: user.id, plan },
     },
@@ -89,6 +111,4 @@ export async function POST(request: Request) {
   return NextResponse.redirect(session.url!, 303)
 }
 
-// Allow GET — users arrive here via <Link> clicks from the upgrade page
-// and marketing pricing CTAs. Both verbs run the same checkout session creation.
 export const GET = POST

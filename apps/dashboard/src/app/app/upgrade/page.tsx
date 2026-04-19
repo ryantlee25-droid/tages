@@ -3,6 +3,10 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { TeamPlanCard } from '@/components/upgrade/team-plan-card'
 
+// Always re-query plan state on each render so post-upgrade redirects
+// reflect the new tier as soon as the webhook updates user_profiles.
+export const dynamic = 'force-dynamic'
+
 const PRO_FEATURES = [
   'Up to 10 projects',
   '50,000 memories',
