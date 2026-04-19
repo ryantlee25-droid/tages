@@ -13,6 +13,19 @@ interface TeamMember {
   created_at: string
   email: string | null
   status: 'pending' | 'active' | 'revoked'
+  expires_at: string | null
+}
+
+const EXPIRES_FMT = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric',
+})
+
+function formatExpiry(iso: string | null): string | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  return EXPIRES_FMT.format(d)
 }
 
 export function TeamMembers({
@@ -28,6 +41,7 @@ export function TeamMembers({
   const [members, setMembers] = useState<TeamMember[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
+  const [confirmRevokePendingId, setConfirmRevokePendingId] = useState<string | null>(null)
   const [confirmRoleChange, setConfirmRoleChange] = useState<{ id: string; role: string } | null>(null)
   const supabase = createClient()
   const { toast } = useToast()
@@ -40,12 +54,12 @@ export function TeamMembers({
     try {
       const { data, error } = await supabase
         .from('team_members')
-        .select('*')
+        .select('id, user_id, role, created_at, email, status, expires_at')
         .eq('project_id', projectId)
         .neq('status', 'revoked')
         .order('created_at', { ascending: true })
       if (error) throw error
-      setMembers(data || [])
+      setMembers((data || []) as TeamMember[])
     } catch (err) {
       console.error('[team-members] loadMembers failed', err)
       toast('Failed to load team members.', 'error')
@@ -70,6 +84,23 @@ export function TeamMembers({
     }
   }
 
+  async function handleRevokePending(memberId: string) {
+    try {
+      const { error } = await supabase
+        .from('team_members')
+        .delete()
+        .eq('id', memberId)
+        .eq('project_id', projectId)
+        .eq('status', 'pending')
+      if (error) throw error
+      await loadMembers()
+      toast('Invite revoked.', 'success')
+    } catch (err) {
+      console.error('[team-members] handleRevokePending failed', err)
+      toast('Failed to revoke invite.', 'error')
+    }
+  }
+
   function handleRemoveClick(memberId: string) {
     setConfirmRemoveId(memberId)
   }
@@ -83,6 +114,21 @@ export function TeamMembers({
 
   function handleCancelRemove() {
     setConfirmRemoveId(null)
+  }
+
+  function handleRevokePendingClick(memberId: string) {
+    setConfirmRevokePendingId(memberId)
+  }
+
+  async function handleConfirmRevokePending() {
+    if (!confirmRevokePendingId) return
+    const id = confirmRevokePendingId
+    setConfirmRevokePendingId(null)
+    await handleRevokePending(id)
+  }
+
+  function handleCancelRevokePending() {
+    setConfirmRevokePendingId(null)
   }
 
   async function handleConfirmRoleChange() {
@@ -122,7 +168,11 @@ export function TeamMembers({
 
       {canManage && (
         <div className="mt-4">
-          <InviteMember projectId={projectId} onInvited={loadMembers} />
+          <InviteMember
+            projectId={projectId}
+            currentUserRole={currentUserRole}
+            onInvited={loadMembers}
+          />
         </div>
       )}
 
@@ -134,41 +184,55 @@ export function TeamMembers({
         ) : members.length === 0 ? (
           <p className="text-sm text-zinc-500">No team members yet.</p>
         ) : (
-          members.map((m) => (
-            <div key={m.id} className="flex items-center justify-between rounded-lg border border-zinc-800 px-4 py-3">
-              <div className="flex items-center gap-3">
-                {displayIdentity(m)}
-                <span className={`rounded-md border px-2 py-0.5 text-xs font-medium ${ROLE_COLORS[m.role] || ROLE_COLORS.member}`}>
-                  {m.role}
-                </span>
-                {m.status === 'pending' && (
-                  <span className="rounded-md border border-yellow-500/20 bg-yellow-500/10 px-2 py-0.5 text-xs font-medium text-yellow-400">
-                    pending
+          members.map((m) => {
+            const expiresLabel = m.status === 'pending' ? formatExpiry(m.expires_at) : null
+            return (
+              <div key={m.id} className="flex items-center justify-between rounded-lg border border-zinc-800 px-4 py-3">
+                <div className="flex items-center gap-3">
+                  {displayIdentity(m)}
+                  <span className={`rounded-md border px-2 py-0.5 text-xs font-medium ${ROLE_COLORS[m.role] || ROLE_COLORS.member}`}>
+                    {m.role}
                   </span>
-                )}
+                  {m.status === 'pending' && (
+                    <span className="rounded-md border border-yellow-500/20 bg-yellow-500/10 px-2 py-0.5 text-xs font-medium text-yellow-400">
+                      pending
+                    </span>
+                  )}
+                  {expiresLabel && (
+                    <span className="text-xs text-zinc-500">Expires {expiresLabel}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  {canChangeRoles && m.role !== 'owner' && m.status === 'active' && (
+                    <select
+                      value={m.role}
+                      onChange={(e) => setConfirmRoleChange({ id: m.id, role: e.target.value })}
+                      className="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-300"
+                    >
+                      <option value="admin">admin</option>
+                      <option value="member">member</option>
+                    </select>
+                  )}
+                  {canManage && m.role !== 'owner' && m.status === 'pending' && (
+                    <button
+                      onClick={() => handleRevokePendingClick(m.id)}
+                      className="text-xs text-red-400 hover:text-red-300"
+                    >
+                      Revoke invite
+                    </button>
+                  )}
+                  {canManage && m.role !== 'owner' && m.status === 'active' && (
+                    <button
+                      onClick={() => handleRemoveClick(m.id)}
+                      className="text-xs text-red-400 hover:text-red-300"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="flex items-center gap-3">
-                {canChangeRoles && m.role !== 'owner' && (
-                  <select
-                    value={m.role}
-                    onChange={(e) => setConfirmRoleChange({ id: m.id, role: e.target.value })}
-                    className="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-300"
-                  >
-                    <option value="admin">admin</option>
-                    <option value="member">member</option>
-                  </select>
-                )}
-                {canManage && m.role !== 'owner' && (
-                  <button
-                    onClick={() => handleRemoveClick(m.id)}
-                    className="text-xs text-red-400 hover:text-red-300"
-                  >
-                    Remove
-                  </button>
-                )}
-              </div>
-            </div>
-          ))
+            )
+          })
         )}
       </div>
 
@@ -180,6 +244,15 @@ export function TeamMembers({
         variant="danger"
         onConfirm={handleConfirmRemove}
         onCancel={handleCancelRemove}
+      />
+      <ConfirmDialog
+        open={confirmRevokePendingId !== null}
+        title="Revoke this invite?"
+        message="The pending invite will be removed and the magic link will no longer work. You can always re-invite the same email later."
+        confirmLabel="Revoke invite"
+        variant="danger"
+        onConfirm={handleConfirmRevokePending}
+        onCancel={handleCancelRevokePending}
       />
       <ConfirmDialog
         open={confirmRoleChange !== null}
