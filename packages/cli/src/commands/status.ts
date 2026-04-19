@@ -77,26 +77,35 @@ export async function statusCommand(options: StatusOptions) {
   if (config.supabaseUrl && config.supabaseAnonKey) {
     const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
 
-    // Memory counts by type
+    // Memory counts by type (live only)
     const { data, error } = await supabase
       .from('memories')
-      .select('type')
+      .select('type, status')
       .eq('project_id', config.projectId)
 
     if (error) {
       console.log(`  ${chalk.dim('Memories:')} ${chalk.red('failed to fetch')}`)
     } else if (data) {
-      const counts: Record<string, number> = {}
+      const liveCounts: Record<string, number> = {}
+      let pendingCount = 0
       for (const row of data) {
-        counts[row.type] = (counts[row.type] || 0) + 1
+        if (row.status === 'live') {
+          liveCounts[row.type] = (liveCounts[row.type] || 0) + 1
+        } else if (row.status === 'pending') {
+          pendingCount++
+        }
       }
 
-      const total = data.length
+      const total = Object.values(liveCounts).reduce((a, b) => a + b, 0)
       const limit = 10000
       const pct = Math.round((total / limit) * 100)
       console.log(`  ${chalk.dim('Memories:')} ${total} / ${limit.toLocaleString()} (${pct}%)`)
-      for (const [type, count] of Object.entries(counts).sort()) {
+      for (const [type, count] of Object.entries(liveCounts).sort()) {
         console.log(`             ${type}: ${count}`)
+      }
+
+      if (pendingCount > 0) {
+        console.log(`  ${chalk.dim('Pending:')}  ${chalk.yellow(String(pendingCount))} awaiting review  ->  run ${chalk.cyan('tages pending')} to review`)
       }
     }
   } else {

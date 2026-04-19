@@ -26,7 +26,7 @@ describe('handleSessionEnd', () => {
       { summary: 'I decided to use PostgreSQL instead of MongoDB for the database.' },
       TEST_PROJECT, cache, null,
     )
-    expect(result.content[0].text).toContain('Extracted')
+    expect(result.content[0].text).toContain('pending')
     expect(result.content[0].text).toContain('decision')
     const mems = cache.getAllForProject(TEST_PROJECT)
     expect(mems.some(m => m.type === 'decision')).toBe(true)
