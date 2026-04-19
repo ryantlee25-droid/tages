@@ -58,6 +58,8 @@ export interface Memory {
   createdAt: string
   updatedAt: string
   encrypted?: boolean
+  createdBy?: string
+  updatedBy?: string
 }
 
 export interface Project {
@@ -97,8 +99,12 @@ export interface ArchitectureSnapshot {
 export interface TeamMember {
   id: string
   projectId: string
-  userId: string
+  userId: string | null
+  email: string
   role: 'owner' | 'admin' | 'member'
+  status: 'pending' | 'active' | 'revoked'
+  invitedBy?: string
+  invitedAt?: string
   createdAt: string
 }
 

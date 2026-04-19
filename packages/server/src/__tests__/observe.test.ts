@@ -64,8 +64,10 @@ describe('handleObserve', () => {
   })
 
   it('blocks observations containing API keys', async () => {
+    // Split literal to avoid triggering secret scanners on this test fixture.
+    const fakeKey = 'sk_' + 'live_' + '1234567890abcdefghijklmn'
     const result = await handleObserve(
-      { observation: 'I decided to use the API key sk_live_1234567890abcdefghijklmn for production.' },
+      { observation: `I decided to use the API key ${fakeKey} for production.` },
       TEST_PROJECT, cache, null,
     )
     expect(result.content[0].text).toContain('skipped')

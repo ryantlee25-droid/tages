@@ -102,6 +102,7 @@ async function main() {
   // Initialize Supabase sync if configured
   let sync: SupabaseSync | null = null
   let supabaseClient = null
+  let callerUserId: string | undefined = undefined
   const walPath = cachePath.replace('.db', '-wal.db')
   if (config.project.supabaseUrl && config.project.supabaseAnonKey) {
     supabaseClient = createSupabaseClient(
@@ -123,6 +124,24 @@ async function main() {
       }
     } catch (e) {
       console.error(`[tages] Warning: could not load auth tokens — sync may fail`)
+    }
+
+    // Accept any pending team invites for this user; capture callerUserId for authorship
+    try {
+      const { data: { user } } = await supabaseClient.auth.getUser()
+      const email = user?.email || user?.user_metadata?.email
+      if (email && user?.id) {
+        callerUserId = user.id
+        const { data: acceptCount } = await supabaseClient.rpc('accept_pending_invites', {
+          user_email: email,
+          uid: user.id,
+        })
+        if (acceptCount && acceptCount > 0) {
+          console.error(`[tages] Accepted ${acceptCount} pending team invite(s)`)
+        }
+      }
+    } catch (e) {
+      console.error(`[tages] Warning: could not check pending invites — ${(e as Error).message}`)
     }
 
     sync = new SupabaseSync(supabaseClient, cache, projectId, walPath)
@@ -207,7 +226,7 @@ async function main() {
       force: RememberSchema.shape.force,
     },
     async (args) => {
-      const result = await handleRemember(args, projectId, cache, sync, plan)
+      const result = await handleRemember(args, projectId, cache, sync, plan, callerUserId)
       // Track the memory creation
       const mem = cache.getByKey(projectId, args.key)
       if (mem) await tracker.logCreate(mem.id)
@@ -311,7 +330,7 @@ async function main() {
     {
       observation: z.string().min(1).describe('What you observed, decided, or learned while working'),
     },
-    async (args) => handleObserve(args, projectId, cache, sync),
+    async (args) => handleObserve(args, projectId, cache, sync, callerUserId),
   )
 
   server.tool(
@@ -322,7 +341,7 @@ async function main() {
       extractMemories: SessionEndSchema.shape.extractMemories,
     },
     async (args) => {
-      const result = await handleSessionEnd(args, projectId, cache, sync)
+      const result = await handleSessionEnd(args, projectId, cache, sync, callerUserId)
       await tracker.endSession()
       return result
     },
@@ -358,7 +377,7 @@ async function main() {
       key: MemoryHistorySchema.shape.key,
       revertToVersion: MemoryHistorySchema.shape.revertToVersion,
     },
-    async (args) => handleMemoryHistory(args, projectId, cache, sync),
+    async (args) => handleMemoryHistory(args, projectId, cache, sync, callerUserId),
   )
 
   server.tool(
@@ -381,7 +400,7 @@ async function main() {
       mergedValue: ResolveConflictSchema.shape.mergedValue,
       resolvedBy: ResolveConflictSchema.shape.resolvedBy,
     },
-    withGate('resolve_conflict', async (args) => handleResolveConflict(args, projectId, cache, sync)),
+    withGate('resolve_conflict', async (args) => handleResolveConflict(args, projectId, cache, sync, callerUserId)),
   )
 
   server.tool(
@@ -496,7 +515,7 @@ async function main() {
       victimKey: ConsolidateSchema.shape.victimKey,
       mergedValue: ConsolidateSchema.shape.mergedValue,
     },
-    withGate('consolidate_memories', async (args) => handleConsolidate(args, projectId, cache, sync)),
+    withGate('consolidate_memories', async (args) => handleConsolidate(args, projectId, cache, sync, callerUserId)),
   )
 
   // XL2 — Memory Dependency Graph & Impact Analysis
@@ -577,7 +596,7 @@ async function main() {
       fields: ApplyTemplateSchema.shape.fields,
       filePaths: ApplyTemplateSchema.shape.filePaths,
     },
-    withGate('apply_template', async (args) => handleApplyTemplate(args, projectId, cache, sync)),
+    withGate('apply_template', async (args) => handleApplyTemplate(args, projectId, cache, sync, callerUserId)),
   )
 
   // XL6 — Memory Archival
@@ -638,7 +657,7 @@ async function main() {
     'import_federated',
     'Import a federated memory from the shared library into this project',
     { key: ImportFederatedSchema.shape.key },
-    withGate('import_federated', async (args) => handleImportFederated(args, projectId, cache, sync)),
+    withGate('import_federated', async (args) => handleImportFederated(args, projectId, cache, sync, callerUserId)),
   )
 
   server.tool(
@@ -717,7 +736,7 @@ async function main() {
       content: ImportClaudeMdSchema.shape.content,
       strategy: ImportClaudeMdSchema.shape.strategy,
     },
-    async (args) => handleImportClaudeMd({ ...args, projectId }, cache, sync),
+    async (args) => handleImportClaudeMd({ ...args, projectId }, cache, sync, callerUserId),
   )
 
   // Memory Quality Flywheel — F1: memory_audit
@@ -736,7 +755,7 @@ async function main() {
       key: SharpenMemorySchema.shape.key,
       confirmed: SharpenMemorySchema.shape.confirmed,
     },
-    withGate('sharpen_memory', async (args) => handleSharpenMemory(args, projectId, cache, sync)),
+    withGate('sharpen_memory', async (args) => handleSharpenMemory(args, projectId, cache, sync, callerUserId)),
   )
 
   // Memory Quality Flywheel — F3: post_session

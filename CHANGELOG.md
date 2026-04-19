@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased (2026-04-18)
+
+### Features
+- **Memory authorship + conflict attribution** — all memory writes now record `created_by` (agent/user who first stored the entry) and `last_edited_by` (agent/user of the most recent update). New `get_memory_authors` RPC surfaces per-memory attribution. Conflict resolver UI shows author names for each conflicting version. Existing rows retain NULL attribution and display as "Unknown" in the UI — no backfill attempted.
+
 ## 0.1.0 (2026-04-06)
 
 ### Features

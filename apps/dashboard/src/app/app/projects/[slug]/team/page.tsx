@@ -8,7 +8,7 @@ export default async function TeamPage({ params }: { params: Promise<{ slug: str
   // Get project
   const { data: project } = await supabase
     .from('projects')
-    .select('id')
+    .select('id, plan')
     .eq('slug', slug)
     .single()
 
@@ -19,6 +19,13 @@ export default async function TeamPage({ params }: { params: Promise<{ slug: str
     .from('team_members')
     .select('*')
     .eq('project_id', project.id)
+    .neq('status', 'revoked')
+
+  // Compute seat usage
+  const activeCount = (members || []).filter((m: any) => m.status === 'active').length
+  const { data: seatLimit } = await Promise.resolve(
+    supabase.rpc('seat_limit_for_project', { pid: project.id })
+  )
 
   // Get memories created this week
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
@@ -52,6 +59,7 @@ export default async function TeamPage({ params }: { params: Promise<{ slug: str
         weeklyMemories={weeklyMemories}
         topRecalled={[]}
         projectSlug={slug}
+        seatUsage={seatLimit ? { used: activeCount, limit: seatLimit } : null}
       />
     </div>
   )

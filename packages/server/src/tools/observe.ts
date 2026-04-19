@@ -40,6 +40,7 @@ export async function handleObserve(
   projectId: string,
   cache: SqliteCache,
   sync: SupabaseSync | null,
+  callerUserId?: string,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const text = args.observation.trim()
   if (text.length < 15) {
@@ -91,6 +92,7 @@ export async function handleObserve(
     tags: ['auto-observed'],
     createdAt: now,
     updatedAt: now,
+    ...(callerUserId ? { createdBy: callerUserId, updatedBy: callerUserId } : {}),
   }
 
   cache.upsertMemory(memory, true)

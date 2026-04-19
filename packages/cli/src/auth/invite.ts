@@ -8,28 +8,32 @@ export async function inviteTeamMembers(
   supabase: { from: (table: string) => any },
   projectId: string,
   emails: string[],
+  invitedBy: string,
 ): Promise<InviteResult> {
   const invited: string[] = []
   const failed: Array<{ email: string; error: string }> = []
 
   for (const email of emails) {
-    const trimmed = email.trim().toLowerCase()
-    if (!trimmed) continue
+    const trimmedEmail = email.trim().toLowerCase()
+    if (!trimmedEmail) continue
 
     const { error } = await Promise.resolve(
       supabase
         .from('team_members')
         .insert({
           project_id: projectId,
-          email: trimmed,
+          email: trimmedEmail,
           role: 'member',
+          status: 'pending',
+          invited_by: invitedBy,
+          // user_id intentionally omitted — null by default for pending invites
         }),
     )
 
     if (error) {
-      failed.push({ email: trimmed, error: error.message })
+      failed.push({ email: trimmedEmail, error: error.message })
     } else {
-      invited.push(trimmed)
+      invited.push(trimmedEmail)
     }
   }
 

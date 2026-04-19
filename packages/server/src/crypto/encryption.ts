@@ -31,7 +31,10 @@ export function decryptValue(ciphertext: string, key: Buffer): string {
   const iv = data.subarray(0, IV_LENGTH)
   const authTag = data.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH)
   const encrypted = data.subarray(IV_LENGTH + AUTH_TAG_LENGTH)
-  const decipher = createDecipheriv(ALGORITHM, key, iv)
+  if (authTag.length !== AUTH_TAG_LENGTH) {
+    throw new Error(`Invalid auth tag length: expected ${AUTH_TAG_LENGTH}, got ${authTag.length}`)
+  }
+  const decipher = createDecipheriv(ALGORITHM, key, iv, { authTagLength: AUTH_TAG_LENGTH })
   decipher.setAuthTag(authTag)
   return decipher.update(encrypted) + decipher.final('utf8')
 }
