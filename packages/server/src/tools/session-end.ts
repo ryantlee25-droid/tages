@@ -28,7 +28,7 @@ export async function handleSessionEnd(
         value: mem.value,
         type: mem.type,
         source: 'agent',
-        status: 'live' as const,
+        status: 'pending' as const,
         confidence: 0.8,
         filePaths: [],
         tags: ['session-extract'],
@@ -49,7 +49,7 @@ export async function handleSessionEnd(
     return {
       content: [{
         type: 'text',
-        text: `Session recorded. Extracted ${extracted.length} memories:\n\n${lines.join('\n')}`,
+        text: `Session recorded. Staged ${extracted.length} pending memories for review:\n\n${lines.join('\n')}\n\nRun \`tages pending\` to review or visit your project's /pending page in the dashboard.`,
       }],
     }
   }
