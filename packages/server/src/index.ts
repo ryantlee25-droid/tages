@@ -88,7 +88,8 @@ async function main() {
   const cache = new SqliteCache(cachePath)
   const queryLog = new QueryLog(cachePath)
   const projectId = config.project.projectId
-  const plan = config.project.plan
+  // plan starts from local config; overridden from DB after Supabase auth (H1)
+  let plan = config.project.plan
 
   // Tier gate helper — wraps pro-only tool handlers
   function withGate<T>(toolName: string, handler: (args: T) => Promise<{ content: Array<{ type: 'text'; text: string }> }>) {
@@ -142,6 +143,22 @@ async function main() {
       }
     } catch (e) {
       console.error(`[tages] Warning: could not check pending invites — ${(e as Error).message}`)
+    }
+
+    // H1: Fetch current plan from DB so server reflects billing changes without restart
+    try {
+      const { data: projectRow } = await supabaseClient
+        .from('projects')
+        .select('plan')
+        .eq('id', projectId)
+        .single()
+      if (projectRow?.plan) {
+        config.project.plan = projectRow.plan
+        plan = projectRow.plan
+        console.error(`[tages] Plan loaded from DB: ${plan}`)
+      }
+    } catch (e) {
+      console.error(`[tages] Warning: could not fetch plan from DB — using local config`)
     }
 
     sync = new SupabaseSync(supabaseClient, cache, projectId, walPath)

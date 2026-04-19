@@ -75,7 +75,12 @@ export function InviteMember({
       onInvited()
     } catch (err: any) {
       console.error('[invite-member] invite failed', err)
-      toast(err?.message || 'Failed to send invite.', 'error')
+      const msg: string = err?.message ?? ''
+      if (msg.includes('Seat limit reached')) {
+        toast('Your team is at its seat limit. Remove a member or add more seats in billing to invite.', 'error')
+      } else {
+        toast(msg || 'Failed to send invite.', 'error')
+      }
     } finally {
       setLoading(false)
     }
