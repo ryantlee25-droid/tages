@@ -6,7 +6,7 @@ import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
   title: 'Pricing | Tages',
-  description: 'Simple pricing for AI coding agent memory. Free for solo devs, $14/mo for pros, $29/seat for teams. Self-hosted is free forever.',
+  description: 'Simple pricing for AI coding agent memory. Free for solo devs, $14/mo for pros, $19/seat for teams. Self-hosted is free forever.',
 }
 
 export default async function PricingPage() {

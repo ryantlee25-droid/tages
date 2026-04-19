@@ -37,7 +37,7 @@ const PLANS = [
   },
   {
     name: 'Team',
-    price: '$29',
+    price: '$19',
     period: '/seat/mo',
     description: 'For shared codebases. 1–20 seats.',
     features: [

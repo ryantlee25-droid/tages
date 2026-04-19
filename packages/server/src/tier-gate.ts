@@ -17,7 +17,7 @@ export function gateCheck(plan: string | undefined, toolName: string): GateResul
     blocked: true,
     content: [{
       type: 'text' as const,
-      text: `${UPGRADE_MSG}\n\nTool "${toolName}" is available on Pro ($14/mo) and Team ($29/seat/mo) plans.`,
+      text: `${UPGRADE_MSG}\n\nTool "${toolName}" is available on Pro ($14/mo) and Team ($19/seat/mo) plans.`,
     }],
   }
 }
