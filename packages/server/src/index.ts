@@ -26,6 +26,7 @@ import { handleConflicts } from './tools/conflicts'
 import { handleStats } from './tools/stats'
 import { handleSessionEnd } from './tools/session-end'
 import { handleObserve } from './tools/observe'
+import { runAutoSaveSweep } from './sync/auto-save'
 import { handleVerifyMemory, handlePendingMemories } from './tools/verify'
 import { handleStatsDetail } from './tools/stats-detail'
 import { handleMemoryHistory } from './tools/memory-history'
@@ -90,6 +91,8 @@ async function main() {
   const projectId = config.project.projectId
   // plan starts from local config; overridden from DB after Supabase auth (H1)
   let plan = config.project.plan
+  // auto-save threshold — fetched from DB; NULL means opt-in is off (review-required)
+  let autoSaveThreshold: number | null = null
 
   // Tier gate helper — wraps pro-only tool handlers
   function withGate<T>(toolName: string, handler: (args: T) => Promise<{ content: Array<{ type: 'text'; text: string }> }>) {
@@ -145,17 +148,21 @@ async function main() {
       console.error(`[tages] Warning: could not check pending invites — ${(e as Error).message}`)
     }
 
-    // H1: Fetch current plan from DB so server reflects billing changes without restart
+    // H1: Fetch current plan and auto_save_threshold from DB
     try {
       const { data: projectRow } = await supabaseClient
         .from('projects')
-        .select('plan')
+        .select('plan, auto_save_threshold')
         .eq('id', projectId)
         .single()
       if (projectRow?.plan) {
         config.project.plan = projectRow.plan
         plan = projectRow.plan
         console.error(`[tages] Plan loaded from DB: ${plan}`)
+      }
+      if (projectRow?.auto_save_threshold != null) {
+        autoSaveThreshold = projectRow.auto_save_threshold as number
+        console.error(`[tages] Auto-save threshold: ${autoSaveThreshold}`)
       }
     } catch (e) {
       console.error(`[tages] Warning: could not fetch plan from DB — using local config`)
@@ -183,6 +190,16 @@ async function main() {
 
     // Start background sync
     sync.startSync()
+
+    // Phase 4: Initial auto-save sweep — promote pending memories that already
+    // meet the threshold. Only runs if the project has opted in (threshold != null).
+    if (autoSaveThreshold != null) {
+      try {
+        await runAutoSaveSweep(supabaseClient, projectId, autoSaveThreshold)
+      } catch (e) {
+        console.error(`[tages] Auto-save sweep failed: ${(e as Error).message}`)
+      }
+    }
   } else {
     console.error('[tages] No Supabase config found — running in local-only mode')
   }
@@ -347,7 +364,7 @@ async function main() {
     {
       observation: z.string().min(1).max(100_000).describe('What you observed, decided, or learned while working'),
     },
-    async (args) => handleObserve(args, projectId, cache, sync, callerUserId),
+    async (args) => handleObserve(args, projectId, cache, sync, callerUserId, autoSaveThreshold),
   )
 
   server.tool(

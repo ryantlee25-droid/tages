@@ -26,7 +26,7 @@ describe('handleObserve', () => {
       { observation: 'I decided to use Express instead of Fastify for the API server.' },
       TEST_PROJECT, cache, null,
     )
-    expect(result.content[0].text).toContain('pending verification')
+    expect(result.content[0].text).toContain('tages pending')
     expect(result.content[0].text).toContain('decision')
   })
 

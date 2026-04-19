@@ -36,6 +36,7 @@ import { briefCommand } from './commands/brief.js'
 import { auditCommand } from './commands/audit.js'
 import { sharpenCommand } from './commands/sharpen.js'
 import { teamInviteCommand, teamListCommand, teamRemoveCommand, teamRoleCommand } from './commands/team.js'
+import { settingsAutoSaveCommand } from './commands/settings.js'
 
 const program = new Command()
 
@@ -445,5 +446,17 @@ teamCmd
   .description('Change a team member role (owner, admin, member)')
   .option('-p, --project <slug>', 'Project slug')
   .action(teamRoleCommand)
+
+// Settings
+const settingsCmd = program
+  .command('settings')
+  .description('Project settings and configuration')
+
+settingsCmd
+  .command('auto-save [threshold]')
+  .description('Get or set the auto-save confidence threshold (0.0–1.0 or "off")')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('-y, --yes', 'Skip confirmation prompt')
+  .action(settingsAutoSaveCommand)
 
 program.parse()

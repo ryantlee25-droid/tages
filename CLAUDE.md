@@ -61,6 +61,18 @@ Core: `init`, `remember`, `recall`, `forget`, `status`, `dashboard`
 Advanced: `dedup`, `impact`, `risk`, `enforce`, `quality`, `templates`, `archive`, `federation`
 Auth: `token rotate [--expires-in <days>]`
 
+## Memory Staging
+
+When working on this repo, use the staging workflow to avoid noisy live-memory pollution:
+
+- Use `observe` for passive capture — conventions you notice, decisions inferred, lessons from failures. These land in the pending queue, not live memory.
+- Use `remember` only for verified, user-confirmed facts.
+- At the end of a work session, run `tages pending` to review staged memories.
+- Bulk-approve high-confidence entries: `tages pending --approve-all --min-confidence 0.8`
+- To opt into auto-promotion for this project: `tages settings auto-save 0.85`
+  (memories with confidence >= 0.85 are promoted to live automatically)
+- Never call `session_end` unless the user explicitly requests it.
+
 ## Conventions
 
 - TypeScript strict mode everywhere
