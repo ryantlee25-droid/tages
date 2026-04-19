@@ -86,10 +86,10 @@ describe('status command', () => {
   it('shows memory counts by type', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
     mockSelectData.push(
-      { type: 'convention' },
-      { type: 'convention' },
-      { type: 'architecture' },
-      { type: 'decision' },
+      { type: 'convention', status: 'live' },
+      { type: 'convention', status: 'live' },
+      { type: 'architecture', status: 'live' },
+      { type: 'decision', status: 'live' },
     )
 
     await statusCommand({})
