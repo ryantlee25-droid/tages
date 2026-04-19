@@ -144,6 +144,12 @@ See [PRIVACY.md](PRIVACY.md) for our privacy policy.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
+## Release Notes
+
+### 2026-04-17
+
+- Split literal Stripe-style test fixtures in `safety.test.ts` and `observe.test.ts` via string concatenation so GitHub secret scanning no longer flags them. The fixtures are intentional test inputs, not real credentials.
+
 ## License
 
 [MIT](LICENSE)

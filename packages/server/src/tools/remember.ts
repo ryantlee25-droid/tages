@@ -25,6 +25,7 @@ export async function handleRemember(
   cache: SqliteCache,
   sync: SupabaseSync | null,
   plan?: string,
+  callerUserId?: string,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   // Check memory limit for free tier
   if ((!plan || plan === 'free') && cache.countMemories(projectId) >= 10000) {
@@ -68,6 +69,8 @@ export async function handleRemember(
     executionFlow: args.executionFlow,
     createdAt: existing?.createdAt || now,
     updatedAt: now,
+    ...(callerUserId && !existing ? { createdBy: callerUserId } : {}),
+    ...(callerUserId ? { updatedBy: callerUserId } : {}),
   }
 
   // T5: Compute and store field-level diff before upsert

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { FREE_TOOLS, PRO_TOOLS, ALL_TOOLS } from '../tier-config.js'
+import { FREE_TOOLS, PRO_TOOLS, ALL_TOOLS, TEAM_TOOLS } from '../tier-config.js'
+import { gateCheck } from '../tier-gate.js'
 
 describe('tier-config', () => {
   it('FREE_TOOLS + PRO_TOOLS total 56 tools', () => {
@@ -68,5 +69,24 @@ describe('tier-config', () => {
   it('sharpen and post_session are in PRO_TOOLS', () => {
     expect(PRO_TOOLS).toContain('sharpen_memory')
     expect(PRO_TOOLS).toContain('post_session')
+  })
+
+  it('TEAM_TOOLS contains all tools (equals ALL_TOOLS)', () => {
+    expect(TEAM_TOOLS.length).toBe(ALL_TOOLS.length)
+    expect([...TEAM_TOOLS]).toEqual([...ALL_TOOLS])
+  })
+
+  it('gateCheck allows team plan for pro tool memory_graph', () => {
+    expect(gateCheck('team', 'memory_graph')).toBeNull()
+  })
+
+  it('gateCheck allows team plan for free tool remember', () => {
+    expect(gateCheck('team', 'remember')).toBeNull()
+  })
+
+  it('gateCheck blocks undefined plan for pro tool memory_graph', () => {
+    const result = gateCheck(undefined, 'memory_graph')
+    expect(result).not.toBeNull()
+    expect(result?.blocked).toBe(true)
   })
 })

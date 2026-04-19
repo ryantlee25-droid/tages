@@ -28,6 +28,7 @@ export async function handleResolveConflict(
   projectId: string,
   cache: SqliteCache,
   sync: SupabaseSync | null,
+  callerUserId?: string,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const conflict = cache.getConflict(args.conflictId)
   if (!conflict) {
@@ -90,6 +91,7 @@ export async function handleResolveConflict(
       ...mergeResult.merged,
       value: resolvedValue,
       updatedAt: new Date().toISOString(),
+      ...(callerUserId ? { updatedBy: callerUserId } : {}),
     }
     cache.upsertMemory(mergedMemory)
     cache.deleteByKey(projectId, olderMem.key)
@@ -127,6 +129,7 @@ export async function handleResolveConflict(
       ...newerMem,
       value: args.mergedValue,
       updatedAt: new Date().toISOString(),
+      ...(callerUserId ? { updatedBy: callerUserId } : {}),
     })
     cache.deleteByKey(projectId, olderMem.key)
   }

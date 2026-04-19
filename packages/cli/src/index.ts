@@ -35,6 +35,7 @@ import { sessionWrapCommand } from './commands/session-wrap.js'
 import { briefCommand } from './commands/brief.js'
 import { auditCommand } from './commands/audit.js'
 import { sharpenCommand } from './commands/sharpen.js'
+import { teamInviteCommand, teamListCommand, teamRemoveCommand, teamRoleCommand } from './commands/team.js'
 
 const program = new Command()
 
@@ -415,5 +416,34 @@ program
   .option('--refresh-brief', 'Delete cached brief after extraction so next `tages brief` regenerates')
   .option('-p, --project <slug>', 'Project slug')
   .action(sessionWrapCommand)
+
+const teamCmd = program
+  .command('team')
+  .description('Manage team members')
+
+teamCmd
+  .command('invite <email>')
+  .description('Invite a user to the project')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('-r, --role <role>', 'Role: member or admin', 'member')
+  .action(teamInviteCommand)
+
+teamCmd
+  .command('list')
+  .description('List team members and pending invites')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(teamListCommand)
+
+teamCmd
+  .command('remove <email-or-id>')
+  .description('Revoke a team member or pending invite')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(teamRemoveCommand)
+
+teamCmd
+  .command('role <email-or-id> <role>')
+  .description('Change a team member role (owner, admin, member)')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(teamRoleCommand)
 
 program.parse()

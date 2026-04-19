@@ -1,4 +1,4 @@
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import { isOllamaAvailable, analyzeWithOllama } from './ollama-client.js'
 import { analyzeWithHaiku } from './haiku-client.js'
 
@@ -67,8 +67,8 @@ function extractFromStat(stat: string): ExtractedMemory[] {
 export function getGitDiff(since?: string): { diff: string; stat: string } {
   const ref = since || 'HEAD~1'
   try {
-    const stat = execSync(`git diff ${ref} --stat`, { encoding: 'utf-8' })
-    const diff = execSync(`git diff ${ref}`, { encoding: 'utf-8' })
+    const stat = execFileSync('git', ['diff', ref, '--stat'], { encoding: 'utf-8' })
+    const diff = execFileSync('git', ['diff', ref], { encoding: 'utf-8' })
     return { diff, stat }
   } catch {
     return { diff: '', stat: '' }
@@ -77,7 +77,7 @@ export function getGitDiff(since?: string): { diff: string; stat: string } {
 
 export function getCommitsSince(since: string): string[] {
   try {
-    const output = execSync(`git log --since="${since}" --format=%H`, { encoding: 'utf-8' })
+    const output = execFileSync('git', ['log', `--since=${since}`, '--format=%H'], { encoding: 'utf-8' })
     return output.trim().split('\n').filter(Boolean)
   } catch {
     return []

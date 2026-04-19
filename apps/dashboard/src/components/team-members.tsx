@@ -4,27 +4,31 @@ import { useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useToast } from '@/components/toast'
 import { InviteMember } from './invite-member'
-
-// TODO: replace window.confirm with ConfirmDialog once confirm-dialog.tsx is available (H2)
+import { ConfirmDialog } from './confirm-dialog'
 
 interface TeamMember {
   id: string
   user_id: string
   role: 'owner' | 'admin' | 'member'
   created_at: string
-  email?: string
+  email: string | null
+  status: 'pending' | 'active' | 'revoked'
 }
 
 export function TeamMembers({
   projectId,
-  isOwner,
+  currentUserRole,
 }: {
   projectId: string
-  isOwner: boolean
+  currentUserRole: 'owner' | 'admin' | 'member'
 }) {
+  const canManage = currentUserRole === 'owner' || currentUserRole === 'admin'
+  const canChangeRoles = currentUserRole === 'owner'
+
   const [members, setMembers] = useState<TeamMember[]>([])
   const [loading, setLoading] = useState(true)
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null)
+  const [confirmRoleChange, setConfirmRoleChange] = useState<{ id: string; role: string } | null>(null)
   const supabase = createClient()
   const { toast } = useToast()
 
@@ -38,6 +42,7 @@ export function TeamMembers({
         .from('team_members')
         .select('*')
         .eq('project_id', projectId)
+        .neq('status', 'revoked')
         .order('created_at', { ascending: true })
       if (error) throw error
       setMembers(data || [])
@@ -51,9 +56,14 @@ export function TeamMembers({
 
   async function removeMember(memberId: string) {
     try {
-      const { error } = await supabase.from('team_members').delete().eq('id', memberId)
+      const { error } = await supabase
+        .from('team_members')
+        .update({ status: 'revoked' })
+        .eq('id', memberId)
+        .eq('project_id', projectId)
       if (error) throw error
       await loadMembers()
+      toast('Team member removed.', 'success')
     } catch (err) {
       console.error('[team-members] removeMember failed', err)
       toast('Failed to remove team member.', 'error')
@@ -75,11 +85,28 @@ export function TeamMembers({
     setConfirmRemoveId(null)
   }
 
-  function displayIdentity(member: TeamMember): React.ReactNode {
-    if (member.user_id.includes('@')) {
-      return <span className="text-sm text-zinc-300">{member.user_id}</span>
+  async function handleConfirmRoleChange() {
+    if (!confirmRoleChange) return
+    const { id, role } = confirmRoleChange
+    setConfirmRoleChange(null)
+    try {
+      const { error } = await supabase
+        .from('team_members')
+        .update({ role })
+        .eq('id', id)
+        .eq('project_id', projectId)
+      if (error) throw error
+      await loadMembers()
+      toast(`Role changed to ${role}.`, 'success')
+    } catch (err) {
+      console.error('[team-members] changeRole failed', err)
+      toast('Failed to change role.', 'error')
     }
-    return <span className="text-sm text-zinc-500 italic">Member (pending)</span>
+  }
+
+  function displayIdentity(member: TeamMember): React.ReactNode {
+    const label = member.email || member.user_id
+    return <span className="text-sm text-zinc-300">{label}</span>
   }
 
   const ROLE_COLORS: Record<string, string> = {
@@ -93,7 +120,7 @@ export function TeamMembers({
       <h3 className="text-lg font-medium text-white">Team</h3>
       <p className="mt-1 text-sm text-zinc-400">Manage who can access this project.</p>
 
-      {isOwner && (
+      {canManage && (
         <div className="mt-4">
           <InviteMember projectId={projectId} onInvited={loadMembers} />
         </div>
@@ -114,45 +141,55 @@ export function TeamMembers({
                 <span className={`rounded-md border px-2 py-0.5 text-xs font-medium ${ROLE_COLORS[m.role] || ROLE_COLORS.member}`}>
                   {m.role}
                 </span>
+                {m.status === 'pending' && (
+                  <span className="rounded-md border border-yellow-500/20 bg-yellow-500/10 px-2 py-0.5 text-xs font-medium text-yellow-400">
+                    pending
+                  </span>
+                )}
               </div>
-              {isOwner && m.role !== 'owner' && (
-                <button
-                  onClick={() => handleRemoveClick(m.id)}
-                  className="text-xs text-red-400 hover:text-red-300"
-                >
-                  Remove
-                </button>
-              )}
+              <div className="flex items-center gap-3">
+                {canChangeRoles && m.role !== 'owner' && (
+                  <select
+                    value={m.role}
+                    onChange={(e) => setConfirmRoleChange({ id: m.id, role: e.target.value })}
+                    className="rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-300"
+                  >
+                    <option value="admin">admin</option>
+                    <option value="member">member</option>
+                  </select>
+                )}
+                {canManage && m.role !== 'owner' && (
+                  <button
+                    onClick={() => handleRemoveClick(m.id)}
+                    className="text-xs text-red-400 hover:text-red-300"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
             </div>
           ))
         )}
       </div>
 
-      {/* Inline confirm dialog — replace with ConfirmDialog from H2 once available */}
-      {confirmRemoveId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-sm rounded-xl border border-zinc-700 bg-zinc-900 p-6 shadow-xl">
-            <h4 className="text-base font-medium text-white">Remove team member?</h4>
-            <p className="mt-2 text-sm text-zinc-400">
-              Remove this team member? They will lose access to this project.
-            </p>
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                onClick={handleCancelRemove}
-                className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConfirmRemove}
-                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500"
-              >
-                Remove
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={confirmRemoveId !== null}
+        title="Remove team member?"
+        message="They will lose access to this project."
+        confirmLabel="Remove"
+        variant="danger"
+        onConfirm={handleConfirmRemove}
+        onCancel={handleCancelRemove}
+      />
+      <ConfirmDialog
+        open={confirmRoleChange !== null}
+        title="Change role?"
+        message={`Change this member's role to ${confirmRoleChange?.role}?`}
+        confirmLabel="Change role"
+        variant="default"
+        onConfirm={handleConfirmRoleChange}
+        onCancel={() => setConfirmRoleChange(null)}
+      />
     </div>
   )
 }

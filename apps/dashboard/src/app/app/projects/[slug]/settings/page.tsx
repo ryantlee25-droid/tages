@@ -27,6 +27,22 @@ export default async function SettingsPage({
 
   const isOwner = project.owner_id === user?.id
 
+  let currentUserRole: 'owner' | 'admin' | 'member' = 'member'
+  if (isOwner) {
+    currentUserRole = 'owner'
+  } else if (user) {
+    const { data: membership } = await supabase
+      .from('team_members')
+      .select('role')
+      .eq('project_id', project.id)
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+      .single()
+    if (membership) {
+      currentUserRole = membership.role as 'owner' | 'admin' | 'member'
+    }
+  }
+
   return (
     <div className="p-8">
       <h1 className="mb-2 text-2xl font-bold text-white">{project.name}</h1>
@@ -57,7 +73,7 @@ export default async function SettingsPage({
         </div>
 
         {/* Team */}
-        <TeamMembers projectId={project.id} isOwner={isOwner} />
+        <TeamMembers projectId={project.id} currentUserRole={currentUserRole} />
       </div>
     </div>
   )
