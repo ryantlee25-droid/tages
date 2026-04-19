@@ -55,8 +55,8 @@ export async function GET(
       .from('auth_audit_log')
       .insert({
         user_id: user.id,
-        event_type: 'login_success',
-        metadata: { action: 'export', project_id: project.id, row_count: rowCount, format: request.nextUrl.searchParams.get('format') || 'json' },
+        event_type: 'export',
+        metadata: { project_id: project.id, row_count: rowCount, format: request.nextUrl.searchParams.get('format') || 'json' },
       })
   ).catch(() => {/* audit failure must not affect export */})
 

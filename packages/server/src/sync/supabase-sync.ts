@@ -8,6 +8,8 @@ const SYNC_INTERVAL_MS = 60_000
 export class SupabaseSync {
   private timer: ReturnType<typeof setInterval> | null = null
   private wal: SyncWAL | null = null
+  /** Simple promise-chain mutex to prevent flush() racing with remoteDelete(). */
+  private flushQueue: Promise<void> = Promise.resolve()
 
   constructor(
     private supabase: SupabaseClient,
@@ -18,6 +20,14 @@ export class SupabaseSync {
     if (walPath) {
       this.wal = new SyncWAL(walPath)
     }
+  }
+
+  /** Enqueue work on the flush serialisation queue (prevents resurrection races). */
+  private enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.flushQueue.then(fn)
+    // Keep the queue moving even if this task throws
+    this.flushQueue = result.then(() => undefined, () => undefined)
+    return result
   }
 
   /**
@@ -151,6 +161,10 @@ export class SupabaseSync {
   }
 
   async flush(): Promise<void> {
+    return this.enqueue(() => this._flush())
+  }
+
+  private async _flush(): Promise<void> {
     const dirty = this.cache.getDirty()
     if (dirty.length === 0) return
 
@@ -188,6 +202,23 @@ export class SupabaseSync {
     }
   }
 
+  /**
+   * Count memories in Supabase for the project (authoritative source for tier enforcement).
+   * Returns null if the query fails (fall back to local count).
+   */
+  async remoteCountMemories(): Promise<number | null> {
+    try {
+      const { count, error } = await this.supabase
+        .from('memories')
+        .select('*', { count: 'exact', head: true })
+        .eq('project_id', this.projectId)
+      if (error) return null
+      return count ?? null
+    } catch {
+      return null
+    }
+  }
+
   async remoteInsert(memory: Memory): Promise<boolean> {
     // Log to WAL before the remote call
     const walId = this.wal?.logPending(memory.id, memory.projectId, 'upsert', memoryToDbRow(memory))
@@ -211,6 +242,10 @@ export class SupabaseSync {
   }
 
   async remoteDelete(projectId: string, key: string): Promise<boolean> {
+    return this.enqueue(() => this._remoteDelete(projectId, key))
+  }
+
+  private async _remoteDelete(projectId: string, key: string): Promise<boolean> {
     try {
       const { error } = await this.supabase
         .from('memories')
@@ -311,6 +346,58 @@ export class SupabaseSync {
       return false
     }
   }
+
+  /** Persist a federated memory promotion to Supabase. */
+  async remoteFederatedInsert(row: {
+    id: string
+    owner_project_id: string
+    memory_key: string
+    memory_data: unknown
+    scope: string
+    version: number
+    promoted_by: string | null
+    promoted_at: string
+  }): Promise<boolean> {
+    try {
+      const { error } = await this.supabase
+        .from('federated_memories')
+        .upsert(row, { onConflict: 'memory_key,version' })
+      if (error) {
+        console.error('[tages] Federated insert failed:', error.message)
+        return false
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /** List federated memories from Supabase, optionally filtered by scope. */
+  async remoteListFederated(scope?: string): Promise<Array<{
+    id: string
+    owner_project_id: string
+    memory_key: string
+    memory_data: unknown
+    scope: string
+    version: number
+    promoted_by: string | null
+    promoted_at: string
+  }> | null> {
+    try {
+      let query = this.supabase.from('federated_memories').select('*')
+      if (scope) {
+        query = query.eq('scope', scope)
+      }
+      const { data, error } = await query.order('promoted_at', { ascending: false })
+      if (error) {
+        console.error('[tages] Federated list failed:', error.message)
+        return null
+      }
+      return data || []
+    } catch {
+      return null
+    }
+  }
 }
 
 interface DbRow {
@@ -335,6 +422,7 @@ interface DbRow {
   updated_at: string
   created_by: string | null
   updated_by: string | null
+  encrypted: boolean
 }
 
 function dbRowToMemory(row: DbRow): Memory {
@@ -360,6 +448,7 @@ function dbRowToMemory(row: DbRow): Memory {
     updatedAt: row.updated_at,
     createdBy: row.created_by || undefined,
     updatedBy: row.updated_by || undefined,
+    encrypted: row.encrypted || false,
   }
 }
 
@@ -386,5 +475,6 @@ function memoryToDbRow(memory: Memory): DbRow {
     updated_at: memory.updatedAt,
     created_by: memory.createdBy || null,
     updated_by: memory.updatedBy || null,
+    encrypted: memory.encrypted || false,
   }
 }
