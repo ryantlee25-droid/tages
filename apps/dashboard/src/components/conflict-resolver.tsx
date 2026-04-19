@@ -95,9 +95,15 @@ export function ConflictResolver({ projectId }: { projectId: string }) {
       }
     } else if (strategy === 'merge' && mergedValue) {
       // Update memory A with merged value, delete memory B
-      const { data: { user } } = await supabase.auth.getUser()
+      let userId: string | undefined
+      try {
+        const { data } = await supabase.auth.getUser()
+        userId = data.user?.id
+      } catch {
+        // transient auth failure — proceed without attribution
+      }
       const mergePayload: Record<string, unknown> = { value: mergedValue, updated_at: new Date().toISOString() }
-      if (user?.id) mergePayload.updated_by = user.id
+      if (userId) mergePayload.updated_by = userId
       await supabase
         .from('memories')
         .update(mergePayload)

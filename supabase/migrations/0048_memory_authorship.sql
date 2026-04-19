@@ -29,7 +29,8 @@ as $$
     m.id                                               as memory_id,
     coalesce(
       u.raw_user_meta_data->>'full_name',
-      split_part(u.email, '@', 1)
+      split_part(u.email, '@', 1),
+      'Unknown'
     )                                                  as display_name,
     m.updated_at
   from memories m
@@ -72,11 +73,13 @@ as $$
     b.value                                            as b_value,
     coalesce(
       ua.raw_user_meta_data->>'full_name',
-      split_part(ua.email, '@', 1)
+      split_part(ua.email, '@', 1),
+      'Unknown'
     )                                                  as a_updated_by,
     coalesce(
       ub.raw_user_meta_data->>'full_name',
-      split_part(ub.email, '@', 1)
+      split_part(ub.email, '@', 1),
+      'Unknown'
     )                                                  as b_updated_by,
     a.updated_at                                       as a_updated_at,
     b.updated_at                                       as b_updated_at,
@@ -90,3 +93,7 @@ as $$
     and c.resolved = false
   order by c.created_at desc;
 $$;
+
+-- 5. Grant execute to authenticated users (RPC callable from dashboard)
+grant execute on function get_memory_authors(uuid[]) to authenticated;
+grant execute on function list_unresolved_conflicts(uuid) to authenticated;
