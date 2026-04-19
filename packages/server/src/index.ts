@@ -345,7 +345,7 @@ async function main() {
     'observe',
     'Report what you are doing or learning — Tages silently extracts memories from your observations. Call this naturally as you work, no need to format.',
     {
-      observation: z.string().min(1).describe('What you observed, decided, or learned while working'),
+      observation: z.string().min(1).max(100_000).describe('What you observed, decided, or learned while working'),
     },
     async (args) => handleObserve(args, projectId, cache, sync, callerUserId),
   )
@@ -667,7 +667,7 @@ async function main() {
       scope: PromoteSchema.shape.scope,
       promotedBy: PromoteSchema.shape.promotedBy,
     },
-    withGate('federate_memory', async (args) => handlePromote(args, projectId, cache)),
+    withGate('federate_memory', async (args) => handlePromote(args, projectId, cache, sync)),
   )
 
   server.tool(
@@ -681,7 +681,7 @@ async function main() {
     'list_federated',
     'List all memories in the federated library',
     { scope: ListFederatedSchema.shape.scope },
-    withGate('list_federated', async (args) => handleListFederated(args)),
+    withGate('list_federated', async (args) => handleListFederated(args, sync)),
   )
 
   server.tool(

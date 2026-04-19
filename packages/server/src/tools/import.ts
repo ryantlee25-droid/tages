@@ -22,7 +22,43 @@ interface PartialMemory {
   confidence?: number
 }
 
+/** Maximum nesting depth allowed for JSON import (guards against stack overflow). */
+const MAX_JSON_DEPTH = 100
+
+/**
+ * Estimate the maximum nesting depth of a JSON string without fully parsing it.
+ * Counts the longest run of uninterrupted open brackets/braces.
+ */
+function estimateJsonDepth(input: string): number {
+  let depth = 0
+  let maxDepth = 0
+  let inString = false
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i]
+    if (ch === '"' && input[i - 1] !== '\\') {
+      inString = !inString
+    } else if (!inString) {
+      if (ch === '[' || ch === '{') {
+        depth++
+        if (depth > maxDepth) maxDepth = depth
+      } else if (ch === ']' || ch === '}') {
+        depth--
+      }
+    }
+  }
+  return maxDepth
+}
+
 function parseJsonMemories(input: string): PartialMemory[] {
+  // Tighten size limit to 256KB for JSON specifically (schema allows 512KB for markdown)
+  if (input.length > 256_000) {
+    throw new Error('JSON input exceeds 256KB limit')
+  }
+  // Depth check to guard against stack overflow in JSON.parse
+  const depth = estimateJsonDepth(input)
+  if (depth > MAX_JSON_DEPTH) {
+    throw new Error(`JSON input nesting depth (${depth}) exceeds limit of ${MAX_JSON_DEPTH}`)
+  }
   const parsed = JSON.parse(input)
   if (!Array.isArray(parsed)) {
     throw new Error('JSON input must be an array of memory objects')

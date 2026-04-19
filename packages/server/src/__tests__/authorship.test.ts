@@ -38,6 +38,9 @@ function makeMockSync(): SupabaseSync & { lastInserted: Memory | null } {
     remoteHybridRecall: vi.fn(async () => null),
     remoteGetByType: vi.fn(async () => null),
     remoteVerifyMemory: vi.fn(async () => true),
+    remoteCountMemories: vi.fn(async () => 0),
+    remoteFederatedInsert: vi.fn(async () => true),
+    remoteListFederated: vi.fn(async () => null),
   }
   return mock as unknown as SupabaseSync & { lastInserted: Memory | null }
 }

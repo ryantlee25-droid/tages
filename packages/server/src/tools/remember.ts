@@ -28,12 +28,25 @@ export async function handleRemember(
   callerUserId?: string,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   // Check memory limit for free tier
+  // Fast-path: check local SQLite count first (avoids network round-trip when clearly under limit)
   if ((!plan || plan === 'free') && cache.countMemories(projectId) >= 10000) {
     return {
       content: [{
         type: 'text',
         text: 'Memory limit reached (10,000 on free tier). Upgrade to Pro for 50,000 memories: https://app.tages.ai/upgrade',
       }],
+    }
+  }
+  // Authoritative enforcement: check Supabase count to prevent bypass via local cache mismatch
+  if ((!plan || plan === 'free') && sync) {
+    const remoteCount = await sync.remoteCountMemories()
+    if (remoteCount !== null && remoteCount >= 10000) {
+      return {
+        content: [{
+          type: 'text',
+          text: 'Memory limit reached (10,000 on free tier). Upgrade to Pro for 50,000 memories: https://app.tages.ai/upgrade',
+        }],
+      }
     }
   }
 

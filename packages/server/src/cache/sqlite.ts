@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS memories (
   cross_system_refs TEXT,
   examples TEXT,
   execution_flow TEXT,
-  verified_at TEXT
+  verified_at TEXT,
+  encrypted INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS memories_project_key ON memories(project_id, key);
@@ -135,6 +136,8 @@ export class SqliteCache {
       'ALTER TABLE memories ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0',
       // T3: conflict base value
       'ALTER TABLE memory_conflicts ADD COLUMN merge_base_value TEXT',
+      // C1: encrypted flag
+      'ALTER TABLE memories ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0',
     ]
     for (const sql of upgrades) {
       try { this.db.exec(sql) } catch { /* already exists */ }
@@ -205,8 +208,8 @@ export class SqliteCache {
 
   upsertMemory(memory: Memory, dirty = true): void {
     const stmt = this.db.prepare(`
-      INSERT INTO memories (id, project_id, key, value, type, source, agent_name, file_paths, tags, confidence, created_at, updated_at, dirty, status, conditions, phases, cross_system_refs, examples, execution_flow)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO memories (id, project_id, key, value, type, source, agent_name, file_paths, tags, confidence, created_at, updated_at, dirty, status, conditions, phases, cross_system_refs, examples, execution_flow, encrypted)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(project_id, key) DO UPDATE SET
         value = excluded.value,
         type = excluded.type,
@@ -222,7 +225,8 @@ export class SqliteCache {
         phases = excluded.phases,
         cross_system_refs = excluded.cross_system_refs,
         examples = excluded.examples,
-        execution_flow = excluded.execution_flow
+        execution_flow = excluded.execution_flow,
+        encrypted = excluded.encrypted
     `)
     stmt.run(
       memory.id,
@@ -244,6 +248,7 @@ export class SqliteCache {
       memory.crossSystemRefs ? JSON.stringify(memory.crossSystemRefs) : null,
       memory.examples ? JSON.stringify(memory.examples) : null,
       memory.executionFlow ? JSON.stringify(memory.executionFlow) : null,
+      memory.encrypted ? 1 : 0,
     )
   }
 
@@ -947,6 +952,7 @@ interface SqliteMemoryRow {
   examples: string | null
   execution_flow: string | null
   verified_at: string | null
+  encrypted: number
 }
 
 function rowToMemory(row: SqliteMemoryRow): Memory {
@@ -970,6 +976,7 @@ function rowToMemory(row: SqliteMemoryRow): Memory {
     verifiedAt: row.verified_at || undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    encrypted: row.encrypted === 1,
   }
 }
 

@@ -10,8 +10,17 @@ import { budgetedResults } from '../search/token-budget'
 
 function decryptMemories(memories: Memory[]): Memory[] {
   const encKey = getEncryptionKey()
-  if (!encKey) return memories
-  return memories.map((m) => ({ ...m, value: decryptValue(m.value, encKey) }))
+  return memories.map((m) => {
+    if (m.encrypted) {
+      if (!encKey) {
+        // Memory is marked as encrypted but no key is available — fail loudly
+        return { ...m, value: '[ERROR: memory is encrypted but TAGES_ENCRYPTION_KEY is not set]' }
+      }
+      return { ...m, value: decryptValue(m.value, encKey) }
+    }
+    // Not encrypted — return as-is regardless of whether a key is configured
+    return m
+  })
 }
 
 export async function handleRecall(

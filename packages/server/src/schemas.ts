@@ -24,8 +24,8 @@ export const ExecutionFlowSchema = z.object({
 })
 
 export const RememberSchema = z.object({
-  key: z.string().min(1).describe('A short, descriptive key for this memory'),
-  value: z.string().min(1).describe('The memory content'),
+  key: z.string().min(1).max(512).describe('A short, descriptive key for this memory'),
+  value: z.string().min(1).max(100_000).describe('The memory content'),
   type: MemoryTypeSchema.describe('The type of memory'),
   filePaths: z.array(z.string()).optional().describe('Related file paths'),
   tags: z.array(z.string()).optional().describe('Tags for categorization'),
