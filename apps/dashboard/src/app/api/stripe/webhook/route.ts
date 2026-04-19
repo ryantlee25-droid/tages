@@ -143,6 +143,36 @@ export async function POST(request: Request) {
         .update({ plan })
         .eq('owner_id', userId)
 
+      // H2: If team plan with reduced seat count, revoke excess members
+      if (plan === 'team' && quantity != null) {
+        const { data: ownedProjects } = await supabase
+          .from('projects')
+          .select('id')
+          .eq('owner_id', userId)
+        const projectIds = (ownedProjects ?? []).map((p: { id: string }) => p.id)
+
+        for (const pid of projectIds) {
+          const { data: activeMembers } = await supabase
+            .from('team_members')
+            .select('id, added_at, created_at')
+            .eq('project_id', pid)
+            .eq('status', 'active')
+            .neq('role', 'owner')
+            .order('added_at', { ascending: false })
+
+          const members = activeMembers ?? []
+          const excess = members.length - quantity
+          if (excess > 0) {
+            const toRevoke = members.slice(members.length - excess).map((m: { id: string }) => m.id)
+            await supabase
+              .from('team_members')
+              .update({ status: 'revoked' })
+              .in('id', toRevoke)
+            console.info(`[webhook] Revoked ${toRevoke.length} excess team member(s) for project ${pid} (new seat limit: ${quantity})`)
+          }
+        }
+      }
+
       break
     }
 
@@ -186,6 +216,22 @@ export async function POST(request: Request) {
         .from('projects')
         .update({ plan: 'free' })
         .eq('owner_id', userId)
+
+      // H4: Revoke all non-owner team members when subscription is cancelled
+      const { data: ownedProjects } = await supabase
+        .from('projects')
+        .select('id')
+        .eq('owner_id', userId)
+      const projectIds = (ownedProjects ?? []).map((p: { id: string }) => p.id)
+
+      if (projectIds.length > 0) {
+        await supabase
+          .from('team_members')
+          .update({ status: 'revoked' })
+          .in('project_id', projectIds)
+          .neq('role', 'owner')
+        console.info(`[webhook] Revoked all non-owner team members for ${projectIds.length} project(s) owned by user ${userId} (subscription cancelled)`)
+      }
 
       break
     }

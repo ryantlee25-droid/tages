@@ -17,13 +17,23 @@ export async function teamInviteCommand(email: string, options: TeamOptions) {
     process.exit(1)
   }
 
+  // M1: Validate and normalise role; default to 'member'
+  const validRoles = ['owner', 'admin', 'member'] as const
+  type ValidRole = typeof validRoles[number]
+  const rawRole = options.role?.toLowerCase() ?? 'member'
+  if (!validRoles.includes(rawRole as ValidRole)) {
+    console.error(chalk.red(`  Invalid role '${options.role}'. Must be one of: owner, admin, member`))
+    process.exit(1)
+  }
+  const role = rawRole as ValidRole
+
   const auth = JSON.parse(fs.readFileSync(getAuthPath(), 'utf-8'))
   const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
 
-  const result = await inviteTeamMembers(supabase, config.projectId, [email], auth.userId)
+  const result = await inviteTeamMembers(supabase, config.projectId, [email], auth.userId, role)
 
   if (result.invited.length > 0) {
-    console.log(chalk.green(`  Invited ${email} as ${options.role || 'member'} (pending)`))
+    console.log(chalk.green(`  Invited ${email} as ${role} (pending)`))
   }
   for (const f of result.failed) {
     console.error(chalk.red(`  Failed to invite ${f.email}: ${f.error}`))

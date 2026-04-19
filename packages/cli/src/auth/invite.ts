@@ -9,6 +9,7 @@ export async function inviteTeamMembers(
   projectId: string,
   emails: string[],
   invitedBy: string,
+  role: 'owner' | 'admin' | 'member' = 'member',
 ): Promise<InviteResult> {
   const invited: string[] = []
   const failed: Array<{ email: string; error: string }> = []
@@ -23,7 +24,7 @@ export async function inviteTeamMembers(
         .insert({
           project_id: projectId,
           email: trimmedEmail,
-          role: 'member',
+          role,
           status: 'pending',
           invited_by: invitedBy,
           // user_id intentionally omitted — null by default for pending invites
