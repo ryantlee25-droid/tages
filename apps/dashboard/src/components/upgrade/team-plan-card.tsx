@@ -74,6 +74,12 @@ export function TeamPlanCard() {
       >
         Get Team — ${seats * 19}/mo
       </button>
+      <p className="mt-4 text-xs text-zinc-500">
+        Email{' '}
+        <a href="mailto:support@tages.ai" className="text-[#3BA3C7] hover:underline">
+          support@tages.ai
+        </a>
+      </p>
     </div>
   )
 }
