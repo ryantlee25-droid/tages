@@ -1,7 +1,7 @@
 {
   "name": "@tages/cli",
   "version": "0.2.1",
-  "description": "CLI for Tages — persistent codebase memory for AI coding agents",
+  "description": "CLI for Tages AI agent memory",
   "type": "module",
   "bin": {
     "tages": "./dist/packages/cli/src/index.js"
@@ -27,12 +27,17 @@
     "ora": "^9.3.0"
   },
   "license": "MIT",
+  "author": "Ryan Lee <ryantlee25@gmail.com>",
+  "homepage": "https://tages.ai",
+  "bugs": {
+    "url": "https://github.com/ryantlee25-droid/tages/issues"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/ryantlee25-droid/tages.git",
     "directory": "packages/cli"
   },
-  "keywords": ["mcp", "ai", "memory", "codebase", "cli", "tages"],
+  "keywords": ["mcp", "ai", "memory", "anthropic", "claude"],
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.19.0",

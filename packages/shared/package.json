@@ -11,8 +11,14 @@
     "prepublishOnly": "tsc",
     "typecheck": "tsc --noEmit"
   },
-  "description": "Shared types and Supabase client for Tages",
+  "description": "Shared types and utilities for Tages packages",
   "license": "MIT",
+  "author": "Ryan Lee <ryantlee25@gmail.com>",
+  "homepage": "https://tages.ai",
+  "bugs": {
+    "url": "https://github.com/ryantlee25-droid/tages/issues"
+  },
+  "keywords": ["mcp", "ai", "memory", "anthropic", "claude"],
   "repository": {
     "type": "git",
     "url": "https://github.com/ryantlee25-droid/tages.git",

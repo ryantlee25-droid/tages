@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import * as Sentry from '@sentry/nextjs'
 import { getStripe } from '@/lib/stripe'
 import { createClient } from '@supabase/supabase-js'
 
@@ -34,6 +35,7 @@ export async function POST(request: Request) {
       process.env.STRIPE_WEBHOOK_SECRET!,
     )
   } catch (err) {
+    Sentry.captureException(err, { tags: { stripe_event: 'signature_verification' } })
     return NextResponse.json(
       { error: `Webhook signature verification failed: ${(err as Error).message}` },
       { status: 400 },
@@ -52,7 +54,9 @@ export async function POST(request: Request) {
       const userId = session.metadata?.user_id
 
       if (!userId) {
-        console.error('[webhook] checkout.session.completed: missing user_id in metadata')
+        const err = new Error('[webhook] checkout.session.completed: missing user_id in metadata')
+        console.error(err.message)
+        Sentry.captureException(err, { tags: { stripe_event: 'checkout.session.completed' } })
         return NextResponse.json({ received: true })
       }
 
@@ -60,7 +64,9 @@ export async function POST(request: Request) {
       const subscriptionId = session.subscription as string | undefined
 
       if (!subscriptionId) {
-        console.error('[webhook] checkout.session.completed: missing subscription id')
+        const err = new Error('[webhook] checkout.session.completed: missing subscription id')
+        console.error(err.message)
+        Sentry.captureException(err, { tags: { stripe_event: 'checkout.session.completed' } })
         return NextResponse.json({ received: true })
       }
 
@@ -118,7 +124,9 @@ export async function POST(request: Request) {
       }
 
       if (!userId) {
-        console.error('[webhook] customer.subscription.updated: no user found', { customerId, metadata: subscription.metadata })
+        const err = new Error('[webhook] customer.subscription.updated: no user found')
+        console.error(err.message, { customerId, metadata: subscription.metadata })
+        Sentry.captureException(err, { tags: { stripe_event: 'customer.subscription.updated' }, extra: { customerId } })
         return NextResponse.json({ received: true })
       }
 
@@ -184,7 +192,9 @@ export async function POST(request: Request) {
       const customerId = subscription.customer as string | undefined
 
       if (!customerId) {
-        console.error('[webhook] customer.subscription.deleted: missing customer id')
+        const err = new Error('[webhook] customer.subscription.deleted: missing customer id')
+        console.error(err.message)
+        Sentry.captureException(err, { tags: { stripe_event: 'customer.subscription.deleted' } })
         return NextResponse.json({ received: true })
       }
 
@@ -196,7 +206,9 @@ export async function POST(request: Request) {
 
       const userId = profiles?.[0]?.user_id
       if (!userId) {
-        console.error('[webhook] customer.subscription.deleted: no user found for customer', customerId)
+        const err = new Error('[webhook] customer.subscription.deleted: no user found for customer')
+        console.error(err.message, customerId)
+        Sentry.captureException(err, { tags: { stripe_event: 'customer.subscription.deleted' }, extra: { customerId } })
         return NextResponse.json({ received: true })
       }
 
