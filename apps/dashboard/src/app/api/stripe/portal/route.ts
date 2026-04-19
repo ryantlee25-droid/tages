@@ -10,19 +10,24 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const stripe = getStripe()
   const origin = new URL(request.url).origin
 
-  // Find or create Stripe customer
-  const customers = await stripe.customers.list({ email: user.email!, limit: 1 })
-  const customer = customers.data[0]
+  // Look up customer ID from user_profiles (written by the webhook on checkout).
+  // Email lookup is ambiguous (email can change, duplicates possible across environments).
+  const { data: profile } = await supabase
+    .from('user_profiles')
+    .select('stripe_customer_id')
+    .eq('user_id', user.id)
+    .single()
 
-  if (!customer) {
+  const customerId = profile?.stripe_customer_id
+  if (!customerId) {
     return NextResponse.redirect(`${origin}/app/upgrade`)
   }
 
+  const stripe = getStripe()
   const session = await stripe.billingPortal.sessions.create({
-    customer: customer.id,
+    customer: customerId,
     return_url: `${origin}/app/projects`,
   })
 
