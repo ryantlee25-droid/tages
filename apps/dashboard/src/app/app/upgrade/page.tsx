@@ -92,6 +92,12 @@ export default async function UpgradePage() {
                 Get Pro
               </Link>
             )}
+            <p className="mt-4 text-xs text-zinc-500">
+              Email{' '}
+              <a href="mailto:support@tages.ai" className="text-[#3BA3C7] hover:underline">
+                support@tages.ai
+              </a>
+            </p>
           </div>
 
           {/* Team card (client component with seat picker, or current-plan view) */}

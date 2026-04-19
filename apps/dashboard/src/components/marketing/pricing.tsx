@@ -7,7 +7,7 @@ const PLANS = [
     period: '',
     description: 'For solo developers. Works offline.',
     features: [
-      'Up to 2 projects',
+      '1 project (cloud sync)',
       '10,000 memories',
       '20 core MCP tools',
       'SQLite local-first (unlimited offline projects)',
@@ -17,6 +17,7 @@ const PLANS = [
     cta: 'Get started',
     href: '/auth/login',
     highlighted: true,
+    showSupportEmail: false,
   },
   {
     name: 'Pro',
@@ -34,6 +35,7 @@ const PLANS = [
     cta: 'Get Pro',
     href: '/app/upgrade',
     highlighted: false,
+    showSupportEmail: true,
   },
   {
     name: 'Team',
@@ -51,6 +53,7 @@ const PLANS = [
     cta: 'Get Team',
     href: '/app/upgrade',
     highlighted: false,
+    showSupportEmail: true,
   },
   {
     name: 'Self-hosted',
@@ -68,6 +71,7 @@ const PLANS = [
     cta: 'View setup guide',
     href: 'https://github.com/ryantlee25-droid/tages/blob/main/docs/self-hosting.md',
     highlighted: false,
+    showSupportEmail: false,
   },
 ]
 
@@ -164,6 +168,14 @@ export function Pricing() {
               >
                 {plan.cta}
               </Link>
+              {plan.showSupportEmail && (
+                <p className="mt-4 text-xs text-zinc-500">
+                  Email{' '}
+                  <a href="mailto:support@tages.ai" className="text-[#3BA3C7] hover:underline">
+                    support@tages.ai
+                  </a>
+                </p>
+              )}
             </div>
           ))}
         </div>
@@ -207,6 +219,7 @@ export function PricingComparison() {
             </tbody>
           </table>
         </div>
+        <p className="mt-4 text-center text-xs text-zinc-600">Competitor prices as of Apr 2026. Verify at each provider&apos;s website.</p>
       </div>
     </section>
   )

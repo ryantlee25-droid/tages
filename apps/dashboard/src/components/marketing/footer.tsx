@@ -13,6 +13,8 @@ export function Footer() {
           <Link href="/examples" className="hover:text-white transition-colors">Examples</Link>
           <Link href="/pricing" className="hover:text-white transition-colors">Pricing</Link>
           <Link href="/security" className="hover:text-white transition-colors">Security</Link>
+          <Link href="/privacy" className="hover:text-white transition-colors">Privacy</Link>
+          <Link href="/terms" className="hover:text-white transition-colors">Terms</Link>
           <a
             href="https://github.com/ryantlee25-droid/tages"
             target="_blank"
