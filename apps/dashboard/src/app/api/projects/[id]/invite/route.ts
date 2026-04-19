@@ -125,12 +125,15 @@ export async function POST(
     )
   }
 
+  // Dedup across pending AND active. The partial unique index only covers
+  // status='pending', so an active member could otherwise be re-invited and
+  // accept the link to produce a duplicate active row.
   const { data: existing, error: dupError } = await supabase
     .from('team_members')
-    .select('id')
+    .select('id, status')
     .eq('project_id', id)
     .eq('email', normalizedEmail)
-    .eq('status', 'pending')
+    .in('status', ['pending', 'active'])
     .maybeSingle()
 
   if (dupError) {
@@ -143,13 +146,53 @@ export async function POST(
 
   if (existing) {
     return NextResponse.json(
-      { error: 'An invite for this email address is already pending.' },
+      {
+        error:
+          existing.status === 'active'
+            ? 'This person is already a member of the project.'
+            : 'An invite for this email address is already pending.',
+      },
       { status: 409 },
     )
   }
 
   const adminClient = getAdminClient()
   const redirectTo = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://tages.ai'}/auth/callback?next=/app/projects`
+
+  // Insert the pending row BEFORE sending the magic-link email. If the email
+  // send fails, we can delete the row. If we sent the email first and the
+  // insert failed, the invitee would click a working link, land in auth.users,
+  // and have no project membership to accept — and Supabase won't re-send a
+  // magic link to an already-registered email.
+  const { data: inserted, error: insertError } = await Promise.resolve(
+    adminClient
+      .from('team_members')
+      .insert({
+        project_id: id,
+        email: normalizedEmail,
+        role,
+        status: 'pending',
+        invited_by: user.id,
+      })
+      .select('id')
+      .single(),
+  )
+
+  if (insertError) {
+    // 23505 = unique_violation; the partial index caught a race between our
+    // dedup check and the insert. Surface as 409 for idempotent UX.
+    if ((insertError as { code?: string }).code === '23505') {
+      return NextResponse.json(
+        { error: 'An invite for this email address is already pending.' },
+        { status: 409 },
+      )
+    }
+    console.error('[api/projects/[id]/invite] insert error', insertError)
+    return NextResponse.json(
+      { error: 'Failed to record invite' },
+      { status: 500 },
+    )
+  }
 
   const { error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(
     normalizedEmail,
@@ -164,26 +207,21 @@ export async function POST(
 
   if (inviteError) {
     console.error('[api/projects/[id]/invite] invite error', inviteError)
+    // Compensate: remove the pending row we just created so the invitee isn't
+    // left with a phantom membership and the email can be re-invited.
+    if (inserted?.id) {
+      const { error: rollbackError } = await Promise.resolve(
+        adminClient.from('team_members').delete().eq('id', inserted.id),
+      )
+      if (rollbackError) {
+        console.error(
+          '[api/projects/[id]/invite] rollback failed — orphan pending row',
+          { memberId: inserted.id, rollbackError },
+        )
+      }
+    }
     return NextResponse.json(
       { error: 'Failed to send invite email' },
-      { status: 500 },
-    )
-  }
-
-  const { error: insertError } = await Promise.resolve(
-    adminClient.from('team_members').insert({
-      project_id: id,
-      email: normalizedEmail,
-      role,
-      status: 'pending',
-      invited_by: user.id,
-    }),
-  )
-
-  if (insertError) {
-    console.error('[api/projects/[id]/invite] insert error', insertError)
-    return NextResponse.json(
-      { error: 'Failed to record invite' },
       { status: 500 },
     )
   }
