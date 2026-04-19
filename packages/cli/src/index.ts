@@ -187,6 +187,12 @@ program
   .command('pending')
   .description('List auto-extracted memories pending verification')
   .option('-p, --project <slug>', 'Project slug')
+  .option('--approve-all', 'Approve all pending memories (promote to live)')
+  .option('--reject-all', 'Archive all pending memories (mark as archived, not deleted)')
+  .option('--min-confidence <float>', 'Filter to memories with confidence >= float (e.g. 0.8)')
+  .option('--session <id>', 'Filter to memories from a specific session')
+  .option('-y, --yes', 'Skip confirmation prompts')
+  .option('--stats', 'Show a summary of pending memories by confidence and session')
   .action(pendingCommand)
 
 program
