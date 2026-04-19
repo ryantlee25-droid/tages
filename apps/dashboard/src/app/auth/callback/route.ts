@@ -12,6 +12,18 @@ export async function GET(request: Request) {
     const { data, error } = await supabase.auth.exchangeCodeForSession(code)
 
     if (!error && data.session) {
+      if (data.user?.email) {
+        try {
+          await supabase.rpc('accept_pending_invites', {
+            user_email: data.user.email,
+            uid: data.user.id,
+          })
+        } catch (e) {
+          console.error('[auth/callback] accept_pending_invites failed', e)
+          // non-fatal
+        }
+      }
+
       // If this was a CLI-initiated OAuth, redirect tokens to the CLI's local server
       if (cliRedirect) {
         const url = new URL(cliRedirect)
