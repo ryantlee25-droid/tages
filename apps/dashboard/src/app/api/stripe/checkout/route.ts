@@ -88,3 +88,7 @@ export async function POST(request: Request) {
 
   return NextResponse.redirect(session.url!, 303)
 }
+
+// Allow GET — users arrive here via <Link> clicks from the upgrade page
+// and marketing pricing CTAs. Both verbs run the same checkout session creation.
+export const GET = POST
