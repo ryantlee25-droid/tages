@@ -151,6 +151,24 @@ Just talk about commands, don't actually name any.
     expect(missing).toBeTruthy()
   })
 
+  it('extracts the LAST section without requiring a trailing header or literal "Z" (regression for \\Z bug)', () => {
+    // If the last section's body is never extracted, missing-commands on a
+    // trailing "## Commands" section would silently not fire. This test locks
+    // the fix in place.
+    const content = `# AGENTS.md
+
+## Project structure
+Just a React project with no version numbers.
+
+## Commands
+No runnable invocations here.`
+    const report = runAudit('AGENTS.md', content)
+    // Must fire on BOTH last-section aware rules:
+    const rules = report.findings.map((f) => f.rule)
+    expect(rules).toContain('missing-commands') // Commands section is last; body must be extracted
+    expect(rules).toContain('missing-tech-versions') // Project structure is middle; also extracted
+  })
+
   it('writes and reads via a real tmp file round-trip', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tages-agents-md-'))
     const tmpFile = path.join(tmpDir, 'AGENTS.md')

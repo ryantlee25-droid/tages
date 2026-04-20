@@ -123,8 +123,8 @@ export function GovernancePage() {
                 />
                 <FieldRow
                   name="session_id"
-                  type="text"
-                  description="Agent session correlation ID. Survives across tool calls within one session."
+                  type="uuid"
+                  description="FK to agent_sessions.id. Correlates every tool call within one session."
                 />
                 <FieldRow
                   name="tool_name"

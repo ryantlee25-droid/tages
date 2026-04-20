@@ -370,9 +370,15 @@ export function runAudit(filePath: string, content: string): AuditReport {
 }
 
 function extractSection(content: string, name: string): string | null {
-  const pattern = new RegExp(`^##\\s+${escapeRegex(name)}\\b([\\s\\S]*?)(?=^##\\s+|\\Z)`, 'im')
+  // `(^|\n)##` matches either a header at the start of the file or one after a newline.
+  // The lookahead `(?=\n##\s+|$)` stops at the next `## ` header OR end-of-string.
+  // (Do NOT use `\Z` — JavaScript regex does not support it; it matches literal `Z`.)
+  const pattern = new RegExp(
+    `(^|\\n)##\\s+${escapeRegex(name)}\\b([\\s\\S]*?)(?=\\n##\\s+|$)`,
+    'i',
+  )
   const m = content.match(pattern)
-  return m ? m[1] : null
+  return m ? m[2] : null
 }
 
 function escapeRegex(s: string): string {

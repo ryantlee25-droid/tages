@@ -29,7 +29,10 @@ create index if not exists memories_source_context_gin_idx
   on memories using gin (source_context)
   where source_context is not null;
 
--- 5. Convenience RPC for the dashboard: fetch full provenance row for a memory
+-- 5. Convenience RPC for the dashboard: fetch full provenance row for a memory.
+--    SECURITY DEFINER bypasses RLS on `memories`, so the function must enforce
+--    project membership explicitly via is_project_member. search_path is pinned
+--    to match the pattern established in migrations 0048 and 0051.
 create or replace function get_memory_provenance(p_memory_id uuid)
 returns table (
   memory_id      uuid,
@@ -43,8 +46,9 @@ returns table (
   updated_at     timestamptz
 )
 language sql
-security definer
 stable
+security definer
+set search_path = public, extensions
 as $$
   select
     m.id                                               as memory_id,
@@ -62,7 +66,8 @@ as $$
     m.updated_at
   from memories m
   left join auth.users u on u.id = m.updated_by
-  where m.id = p_memory_id;
+  where m.id = p_memory_id
+    and is_project_member(auth.uid(), m.project_id);
 $$;
 
 grant execute on function get_memory_provenance(uuid) to authenticated;

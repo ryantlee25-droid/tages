@@ -155,6 +155,14 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 - **CI**: New `.github/workflows/publish.yml` triggers on `v*` tag push to publish packages to npm (requires `NPM_TOKEN` repo secret).
 - **Strategy documents**: `analysis/` directory lands with competitive analysis, trend scan, positioning brief, deep research execution doc, Monte Carlo pricing model, and research notes. `PLAN.md` and `REMAINING.md` added at repo root.
 
+#### Review fixes (post-White review)
+
+- `supabase/migrations/0057_provenance_fields.sql`: pinned `search_path = public, extensions` and added an `is_project_member(auth.uid(), m.project_id)` guard inside the `get_memory_provenance` SECURITY DEFINER function so it cannot leak provenance across projects. (B1, Q1)
+- `.github/workflows/publish.yml`: publish `@tages/cursor-plugin` alongside `@tages/shared`, `@tages/server`, `@tages/cli` on `v*` tag push. (W1)
+- `packages/cli/src/commands/agents-md.ts`: replaced the unsupported `\Z` anchor in `extractSection` with a JS-correct end-of-string lookahead so last-section audit rules (missing-commands, missing-tech-versions) fire correctly. Regression test added. (W2)
+- `apps/dashboard/src/components/marketing/governance-page.tsx`: corrected `session_id` field type in the Provenance model table from `text` to `uuid`. (S1)
+- W3 (test count targets) was declined — counts reflect a verified test-run output, not a goal. S2 (control-flow warning) was deferred — no runtime impact.
+
 ### 2026-04-19
 
 - Fixed GitHub OAuth login redirecting to the marketing homepage instead of `/app/projects` after callback. Root cause: `SameSite=Strict` cookies are withheld by the browser on cross-site top-level navigations (i.e. GitHub's redirect back to `/auth/callback?code=...`), so the PKCE verifier and refreshed session cookies never reached the server. Reverted to Supabase's default `SameSite=Lax`, which is the correct setting for SSR auth cookies. `HttpOnly + Secure + Lax` still blocks CSRF on state-changing requests.
