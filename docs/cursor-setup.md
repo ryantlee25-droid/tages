@@ -7,18 +7,31 @@ Connect Tages to Cursor for persistent codebase memory.
 - Node.js 20+
 - Cursor installed
 
-## Setup
-
-### 1. Install
+## Install (one line)
 
 ```bash
-npm install -g @tages/cli
-tages init
+npx @tages/cursor-plugin
 ```
 
-### 2. Configure Cursor MCP
+This writes `.cursor/mcp.json` in the current directory with a `tages` MCP server entry. Restart Cursor; the Tages tools appear in the MCP panel.
 
-Add to your Cursor MCP config (`.cursor/mcp.json` in your project root):
+### Global install (apply to every project)
+
+```bash
+npx @tages/cursor-plugin --global
+```
+
+Writes to `~/.cursor/mcp.json`. Project-scoped entries override global ones.
+
+### Preview before writing
+
+```bash
+npx @tages/cursor-plugin --dry-run
+```
+
+## Manual config
+
+If you prefer to edit the file yourself, add this to `.cursor/mcp.json` in your project root:
 
 ```json
 {
@@ -36,8 +49,16 @@ Add to your Cursor MCP config (`.cursor/mcp.json` in your project root):
 }
 ```
 
-You can find your project config values in `~/.config/tages/projects/<slug>.json`.
+Fill env values from your Tages project config (`~/.config/tages/projects/<slug>.json` after `tages init`). Leave them empty to run Tages in local-only mode using the SQLite cache.
 
-### 3. Verify
+## Verify
 
-Open Cursor and use the MCP tools panel to verify the 7 Tages tools appear.
+Open Cursor, open the MCP tools panel. Tages tools should appear under `tages`. From a chat, ask:
+
+> Use the tages `recall` tool to find memories about the current file.
+
+## Troubleshooting
+
+- **No tools appear:** restart Cursor after editing `.cursor/mcp.json`.
+- **Server errors on startup:** run `npx @tages/server --help` directly to check for missing env vars or network issues.
+- **Cursor can't find `npx`:** ensure Node.js is on your `PATH` in Cursor's launch environment.

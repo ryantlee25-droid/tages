@@ -3,7 +3,7 @@
 **Team memory for AI coding agents.**
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-521%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-768%20passing-brightgreen.svg)]()
 
 Your AI agents forget everything between sessions. Every decision re-litigated. Every convention re-explained. Every past mistake repeated by the next agent that touches the same code.
 
@@ -81,7 +81,7 @@ Claude Code, Cursor, Codex, Gemini — anything that speaks [MCP](https://modelc
 ## Features
 
 - **56 MCP tools** — remember, recall, audit, sharpen, import, federation, analytics, and more
-- **52 CLI commands** — full control from the terminal
+- **53 CLI commands** — full control from the terminal
 - **Web dashboard** — browse, search, and edit memories with dark-mode UI
 - **Auto-indexing** — git hooks extract decisions from commits via Ollama or Claude Haiku
 - **Import** — seed from existing CLAUDE.md, ARCHITECTURE.md, or JSON files
@@ -94,7 +94,7 @@ Claude Code, Cursor, Codex, Gemini — anything that speaks [MCP](https://modelc
 
 ## Benchmarks
 
-In five head-to-head benchmarks, agents with Tages context scored up to **9.1/10 vs 2.8/10 without** — quality deltas scaling from +1.0 on simple tasks to +6.3 on complex ones. The biggest gains were in convention compliance, integration wiring, and gotcha avoidance. Agents without memory consistently created orphaned code that didn't wire into existing subsystems.
+Reproducible LongMemEval and coding-memory benchmark results are published under [`eval/`](eval/) with full methodology, judge configuration, and run notebooks. Results are reproducible against the published harness; raw numbers are in each eval's `results/` directory.
 
 ## Setup Guides
 
@@ -110,13 +110,13 @@ In five head-to-head benchmarks, agents with Tages context scored up to **9.1/10
 
 ```
 packages/
-  server/     MCP server (56 tools, stdio transport, 445 tests)
-  cli/        CLI (52 commands, npm global install, 76 tests)
+  server/     MCP server (56 tools, stdio transport, 605 tests)
+  cli/        CLI (53 commands, npm global install, 163 tests)
   shared/     TypeScript types + Supabase client
 apps/
   dashboard/  Next.js 16, Supabase Auth, Tailwind, shadcn/ui
 supabase/
-  migrations/ 42 migrations (tables, RLS, pgvector, RBAC, encryption)
+  migrations/ 56 migrations (tables, RLS, pgvector, RBAC, encryption)
 ```
 
 ## Security
@@ -145,6 +145,15 @@ See [PRIVACY.md](PRIVACY.md) for our privacy policy.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
+
+### 2026-04-20
+
+- **README hygiene**: Stripped unreproducible benchmark claim from `## Benchmarks` section; corrected MCP tool, CLI command, test, and migration counts to match current codebase.
+- **Bet A — Memory Governance foundation**: New `/governance` marketing page (draft, `noindex`). Migration `0057_provenance_fields.sql` adds `session_id`, `source_context`, and `tool_name` columns to `memories` with a GIN index and a `get_memory_provenance` RPC. `Memory` TypeScript type extended with `sessionId`, `toolName`, and `sourceContext`. Formal spec at `docs/provenance-model.md`.
+- **Bet B — AGENTS.md native tooling**: New `tages agents-md write` and `tages agents-md audit` CLI subcommands. `write` generates a canonical 6-section AGENTS.md from project memory. `audit` flags vagueness, missing sections, missing runnable commands, and absence of the three-tier Always/Ask/Never boundary pattern.
+- **Bet D — Cross-tool distribution**: New `@tages/cursor-plugin` package. Running `npx @tages/cursor-plugin` installs Tages in Cursor by writing `.cursor/mcp.json`. Setup guide at `docs/cursor-setup.md`.
+- **CI**: New `.github/workflows/publish.yml` triggers on `v*` tag push to publish packages to npm (requires `NPM_TOKEN` repo secret).
+- **Strategy documents**: `analysis/` directory lands with competitive analysis, trend scan, positioning brief, deep research execution doc, Monte Carlo pricing model, and research notes. `PLAN.md` and `REMAINING.md` added at repo root.
 
 ### 2026-04-19
 

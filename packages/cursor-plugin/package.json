@@ -1,0 +1,36 @@
+{
+  "name": "@tages/cursor-plugin",
+  "version": "0.1.0",
+  "description": "Install Tages as an MCP server in Cursor (writes .cursor/mcp.json).",
+  "type": "module",
+  "bin": {
+    "tages-cursor-plugin": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "tsc",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "license": "MIT",
+  "author": "Ryan Lee <ryantlee25@gmail.com>",
+  "homepage": "https://tages.ai",
+  "bugs": {
+    "url": "https://github.com/ryantlee25-droid/tages/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ryantlee25-droid/tages.git",
+    "directory": "packages/cursor-plugin"
+  },
+  "keywords": ["cursor", "mcp", "ai", "memory", "tages"],
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.0"
+  }
+}

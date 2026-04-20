@@ -37,6 +37,7 @@ import { auditCommand } from './commands/audit.js'
 import { sharpenCommand } from './commands/sharpen.js'
 import { teamInviteCommand, teamListCommand, teamRemoveCommand, teamRoleCommand } from './commands/team.js'
 import { settingsAutoSaveCommand } from './commands/settings.js'
+import { agentsMdWriteCommand, agentsMdAuditCommand } from './commands/agents-md.js'
 
 const program = new Command()
 
@@ -464,5 +465,27 @@ settingsCmd
   .option('-p, --project <slug>', 'Project slug')
   .option('-y, --yes', 'Skip confirmation prompt')
   .action(settingsAutoSaveCommand)
+
+// AGENTS.md — write and audit the canonical AGENTS.md file from project memory.
+const agentsMdCmd = program
+  .command('agents-md')
+  .description('Generate and audit AGENTS.md from the project memory graph')
+
+agentsMdCmd
+  .command('write')
+  .description('Generate AGENTS.md from project memories (6 canonical sections)')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('-o, --output <path>', 'Output path (default: AGENTS.md in cwd)')
+  .option('--dry-run', 'Print to stdout instead of writing')
+  .option('--force', 'Overwrite an existing AGENTS.md')
+  .action(agentsMdWriteCommand)
+
+agentsMdCmd
+  .command('audit [path]')
+  .description('Lint an AGENTS.md file for vagueness, missing sections, and anti-patterns')
+  .option('--json', 'Emit machine-readable report')
+  .action((filePath: string | undefined, opts: { json?: boolean }) =>
+    agentsMdAuditCommand({ path: filePath, json: opts.json }),
+  )
 
 program.parse()
