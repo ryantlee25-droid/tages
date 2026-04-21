@@ -7,7 +7,30 @@ Connect Tages to Google Gemini for persistent codebase memory.
 - Node.js 20+
 - Gemini with MCP support
 
-## Setup
+## Install via plugin
+
+The fastest way to configure Gemini is with the one-line installer:
+
+```bash
+npx @tages/gemini-plugin
+```
+
+This writes the `tages` MCP server entry to `~/.gemini/settings.json`. If the file already exists, the installer merges into the existing `mcpServers` object and preserves all other top-level keys.
+
+Available flags:
+
+| Flag | Behavior |
+|---|---|
+| (no flags) | Write to `~/.gemini/settings.json` |
+| `--dry-run` | Print the config block to stdout instead of writing |
+| `--force` | Overwrite an existing `"tages"` entry |
+| `--help` | Show usage |
+
+After running the plugin, restart Gemini CLI. The Tages MCP tools appear automatically.
+
+---
+
+## Manual setup
 
 ### 1. Install
 
