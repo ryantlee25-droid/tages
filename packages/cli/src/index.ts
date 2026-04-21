@@ -38,6 +38,7 @@ import { sharpenCommand } from './commands/sharpen.js'
 import { teamInviteCommand, teamListCommand, teamRemoveCommand, teamRoleCommand } from './commands/team.js'
 import { settingsAutoSaveCommand } from './commands/settings.js'
 import { agentsMdWriteCommand, agentsMdAuditCommand, agentsMdDiffCommand, agentsMdFederateCommand } from './commands/agents-md.js'
+import { driftCommand } from './commands/drift.js'
 
 const program = new Command()
 
@@ -504,5 +505,16 @@ agentsMdCmd
   .option('--list', 'Print the current owner map')
   .option('--remove', 'Remove the mapping for --section')
   .action(agentsMdFederateCommand)
+
+// Experimental — Agent Stability Index
+program
+  .command('drift')
+  .description('Report memory drift across sessions and agents (experimental)')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('--since <window>', 'Time window (e.g. 7d, 30d, or ISO timestamp)')
+  .option('--agent <name>', 'Filter to a single agent_name')
+  .option('--limit <n>', 'Max top-diverging keys to show (default 10)', '10')
+  .option('--json', 'Emit the full report as JSON instead of human-readable output')
+  .action(driftCommand)
 
 program.parse()
