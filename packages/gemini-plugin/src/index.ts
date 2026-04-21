@@ -54,6 +54,7 @@ function resolveSettingsPath(): string {
 interface McpServerEntry {
   command: string
   args: string[]
+  env?: Record<string, string>
 }
 
 interface GeminiSettings {
@@ -65,6 +66,11 @@ function buildTagesEntry(): McpServerEntry {
   return {
     command: 'npx',
     args: ['-y', '@tages/server'],
+    env: {
+      TAGES_SUPABASE_URL: '',
+      TAGES_SUPABASE_ANON_KEY: '',
+      TAGES_PROJECT_ID: '',
+    },
   }
 }
 
@@ -115,8 +121,9 @@ function main(): void {
   stdout.write(`Wrote Tages MCP server config to ${settingsPath}\n`)
   stdout.write(
     '\nNext steps:\n' +
-      '  1. Restart Gemini CLI (or any tool that reads ~/.gemini/settings.json).\n' +
-      '  2. The Tages MCP tools will appear under "tages" in the MCP tools panel.\n',
+      '  1. Edit the env values (TAGES_SUPABASE_URL, TAGES_SUPABASE_ANON_KEY, TAGES_PROJECT_ID).\n' +
+      '  2. Restart Gemini CLI (or any tool that reads ~/.gemini/settings.json).\n' +
+      '  3. The Tages MCP tools will appear under "tages" in the MCP tools panel.\n',
   )
 }
 

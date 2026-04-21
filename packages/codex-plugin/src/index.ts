@@ -67,7 +67,7 @@ function buildTagesBlock(): string {
 }
 
 function hasTagesBlock(existing: string): boolean {
-  return /^\[mcp_servers\.tages(\..+)?\]/m.test(existing)
+  return /^\[mcp_servers\.tages\]/m.test(existing)
 }
 
 function main(): void {

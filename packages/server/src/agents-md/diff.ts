@@ -206,8 +206,8 @@ function detectContradiction(memoryValue: string, sectionBody: string): string |
     const hasKeyWord = keyWords.some((w) => line.includes(w))
     if (!hasKeyWord) continue
 
-    const hasNegation = /\b(never|don't|do not|avoid|not|no |prohibited|forbidden)\b/.test(line)
-    const memoryIsPositive = !/\b(never|don't|do not|avoid|not|no )\b/.test(normMemory)
+    const hasNegation = /\b(never|don't|do not|avoid|not|no|prohibited|forbidden)\b/.test(line)
+    const memoryIsPositive = !/\b(never|don't|do not|avoid|not|no)\b/.test(normMemory)
 
     if (hasNegation && memoryIsPositive) {
       // The file negates something the memory affirms
