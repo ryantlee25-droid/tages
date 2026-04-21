@@ -65,9 +65,19 @@ class InMemoryStore implements MemoryStore {
   }
 }
 
+/**
+ * Tages CLI integration uses positional `<key> <value>` for remember and
+ * positional `<key>` for forget (no --prefix). Recall does NOT yet support
+ * --json, so we parse the human-readable output heuristically.
+ *
+ * TODO: add `--json` flag to `tages recall` in packages/cli (out of scope for
+ * Sprint B scaffold). Parsing here is fragile but sufficient for calibration.
+ * Tracked keys across a run so clear() can forget them one by one.
+ */
 class TagesCliStore implements MemoryStore {
   backend: Backend = 'tages-cli'
   private project: string
+  private liveKeys = new Set<string>()
 
   constructor() {
     const p = process.env.TAGES_EVAL_PROJECT
@@ -87,42 +97,77 @@ class TagesCliStore implements MemoryStore {
         q.haystack_dates[i] ?? '',
         q.haystack_sessions[i]!,
       )
-      const key = `longmemeval/${q.question_id}/session-${i}`
-      execFileSync('tages', [
-        'remember',
-        '--project', this.project,
-        '--key', key,
-        '--value', text,
-        '--type', 'fact',
-      ], { stdio: 'ignore' })
+      const key = `longmemeval-${q.question_id}-s${i}`
+      execFileSync(
+        'tages',
+        ['remember', key, text, '--project', this.project, '--type', 'fact'],
+        { stdio: 'ignore' },
+      )
+      this.liveKeys.add(key)
     }
   }
 
   async recall(query: string, topK: number): Promise<string[]> {
-    const out = execFileSync('tages', [
-      'recall',
-      '--project', this.project,
-      '--query', query,
-      '--limit', String(topK),
-      '--json',
-    ], { encoding: 'utf8' })
-    try {
-      const parsed = JSON.parse(out)
-      if (Array.isArray(parsed)) {
-        return parsed.map((r: any) => String(r.value ?? '')).filter(Boolean)
-      }
-      if (parsed && Array.isArray(parsed.results)) {
-        return parsed.results.map((r: any) => String(r.value ?? '')).filter(Boolean)
-      }
-      return []
-    } catch {
-      return []
-    }
+    const out = execFileSync(
+      'tages',
+      ['recall', query, '--project', this.project, '--limit', String(topK)],
+      { encoding: 'utf8' },
+    )
+    return parseRecallOutput(out)
   }
 
   async clear(): Promise<void> {
-    execFileSync('tages', ['forget', '--project', this.project, '--prefix', 'longmemeval/'], {
-      stdio: 'ignore',
-    })
+    for (const key of this.liveKeys) {
+      try {
+        execFileSync('tages', ['forget', key, '--project', this.project], { stdio: 'ignore' })
+      } catch {
+        // Already gone; ignore.
+      }
+    }
+    this.liveKeys.clear()
   }
+}
+
+/**
+ * Parse `tages recall` human output.
+ *
+ * Format (as of packages/cli@0.2.1):
+ *   Found N memories (<algorithm>):
+ *
+ *     <type>     <key>
+ *                <value line 1>
+ *                <value line 2>
+ *                similarity: 0.45 [trigram]
+ *
+ * We group lines by detecting the blank-line separator and the 15-space indent
+ * on value lines. The "similarity:" line ends each block. Returns value strings.
+ */
+function parseRecallOutput(text: string): string[] {
+  const lines = text.split('\n')
+  const values: string[] = []
+  let currentValue: string[] = []
+  let inBlock = false
+
+  for (const line of lines) {
+    if (line.startsWith('Found ')) continue
+    if (/^\s*similarity:/.test(line)) {
+      if (currentValue.length > 0) values.push(currentValue.join(' ').trim())
+      currentValue = []
+      inBlock = false
+      continue
+    }
+    // Header line: two-space-indent type + key. Starts a block.
+    if (/^  \S+\s+\S+/.test(line) && !line.startsWith('               ')) {
+      if (currentValue.length > 0) values.push(currentValue.join(' ').trim())
+      currentValue = []
+      inBlock = true
+      continue
+    }
+    // Value continuation: 15-space indent.
+    if (inBlock && line.startsWith('               ')) {
+      currentValue.push(line.trim())
+    }
+  }
+  if (currentValue.length > 0) values.push(currentValue.join(' ').trim())
+  return values.filter(Boolean)
 }
