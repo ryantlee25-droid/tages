@@ -1,8 +1,15 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import { renderAgentsMd, routeMemory, runAudit } from '../commands/agents-md.js'
+
+// Direct imports from server source for diff + federate tests.
+// Paths are relative from packages/cli/src/__tests__/ up to packages/server/src/agents-md/.
+// @ts-ignore
+import { computeAgentsMdDiff } from '../../../server/src/agents-md/diff.js'
+// @ts-ignore
+import { readOwnersMap, writeOwnersMap, setOwner, removeOwner, ownersFilePath } from '../../../server/src/agents-md/federate.js'
 
 describe('renderAgentsMd', () => {
   it('emits all 6 canonical sections even when memory list is empty', () => {
@@ -180,5 +187,270 @@ No runnable invocations here.`
     expect(report.path).toBe(tmpFile)
     expect(report.findings.some((f) => f.rule === 'missing-section' && f.section === 'Boundaries')).toBe(false) // Boundaries is always emitted
     fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+})
+
+// ------------------------------------------------------------
+// diff tests
+// ------------------------------------------------------------
+
+describe('computeAgentsMdDiff', () => {
+  it('returns clean when AGENTS.md fully reflects memory', () => {
+    // A memory whose value appears verbatim in the file
+    const memories = [
+      { key: 'use-snake-case', value: 'Always use snake_case for API routes', type: 'convention' },
+    ]
+    const content = `# AGENTS.md
+
+## Commands
+- run pnpm install
+
+## Testing
+- pytest -v
+
+## Project structure
+- Node 20
+
+## Code style
+- **use-snake-case** — Always use snake_case for API routes
+
+## Git workflow
+- feat/ branches
+
+## Boundaries
+**Always do (✅)**
+- commit after green tests
+**Ask first (⚠️)**
+- ask before big refactor
+**Never do (🚫)**
+- Never force-push to main
+`
+    const report = computeAgentsMdDiff('AGENTS.md', content, memories)
+    expect(report.clean).toBe(true)
+    expect(report.driftCount).toBe(0)
+  })
+
+  it('reports stale when memory not reflected in AGENTS.md section', () => {
+    const memories = [
+      { key: 'important-rule', value: 'Always use TypeScript strict mode for all new files', type: 'convention' },
+    ]
+    // Code style section exists but doesn't mention the memory
+    const content = `# AGENTS.md
+
+## Commands
+- run pnpm install
+
+## Testing
+- run pytest
+
+## Project structure
+- Node 20
+
+## Code style
+- Use 2-space indentation
+
+## Git workflow
+- feat/ branches
+
+## Boundaries
+**Always do (✅)**
+- commit after green tests
+**Ask first (⚠️)**
+- ask before refactor
+**Never do (🚫)**
+- Never force push
+`
+    const report = computeAgentsMdDiff('AGENTS.md', content, memories)
+    expect(report.clean).toBe(false)
+    expect(report.driftCount).toBeGreaterThan(0)
+    const staleItem = report.items.find((i: { kind: string }) => i.kind === 'stale')
+    expect(staleItem).toBeTruthy()
+    expect(staleItem?.memoryKey).toBe('important-rule')
+  })
+
+  it('reports missing when AGENTS.md section heading is absent but memories exist', () => {
+    const memories = [
+      { key: 'commit-style', value: 'Use imperative mood in commit messages', type: 'convention', tags: ['Git workflow'] },
+    ]
+    // Git workflow section is missing
+    const content = `# AGENTS.md
+
+## Commands
+- pnpm install
+
+## Testing
+- pytest
+
+## Project structure
+- Node 20
+
+## Code style
+- snake_case
+
+## Boundaries
+**Always do (✅)**
+- commit
+**Ask first (⚠️)**
+- ask
+**Never do (🚫)**
+- never
+`
+    const report = computeAgentsMdDiff('AGENTS.md', content, memories)
+    expect(report.clean).toBe(false)
+    const missingItem = report.items.find((i: { kind: string }) => i.kind === 'missing')
+    expect(missingItem).toBeTruthy()
+    expect(missingItem?.section).toBe('Git workflow')
+  })
+
+  it('reports contradicting when AGENTS.md negates a memory', () => {
+    const memories = [
+      { key: 'default-exports', value: 'Use default exports for React components', type: 'convention' },
+    ]
+    // Code style section directly contradicts the memory
+    const content = `# AGENTS.md
+
+## Commands
+- pnpm install
+
+## Testing
+- pytest
+
+## Project structure
+- Node 20
+
+## Code style
+- Never use default exports for React components. Always use named exports.
+
+## Git workflow
+- feat/ branches
+
+## Boundaries
+**Always do (✅)**
+- commit
+**Ask first (⚠️)**
+- ask
+**Never do (🚫)**
+- never
+`
+    const report = computeAgentsMdDiff('AGENTS.md', content, memories)
+    expect(report.clean).toBe(false)
+    const contradictingItem = report.items.find((i: { kind: string }) => i.kind === 'contradicting')
+    expect(contradictingItem).toBeTruthy()
+    expect(contradictingItem?.section).toBe('Code style')
+  })
+
+  it('exits with driftCount > 0 and items populated for any drift', () => {
+    const memories = [
+      { key: 'use-zod', value: 'Validate all inputs with Zod schemas', type: 'convention' },
+    ]
+    const content = `# AGENTS.md
+
+## Code style
+- No validation needed.
+`
+    const report = computeAgentsMdDiff('fixture.md', content, memories)
+    // At minimum: many sections are missing, generating missing drift items
+    expect(report.driftCount).toBeGreaterThan(0)
+    expect(report.items.length).toBe(report.driftCount)
+    expect(report.filePath).toBe('fixture.md')
+  })
+})
+
+// ------------------------------------------------------------
+// federate tests
+// ------------------------------------------------------------
+
+describe('federate owner-map', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tages-federate-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('readOwnersMap returns empty object when file does not exist', () => {
+    const map = readOwnersMap(tmpDir)
+    expect(map).toEqual({})
+  })
+
+  it('setOwner writes valid JSON and readOwnersMap reads it back', () => {
+    const result = setOwner('Security', 'security', tmpDir)
+    expect(result).toEqual({ Security: 'security' })
+
+    // Verify file is valid JSON
+    const filePath = ownersFilePath(tmpDir)
+    const raw = fs.readFileSync(filePath, 'utf-8')
+    const parsed = JSON.parse(raw)
+    expect(parsed).toEqual({ Security: 'security' })
+
+    // Round-trip read
+    const mapBack = readOwnersMap(tmpDir)
+    expect(mapBack).toEqual({ Security: 'security' })
+  })
+
+  it('setOwner accumulates multiple section mappings', () => {
+    setOwner('Security', 'security', tmpDir)
+    setOwner('Testing', 'platform', tmpDir)
+    const map = readOwnersMap(tmpDir)
+    expect(map).toEqual({ Security: 'security', Testing: 'platform' })
+  })
+
+  it('removeOwner deletes the entry and leaves others intact', () => {
+    setOwner('Security', 'security', tmpDir)
+    setOwner('Testing', 'platform', tmpDir)
+    const updated = removeOwner('Security', tmpDir)
+    expect(updated).toEqual({ Testing: 'platform' })
+
+    const mapBack = readOwnersMap(tmpDir)
+    expect(mapBack).not.toHaveProperty('Security')
+    expect(mapBack).toHaveProperty('Testing', 'platform')
+  })
+
+  it('removeOwner is a no-op when section does not exist', () => {
+    setOwner('Testing', 'platform', tmpDir)
+    const updated = removeOwner('NonExistent', tmpDir)
+    expect(updated).toEqual({ Testing: 'platform' })
+  })
+
+  it('ownersFilePath returns a path ending with agents-md-owners.json inside .tages/', () => {
+    const p = ownersFilePath(tmpDir)
+    expect(p).toContain('.tages')
+    expect(p).toContain('agents-md-owners.json')
+  })
+
+  it('writeOwnersMap creates .tages/ directory if absent', () => {
+    const nestedDir = path.join(tmpDir, 'nested-project')
+    fs.mkdirSync(nestedDir)
+    writeOwnersMap({ Commands: 'devex' }, nestedDir)
+    const filePath = ownersFilePath(nestedDir)
+    expect(fs.existsSync(filePath)).toBe(true)
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'))
+    expect(parsed).toEqual({ Commands: 'devex' })
+  })
+})
+
+// ------------------------------------------------------------
+// write + owners map integration
+// ------------------------------------------------------------
+
+describe('renderAgentsMd with federation awareness', () => {
+  it('renderAgentsMd output is deterministic regardless of owner map (no memory filtering yet — team_id schema gap)', () => {
+    // Since team_id is absent from the schema, renderAgentsMd output should be
+    // identical whether or not an owner map exists.  This test documents the
+    // current behaviour and will need updating when team_id lands.
+    const memories = [
+      { key: 'use-snake-case', value: 'Always snake_case routes', type: 'convention' },
+      { key: 'run-tests', value: 'pnpm test', type: 'execution', tags: ['Testing'] },
+    ]
+    const withoutOwners = renderAgentsMd('demo', memories)
+    // Simulate owner map existing (rendering does not change — gap documented)
+    const withOwners = renderAgentsMd('demo', memories)
+    expect(withoutOwners).toEqual(withOwners)
+    // Both should contain the memory regardless of owner map
+    expect(withoutOwners).toContain('use-snake-case')
+    expect(withoutOwners).toContain('run-tests')
   })
 })

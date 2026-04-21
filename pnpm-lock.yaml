@@ -5091,7 +5091,7 @@ snapshots:
 
   '@types/better-sqlite3@7.6.13':
     dependencies:
-      '@types/node': 20.19.39
+      '@types/node': 25.5.2
 
   '@types/chai@5.2.3':
     dependencies:

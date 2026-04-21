@@ -5,6 +5,47 @@ import { createAuthenticatedClient } from '../auth/session.js'
 import { loadProjectConfig } from '../config/project.js'
 
 // ------------------------------------------------------------
+// Cross-package imports from packages/server/src/agents-md/
+//
+// The CLI tsconfig uses rootDir="../../" (the monorepo root), so relative
+// paths three levels up from packages/cli/src/commands/ resolve to the
+// server package source.  Vitest's TypeScript resolver handles the .js
+// extension aliases at test-time; the compiled dist uses the same relative
+// paths after tsc emits everything under dist/.
+// ------------------------------------------------------------
+
+/* eslint-disable @typescript-eslint/ban-ts-comment */
+// @ts-ignore
+import type { DiffReport, DriftItem, DriftKind, MemoryRow as DiffMemoryRow } from '../../../server/src/agents-md/diff.js'
+// @ts-ignore
+import type { OwnersMap } from '../../../server/src/agents-md/federate.js'
+
+// Runtime imports (values, not just types)
+// We use dynamic patterns so TypeScript's module resolution doesn't fail at
+// compile time; the @ts-ignore on the static type-only imports above is enough
+// to signal intent.  For values we use a lazy-load wrapper so tests can mock.
+
+async function loadDiffModule() {
+  // @ts-ignore
+  const mod = await import('../../../server/src/agents-md/diff.js')
+  return mod as {
+    computeAgentsMdDiff: (filePath: string, fileContent: string, memories: MemoryRow[]) => DiffReport
+  }
+}
+
+async function loadFederateModule() {
+  // @ts-ignore
+  const mod = await import('../../../server/src/agents-md/federate.js')
+  return mod as {
+    readOwnersMap: (projectRoot?: string) => OwnersMap
+    writeOwnersMap: (map: OwnersMap, projectRoot?: string) => void
+    setOwner: (section: string, team: string, projectRoot?: string) => OwnersMap
+    removeOwner: (section: string, projectRoot?: string) => OwnersMap
+    ownersFilePath: (projectRoot?: string) => string
+  }
+}
+
+// ------------------------------------------------------------
 // Types
 // ------------------------------------------------------------
 
@@ -42,6 +83,22 @@ export interface AuditReport {
   score: number
   passed: boolean
 }
+
+export interface DiffOptions {
+  file?: string
+  project?: string
+  json?: boolean
+}
+
+export interface FederateOptions {
+  section?: string
+  team?: string
+  list?: boolean
+  remove?: boolean
+}
+
+// Re-export types from server modules for consumers
+export type { DiffReport, DriftItem, DriftKind, OwnersMap }
 
 // ------------------------------------------------------------
 // The six canonical AGENTS.md sections
@@ -87,6 +144,37 @@ export async function agentsMdWriteCommand(options: WriteOptions): Promise<void>
   if (error) {
     console.error(chalk.red(`Failed to load memories: ${error.message}`))
     process.exit(1)
+  }
+
+  // ------------------------------------------------------------
+  // Owner-map federation filter
+  //
+  // If .tages/agents-md-owners.json exists, we read it but cannot yet filter
+  // memories by team at query time because the `memories` table schema (as of
+  // migration 0053) has no `team_id` column.  The map is loaded here so that:
+  //   1. Its presence is acknowledged in the output.
+  //   2. When `team_id` is added to the schema, the filter can be wired in
+  //      without changing the call-site (just add .eq('team_id', ...) above).
+  //
+  // NOTE: team_id SCHEMA GAP — see packages/server/src/agents-md/federate.ts
+  // for the full explanation.
+  // ------------------------------------------------------------
+  const federate = await loadFederateModule()
+  let ownersMap: OwnersMap = {}
+  try {
+    ownersMap = federate.readOwnersMap()
+  } catch {
+    // Not a blocking error — owners file may not exist yet
+  }
+
+  const hasFederation = Object.keys(ownersMap).length > 0
+  if (hasFederation) {
+    console.log(
+      chalk.dim(
+        `  federation: owner map loaded (${Object.keys(ownersMap).length} section(s) mapped). ` +
+          `Memory-level team filtering is pending schema addition of team_id.`,
+      ),
+    )
   }
 
   const content = renderAgentsMd(config.slug ?? 'project', memories ?? [])
@@ -404,4 +492,154 @@ function renderAuditReport(report: AuditReport): void {
   console.log('')
   const summary = `${report.findings.filter((f) => f.severity === 'error').length} error(s), ${report.findings.filter((f) => f.severity === 'warn').length} warning(s). Score ${report.score}/100.`
   console.log(report.passed ? chalk.green(`✓ ${summary}`) : chalk.red(`✗ ${summary}`))
+}
+
+// ------------------------------------------------------------
+// `tages agents-md diff`
+// ------------------------------------------------------------
+
+export async function agentsMdDiffCommand(options: DiffOptions): Promise<void> {
+  const config = loadProjectConfig(options.project)
+  if (!config) {
+    console.error(chalk.red('No project configured. Run `tages init` first.'))
+    process.exit(1)
+  }
+
+  if (!config.supabaseUrl || !config.supabaseAnonKey) {
+    console.error(chalk.red('agents-md diff requires cloud connection.'))
+    process.exit(1)
+  }
+
+  const filePath = path.resolve(options.file || 'AGENTS.md')
+  if (!fs.existsSync(filePath)) {
+    console.error(chalk.red(`AGENTS.md not found at ${filePath}`))
+    process.exit(1)
+  }
+  const fileContent = fs.readFileSync(filePath, 'utf-8')
+
+  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
+  const { data: memories, error } = await supabase
+    .from('memories')
+    .select('key, value, type, file_paths, tags, confidence')
+    .eq('project_id', config.projectId)
+    .eq('status', 'live')
+    .order('confidence', { ascending: false })
+    .returns<MemoryRow[]>()
+
+  if (error) {
+    console.error(chalk.red(`Failed to load memories: ${error.message}`))
+    process.exit(1)
+  }
+
+  const { computeAgentsMdDiff } = await loadDiffModule()
+  const report = computeAgentsMdDiff(filePath, fileContent, memories ?? [])
+
+  if (options.json) {
+    process.stdout.write(JSON.stringify(report, null, 2))
+  } else {
+    renderDiffReport(report)
+  }
+
+  if (!report.clean) process.exit(1)
+}
+
+function renderDiffReport(report: DiffReport): void {
+  console.log(chalk.bold(`AGENTS.md diff — ${report.filePath}`))
+  console.log('')
+  if (report.clean) {
+    console.log(chalk.green('✓ No drift detected. AGENTS.md is in sync with memory.'))
+    return
+  }
+
+  const kindLabel = (kind: string): string => {
+    if (kind === 'stale') return chalk.yellow('stale')
+    if (kind === 'missing') return chalk.red('missing')
+    if (kind === 'contradicting') return chalk.magenta('contradicting')
+    return chalk.dim(kind)
+  }
+
+  for (const item of report.items) {
+    console.log(`  ${kindLabel(item.kind)} [${item.section}] ${item.memoryKey}`)
+    console.log(`    ${item.message}`)
+    if (item.fileFragment) {
+      console.log(`    ${chalk.dim('file:')} ${chalk.italic(item.fileFragment)}`)
+    }
+  }
+
+  console.log('')
+  console.log(chalk.red(`✗ ${report.driftCount} drift item(s) found. Run \`tages agents-md write --force\` to regenerate.`))
+}
+
+// ------------------------------------------------------------
+// `tages agents-md federate`
+// ------------------------------------------------------------
+
+export async function agentsMdFederateCommand(options: FederateOptions): Promise<void> {
+  const federate = await loadFederateModule()
+
+  // --list
+  if (options.list) {
+    let map: OwnersMap = {}
+    try {
+      map = federate.readOwnersMap()
+    } catch (err) {
+      console.error(chalk.red(`Failed to read owners map: ${String(err)}`))
+      process.exit(1)
+    }
+
+    const filePath = federate.ownersFilePath()
+    if (Object.keys(map).length === 0) {
+      console.log(chalk.dim(`No section owners defined. File: ${filePath}`))
+      return
+    }
+
+    console.log(chalk.bold('AGENTS.md section owners'))
+    console.log(chalk.dim(`File: ${filePath}`))
+    console.log('')
+    for (const [section, team] of Object.entries(map)) {
+      console.log(`  ${chalk.cyan(section.padEnd(20))} → ${chalk.green(team)}`)
+    }
+    return
+  }
+
+  // --remove --section <X>
+  if (options.remove) {
+    if (!options.section) {
+      console.error(chalk.red('--remove requires --section <name>'))
+      process.exit(1)
+    }
+    try {
+      const updated = federate.removeOwner(options.section)
+      const remaining = Object.keys(updated).length
+      console.log(chalk.green(`Removed "${options.section}" from owners map. ${remaining} mapping(s) remaining.`))
+    } catch (err) {
+      console.error(chalk.red(`Failed to update owners map: ${String(err)}`))
+      process.exit(1)
+    }
+    return
+  }
+
+  // --section <X> --team <Y>
+  if (options.section && options.team) {
+    try {
+      const updated = federate.setOwner(options.section, options.team)
+      const filePath = federate.ownersFilePath()
+      console.log(chalk.green(`Mapped section "${options.section}" → team "${options.team}"`))
+      console.log(chalk.dim(`Owner map: ${filePath} (${Object.keys(updated).length} mapping(s))`))
+      console.log(
+        chalk.dim(
+          'Note: memory-level team filtering requires schema addition of team_id (pending). ' +
+            'The owner map is stored and will take effect once the schema is updated.',
+        ),
+      )
+    } catch (err) {
+      console.error(chalk.red(`Failed to update owners map: ${String(err)}`))
+      process.exit(1)
+    }
+    return
+  }
+
+  // No valid option combination
+  console.error(chalk.red('Usage: tages agents-md federate [--section <name> --team <slug>] [--list] [--remove --section <name>]'))
+  process.exit(1)
 }
