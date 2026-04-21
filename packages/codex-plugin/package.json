@@ -1,0 +1,36 @@
+{
+  "name": "@tages/codex-plugin",
+  "version": "0.1.0",
+  "description": "Install Tages as an MCP server in OpenAI Codex (writes ~/.codex/config.toml).",
+  "type": "module",
+  "bin": {
+    "tages-codex-plugin": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "tsc",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "license": "MIT",
+  "author": "Ryan Lee <ryantlee25@gmail.com>",
+  "homepage": "https://tages.ai",
+  "bugs": {
+    "url": "https://github.com/ryantlee25-droid/tages/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ryantlee25-droid/tages.git",
+    "directory": "packages/codex-plugin"
+  },
+  "keywords": ["codex", "openai", "mcp", "ai", "memory", "tages"],
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.0"
+  }
+}
