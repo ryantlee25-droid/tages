@@ -1,0 +1,4 @@
+data/*.json
+results/*.json
+node_modules/
+dist/
