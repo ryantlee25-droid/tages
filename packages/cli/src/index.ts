@@ -37,7 +37,7 @@ import { auditCommand } from './commands/audit.js'
 import { sharpenCommand } from './commands/sharpen.js'
 import { teamInviteCommand, teamListCommand, teamRemoveCommand, teamRoleCommand } from './commands/team.js'
 import { settingsAutoSaveCommand } from './commands/settings.js'
-import { agentsMdWriteCommand, agentsMdAuditCommand } from './commands/agents-md.js'
+import { agentsMdWriteCommand, agentsMdAuditCommand, agentsMdDiffCommand, agentsMdFederateCommand } from './commands/agents-md.js'
 
 const program = new Command()
 
@@ -487,5 +487,22 @@ agentsMdCmd
   .action((filePath: string | undefined, opts: { json?: boolean }) =>
     agentsMdAuditCommand({ path: filePath, json: opts.json }),
   )
+
+agentsMdCmd
+  .command('diff')
+  .description('Compare committed AGENTS.md against live Tages memory — reports stale, missing, and contradicting drift')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('-f, --file <path>', 'Path to AGENTS.md (default: AGENTS.md in cwd)')
+  .option('--json', 'Emit machine-readable diff report')
+  .action(agentsMdDiffCommand)
+
+agentsMdCmd
+  .command('federate')
+  .description('Manage .tages/agents-md-owners.json — map section names to team slugs')
+  .option('--section <name>', 'Section name to set or remove')
+  .option('--team <slug>', 'Team slug to assign to the section')
+  .option('--list', 'Print the current owner map')
+  .option('--remove', 'Remove the mapping for --section')
+  .action(agentsMdFederateCommand)
 
 program.parse()
