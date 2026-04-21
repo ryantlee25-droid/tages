@@ -163,6 +163,14 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 - `apps/dashboard/src/components/marketing/governance-page.tsx`: corrected `session_id` field type in the Provenance model table from `text` to `uuid`. (S1)
 - W3 (test count targets) was declined — counts reflect a verified test-run output, not a goal. S2 (control-flow warning) was deferred — no runtime impact.
 
+### 2026-04-20 — Bet A governance foundation (Sprint A + B + C)
+
+- **Pre-launch hygiene (Phase 0)**: `HOOK.md` and `.semgrep-results/` added to `.gitignore`. Closed migration 0042 git gap — file had been applied to prod on Apr 10 but never committed; `supabase migration list --linked` confirmed prod/local match.
+- **Sprint A — Differentiation foundation (Phase 3.1 + 3.2)**: New `@tages/codex-plugin` package (TOML writer targeting `~/.codex/config.toml`, `--dry-run`, block detection). New `@tages/gemini-plugin` package (JSON merge into `~/.gemini/settings.json` with preserved top-level keys). New `tages agents-md diff` and `tages agents-md federate` CLI subcommands extending the Bet B foundation. White review fixes: gemini env-var placeholders, codex regex false-positive on `[mcp_servers.tages.env]` alone, diff negation-word boundary.
+- **Sprint B — LongMemEval harness scaffold (Phase 1.1)**: New `eval/longmemeval/` directory with standalone TypeScript harness (not in pnpm workspace). RetainDB-pattern methodology documented with comparability caveat (Supermemory/RetainDB baselines on deprecated dataset). Pluggable memory backend: `in-memory` lexical floor + `tages-cli` real integration. Dry-run verified; real runs pending `OPENAI_API_KEY` + sandbox `TAGES_EVAL_PROJECT`.
+- **Sprint C — `tages drift` v1 (Phase 3.3)**: New `tages drift` CLI command (experimental). Semantic drift uses a real instability metric (1 − 1/distinct_values over field_changes); 10 unit tests cover zero/two/three-value instability, session+agent reporting, whitespace normalization, topK. Coordination drift stubbed (`not_implemented`) — blocked on `memories.team_id` column. Behavioral drift stubbed (`insufficient_data` / `not_implemented`) — tool_call_log has raw data, v2 calibration pending design partners. `--json`, `--since`, `--agent`, `--limit` flags.
+- **Chore**: Plugin packages (cursor, codex, gemini) now use `--passWithNoTests` so `pnpm -r test` does not fail at the root.
+
 ### 2026-04-19
 
 - Fixed GitHub OAuth login redirecting to the marketing homepage instead of `/app/projects` after callback. Root cause: `SameSite=Strict` cookies are withheld by the browser on cross-site top-level navigations (i.e. GitHub's redirect back to `/auth/callback?code=...`), so the PKCE verifier and refreshed session cookies never reached the server. Reverted to Supabase's default `SameSite=Lax`, which is the correct setting for SSR auth cookies. `HttpOnly + Secure + Lax` still blocks CSRF on state-changing requests.
