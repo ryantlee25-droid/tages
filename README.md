@@ -146,6 +146,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-04-29 — Week 1 housekeeping (governance unghost, action-setup v6, drop provenance user_id)
+
+- **A1 — Governance page indexed**: removed `robots: 'noindex, nofollow'` from `/governance` metadata. The page is now crawlable and eligible for Google Search Console indexing. Added `/governance` link to both the desktop nav (after Security, before GitHub) and the mobile menu using the same styling as adjacent links.
+- **A4 follow-up — publish.yml pnpm/action-setup aligned to v6**: bumped `pnpm/action-setup@v5` to `@v6` in `.github/workflows/publish.yml`. PR #31 (Dependabot) is bringing `ci.yml` to v6; without this bump `publish.yml` would be left on v5 — functional but inconsistent and easy to forget before the v0.3.1 tag push.
+- **B1 — `get_memory_provenance` no longer returns raw auth.users UUID (migration 0058)**: `create or replace function` in `supabase/migrations/0058_drop_provenance_user_id.sql` removes the `user_id uuid` column from the function's `returns table(...)` and the corresponding `m.updated_by as user_id` from the SELECT. All other columns retained. The function still returns `user_display` (full_name → email-prefix → "Unknown") which is sufficient for every caller. Zero callers in the codebase (`grep -r get_memory_provenance apps/ packages/` returns no hits). Closes White W1 review finding from PR #55. Migration must be applied to prod via `supabase db push --linked` after merge.
+
 ### 2026-04-29 — v0.3.1: behavioral drift (Jensen-Shannon divergence on tool-call distributions)
 
 - **Behavioral drift algorithm**: replaced the v1 `insufficient_data` stub in `behavioral-drift.ts` with a real Jensen-Shannon divergence implementation. Per-agent temporal drift: for each agent active in both windows with ≥5 calls per window, compute JSD(baseline_distribution, current_distribution) over the union tool vocabulary with Laplace smoothing, normalize to [0,1] by dividing by ln(2), and average across eligible agents (max 20). Returns `BehavioralDriftReport` with `score`, `status`, `note`, `jsd` (raw), `agentCount`, `agentDistributions` (top-3 tools per agent), and `windowA`/`windowB` boundary metadata.
