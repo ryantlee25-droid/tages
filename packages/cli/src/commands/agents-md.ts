@@ -177,7 +177,21 @@ export async function agentsMdWriteCommand(options: WriteOptions): Promise<void>
     )
   }
 
-  const content = renderAgentsMd(config.slug ?? 'project', memories ?? [])
+  let content = renderAgentsMd(config.slug ?? 'project', memories ?? [])
+
+  // Federation owner-map is loaded but team_id is not yet a column on
+  // `memories`, so the generated file contains all-team memories. Inject a
+  // machine-readable warning header so any agent reading this file (and any
+  // human reviewing diffs) sees the limitation up front.
+  if (hasFederation) {
+    const warning =
+      `<!-- TAGES_FEDERATION_NOTE: An owner map (.tages/agents-md-owners.json) is configured ` +
+      `with ${Object.keys(ownersMap).length} section(s), but team-level memory filtering is ` +
+      `not yet active (pending schema addition of team_id). This file therefore includes ` +
+      `memories from ALL teams on this project, not only the section owners. ` +
+      `Treat the section ownership in the owner map as advisory until team_id ships. -->\n`
+    content = warning + content
+  }
 
   if (options.dryRun) {
     process.stdout.write(content)

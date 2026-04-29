@@ -70,7 +70,7 @@ interface CursorMcpFile {
   [key: string]: unknown
 }
 
-function buildTagesEntry(): McpServerEntry {
+export function buildTagesEntry(): McpServerEntry {
   return {
     command: 'npx',
     args: ['-y', '@tages/server'],
@@ -135,4 +135,6 @@ function main(): void {
   )
 }
 
-main()
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main()
+}

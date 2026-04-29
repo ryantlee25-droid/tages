@@ -146,6 +146,16 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-04-29 — PR #55 White-review fix bundle
+
+- **B1 — `drift.ts` crash on bad `--since`**: `resolveSince()` is now wrapped in try/catch; invalid input prints a clean error message and exits with code 1 instead of throwing uncaught.
+- **B2 — `codex-plugin` duplicate TOML block**: `--force` no longer appends a second `[mcp_servers.tages]` header. A new exported `stripTagesBlock()` helper removes any existing tages tables in-place before the new block is written. USAGE text updated to reflect the replace-in-place behaviour.
+- **W2 — `--limit` applied to queries**: `tages drift --limit` now passes `.limit()` to both Supabase queries (`field_changes` and `tool_call_log`) in addition to display truncation; the value is validated as a positive integer.
+- **W3 — `agents-md` federation header**: when `agents-md-owners.json` is configured but `memories.team_id` doesn't exist, the generated AGENTS.md opens with a machine-readable `<!-- TAGES_FEDERATION_NOTE: ... -->` HTML comment so agents and reviewers see the limitation immediately.
+- **Q1 — dynamic oracle SHA**: `eval/longmemeval/src/dataset.ts` now exports `computeOracleSha()` that hashes the on-disk oracle file at run time; `run.ts` reports the actual SHA instead of a hardcoded constant.
+- **CI widening**: `.github/workflows/ci.yml` and `publish.yml` expanded from `--filter @tages/server` to `-r` (all packages). `publish.yml` also adds `@tages/codex-plugin` and `@tages/gemini-plugin` to the npm publish matrix.
+- **New tests (15 total)**: regression suite for `codex-plugin` (9 tests, including round-trip strip+append guard), plus entry-point tests for `cursor-plugin` (3) and `gemini-plugin` (3). Plugin `main()` calls guarded with `import.meta.url` check so packages are importable in tests.
+
 ### 2026-04-20
 
 - **README hygiene**: Stripped unreproducible benchmark claim from `## Benchmarks` section; corrected MCP tool, CLI command, test, and migration counts to match current codebase.

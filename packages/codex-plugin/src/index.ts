@@ -12,7 +12,7 @@ Usage:
 Options:
   --dry-run          Print the config block to stdout instead of writing
   --print            Alias for --dry-run
-  --force            Append even if a "[mcp_servers.tages]" block already exists
+  --force            Replace an existing "[mcp_servers.tages]" block in-place
   -h, --help         Show this message
 
 Examples:
@@ -53,7 +53,7 @@ function resolveConfigPath(): string {
   return join(home, '.codex', 'config.toml')
 }
 
-function buildTagesBlock(): string {
+export function buildTagesBlock(): string {
   return [
     '[mcp_servers.tages]',
     'command = "npx"',
@@ -66,8 +66,36 @@ function buildTagesBlock(): string {
   ].join('\n')
 }
 
-function hasTagesBlock(existing: string): boolean {
+export function hasTagesBlock(existing: string): boolean {
   return /^\[mcp_servers\.tages\]/m.test(existing)
+}
+
+/**
+ * Remove the [mcp_servers.tages] and [mcp_servers.tages.env] tables (and their
+ * key/value lines) from a TOML document, leaving all other content intact.
+ *
+ * Walks line by line: when a target table header is hit, skip all lines until
+ * the next table header (any `[...]`) or EOF. This preserves the user's other
+ * config without depending on a TOML parser.
+ */
+export function stripTagesBlock(content: string): string {
+  const targetHeader = /^\[mcp_servers\.tages(?:\.[a-zA-Z0-9_-]+)*\]\s*$/
+  const anyHeader = /^\[[^\]]+\]\s*$/
+  const out: string[] = []
+  const lines = content.split('\n')
+  let skipping = false
+  for (const line of lines) {
+    if (targetHeader.test(line)) {
+      skipping = true
+      continue
+    }
+    if (skipping && anyHeader.test(line)) {
+      skipping = false
+    }
+    if (!skipping) out.push(line)
+  }
+  // Collapse any run of 3+ blank lines left behind from the strip
+  return out.join('\n').replace(/\n{3,}/g, '\n\n')
 }
 
 function main(): void {
@@ -85,16 +113,21 @@ function main(): void {
   }
 
   const path = resolveConfigPath()
-  const existing = existsSync(path) ? readFileSync(path, 'utf8') : ''
+  const rawExisting = existsSync(path) ? readFileSync(path, 'utf8') : ''
 
-  if (hasTagesBlock(existing) && !args.force) {
+  if (hasTagesBlock(rawExisting) && !args.force) {
     stderr.write(
       `A "[mcp_servers.tages]" block already exists in ${path}.\n` +
-        `Use --force to append a duplicate, or edit the file manually.\n` +
+        `Use --force to replace it in-place, or edit the file manually.\n` +
         `Safer alternative: codex mcp add tages -- npx -y @tages/server\n`,
     )
     exit(1)
   }
+
+  // When --force is set on an existing config, remove the old tages tables
+  // before appending the new block; otherwise duplicate [mcp_servers.tages]
+  // headers would make the TOML unparseable.
+  const existing = hasTagesBlock(rawExisting) ? stripTagesBlock(rawExisting) : rawExisting
 
   const separator = existing.length === 0 || existing.endsWith('\n\n') ? '' : existing.endsWith('\n') ? '\n' : '\n\n'
   const next = `${existing}${separator}${block}\n`
@@ -111,4 +144,6 @@ function main(): void {
   )
 }
 
-main()
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main()
+}

@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 import type { LongMemEvalQuestion, QuestionType } from './types.js'
 
@@ -12,6 +13,11 @@ const DATA_PATH = resolve(
 export function loadOracle(): LongMemEvalQuestion[] {
   const raw = readFileSync(DATA_PATH, 'utf8')
   return JSON.parse(raw) as LongMemEvalQuestion[]
+}
+
+export function computeOracleSha(): string {
+  const raw = readFileSync(DATA_PATH)
+  return createHash('sha1').update(raw).digest('hex')
 }
 
 /**

@@ -46,8 +46,20 @@ export async function driftCommand(options: DriftOptions): Promise<void> {
     process.exit(1)
   }
 
-  const sinceIso = resolveSince(options.since)
+  let sinceIso: string | undefined
+  try {
+    sinceIso = resolveSince(options.since)
+  } catch (err) {
+    console.error(chalk.red((err as Error).message))
+    process.exit(1)
+  }
   const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
+
+  const limit = options.limit ? Number(options.limit) : undefined
+  if (options.limit !== undefined && (!Number.isFinite(limit) || (limit as number) <= 0)) {
+    console.error(chalk.red(`Invalid --limit value: ${options.limit}. Must be a positive integer.`))
+    process.exit(1)
+  }
 
   // 1. field_changes for value-column writes in window
   let fcQuery = supabase
@@ -58,6 +70,7 @@ export async function driftCommand(options: DriftOptions): Promise<void> {
     .order('created_at', { ascending: true })
 
   if (sinceIso) fcQuery = fcQuery.gte('created_at', sinceIso)
+  if (limit !== undefined) fcQuery = fcQuery.limit(limit)
 
   const { data: fcData, error: fcError } = await fcQuery
   if (fcError) {
@@ -114,6 +127,7 @@ export async function driftCommand(options: DriftOptions): Promise<void> {
     .eq('project_id', config.projectId)
   if (sinceIso) tcQuery = tcQuery.gte('created_at', sinceIso)
   if (options.agent) tcQuery = tcQuery.eq('agent_name', options.agent)
+  if (limit !== undefined) tcQuery = tcQuery.limit(limit)
 
   const { data: tcData, error: tcError } = await tcQuery
   // tool_call_log might be empty / RLS-denied on older projects — treat absence as zero, not error
@@ -135,7 +149,7 @@ export async function driftCommand(options: DriftOptions): Promise<void> {
     return
   }
 
-  renderHuman(report, Number(options.limit ?? '10'))
+  renderHuman(report, limit ?? 10)
 }
 
 export function resolveSince(raw: string | undefined): string | undefined {

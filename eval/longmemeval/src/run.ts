@@ -7,7 +7,7 @@
  */
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
-import { loadOracle, stratifiedSample } from './dataset.js'
+import { loadOracle, stratifiedSample, computeOracleSha } from './dataset.js'
 import { makeStore, type Backend } from './memory.js'
 import { generateAnswer, judge, estimateCostUsd, type LlmCost } from './answer.js'
 import type { RunResult, QuestionType } from './types.js'
@@ -184,7 +184,7 @@ function buildResult(
   const ts = new Date().toISOString().replace(/[:.]/g, '-')
   return {
     run_id: `tages-${args.backend}-n${args.n}-seed${args.seed}-${ts}`,
-    dataset_sha: '98d7416c24c778c2fee6e6f3006e7a073259d48f',
+    dataset_sha: computeOracleSha(),
     model_answer: 'gpt-4o-2024-08-06',
     model_judge: 'gpt-4o-2024-08-06',
     tages_version: 'dev',
