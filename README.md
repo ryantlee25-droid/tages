@@ -146,6 +146,14 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-04-29 — PR #55 White second-review fix bundle (W2 limit-semantics, W2-AOT codex regex, Q1 Windows guard)
+
+- **W2 limit-semantics — `drift.ts` `--limit` regression reverted**: `--limit` now controls display top-K only (original semantics, default 10). A new `MAX_DB_ROWS = 10000` constant applied to both Supabase queries provides defensive OOM protection without conflating "show top N keys" with "fetch N rows from the chronological window".
+- **W2-AOT codex regex — `stripTagesBlock` TOML array-of-tables support**: `targetHeader` and `anyHeader` regexes now match `[[mcp_servers.tages]]` in addition to `[mcp_servers.tages]`. Hand-edited configs using double-bracket syntax are now cleaned correctly by `--force`. JSDoc updated to document the comment-swallowing limitation.
+- **Q1 Windows guard — `pathToFileURL` entrypoint fix (codex, cursor, gemini plugins)**: Replaced `import.meta.url === \`file://${process.argv[1]}\`` with `import.meta.url === pathToFileURL(process.argv[1]).href` in all three plugins. The original was broken on Windows (`import.meta.url` uses `file:///C:/...`; `process.argv[1]` uses `C:\...` — never equal), silently no-opping `main()` under `npx`.
+- **Regression test**: `packages/codex-plugin/src/__tests__/index.test.ts` adds one test covering `[[mcp_servers.tages]]` strip (10 tests total, was 9). 826 passing overall.
+- Deferred: W1 (comment swallowing before next non-tages header) — documented in JSDoc; S2 (friendly ENOENT for `computeOracleSha`) — punt, raw error acceptable for eval harness.
+
 ### 2026-04-29 — PR #55 White-review fix bundle
 
 - **B1 — `drift.ts` crash on bad `--since`**: `resolveSince()` is now wrapped in try/catch; invalid input prints a clean error message and exits with code 1 instead of throwing uncaught.

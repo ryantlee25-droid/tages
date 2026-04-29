@@ -89,4 +89,17 @@ describe('codex-plugin / stripTagesBlock (regression: --force must not duplicate
     const input = '[mcp_servers.other]\ncommand = "x"\n'
     expect(stripTagesBlock(input)).toContain('[mcp_servers.other]')
   })
+
+  it('also strips the array-of-tables form [[mcp_servers.tages]]', () => {
+    const input =
+      '[mcp_servers.other]\n' +
+      'command = "x"\n' +
+      '\n' +
+      '[[mcp_servers.tages]]\n' +
+      'command = "old"\n'
+    const out = stripTagesBlock(input)
+    expect(out).toContain('[mcp_servers.other]')
+    expect(out).not.toContain('[[mcp_servers.tages]]')
+    expect(out).not.toContain('command = "old"')
+  })
 })

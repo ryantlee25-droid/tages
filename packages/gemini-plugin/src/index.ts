@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { argv, exit, stderr, stdout } from 'node:process'
+import { pathToFileURL } from 'node:url'
 
 const USAGE = `
 tages-gemini-plugin — install Tages as an MCP server in Gemini CLI
@@ -127,6 +128,6 @@ function main(): void {
   )
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
 }

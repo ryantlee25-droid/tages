@@ -35,6 +35,10 @@ export interface DriftOptions {
   limit?: string
 }
 
+// Defensive cap on rows fetched from Supabase per query. Prevents OOM on very
+// large projects without conflating with `--limit` (which is display top-K).
+const MAX_DB_ROWS = 10000
+
 export async function driftCommand(options: DriftOptions): Promise<void> {
   const config = loadProjectConfig(options.project)
   if (!config) {
@@ -55,10 +59,17 @@ export async function driftCommand(options: DriftOptions): Promise<void> {
   }
   const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
 
-  const limit = options.limit ? Number(options.limit) : undefined
-  if (options.limit !== undefined && (!Number.isFinite(limit) || (limit as number) <= 0)) {
-    console.error(chalk.red(`Invalid --limit value: ${options.limit}. Must be a positive integer.`))
-    process.exit(1)
+  // --limit controls display top-K only; a separate fixed cap protects against
+  // OOM on very large projects without conflating "show me 5 worst keys" with
+  // "fetch only 5 rows from the chronological window".
+  let displayLimit: number | undefined
+  if (options.limit !== undefined) {
+    const parsed = Number(options.limit)
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      console.error(chalk.red(`Invalid --limit value: ${options.limit}. Must be a positive integer.`))
+      process.exit(1)
+    }
+    displayLimit = parsed
   }
 
   // 1. field_changes for value-column writes in window
@@ -68,9 +79,9 @@ export async function driftCommand(options: DriftOptions): Promise<void> {
     .eq('project_id', config.projectId)
     .eq('field_name', 'value')
     .order('created_at', { ascending: true })
+    .limit(MAX_DB_ROWS)
 
   if (sinceIso) fcQuery = fcQuery.gte('created_at', sinceIso)
-  if (limit !== undefined) fcQuery = fcQuery.limit(limit)
 
   const { data: fcData, error: fcError } = await fcQuery
   if (fcError) {
@@ -125,9 +136,9 @@ export async function driftCommand(options: DriftOptions): Promise<void> {
     .from('tool_call_log')
     .select('project_id, session_id, agent_name, tool_name, created_at')
     .eq('project_id', config.projectId)
+    .limit(MAX_DB_ROWS)
   if (sinceIso) tcQuery = tcQuery.gte('created_at', sinceIso)
   if (options.agent) tcQuery = tcQuery.eq('agent_name', options.agent)
-  if (limit !== undefined) tcQuery = tcQuery.limit(limit)
 
   const { data: tcData, error: tcError } = await tcQuery
   // tool_call_log might be empty / RLS-denied on older projects — treat absence as zero, not error
@@ -149,7 +160,7 @@ export async function driftCommand(options: DriftOptions): Promise<void> {
     return
   }
 
-  renderHuman(report, limit ?? 10)
+  renderHuman(report, displayLimit ?? 10)
 }
 
 export function resolveSince(raw: string | undefined): string | undefined {

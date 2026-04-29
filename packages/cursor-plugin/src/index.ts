@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { argv, cwd, exit, stderr, stdout } from 'node:process'
+import { pathToFileURL } from 'node:url'
 
 const USAGE = `
 tages-cursor-plugin — install Tages as an MCP server in Cursor
@@ -135,6 +136,6 @@ function main(): void {
   )
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
 }

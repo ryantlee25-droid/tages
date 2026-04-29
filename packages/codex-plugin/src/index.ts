@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { argv, exit, stderr, stdout } from 'node:process'
+import { pathToFileURL } from 'node:url'
 
 const USAGE = `
 tages-codex-plugin — install Tages as an MCP server in OpenAI Codex
@@ -74,13 +75,23 @@ export function hasTagesBlock(existing: string): boolean {
  * Remove the [mcp_servers.tages] and [mcp_servers.tages.env] tables (and their
  * key/value lines) from a TOML document, leaving all other content intact.
  *
+ * Also matches the array-of-tables form `[[mcp_servers.tages]]` so a hand-edited
+ * config that uses double brackets is cleaned correctly.
+ *
  * Walks line by line: when a target table header is hit, skip all lines until
- * the next table header (any `[...]`) or EOF. This preserves the user's other
- * config without depending on a TOML parser.
+ * the next table header (single or double bracket) or EOF. This preserves the
+ * user's other config without depending on a TOML parser.
+ *
+ * Limitation: comments (`# ...`) or blank lines that immediately precede the
+ * next non-tages table header are absorbed into the skip window. In practice
+ * Codex-generated configs don't carry inter-section comments, but a hand-edited
+ * file may lose a stray comment after `--force`. Documented rather than fixed
+ * with look-ahead, since the user-visible content (other tables + their values)
+ * is preserved.
  */
 export function stripTagesBlock(content: string): string {
-  const targetHeader = /^\[mcp_servers\.tages(?:\.[a-zA-Z0-9_-]+)*\]\s*$/
-  const anyHeader = /^\[[^\]]+\]\s*$/
+  const targetHeader = /^\[{1,2}mcp_servers\.tages(?:\.[a-zA-Z0-9_-]+)*\]{1,2}\s*$/
+  const anyHeader = /^\[{1,2}[^\]]+\]{1,2}\s*$/
   const out: string[] = []
   const lines = content.split('\n')
   let skipping = false
@@ -144,6 +155,8 @@ function main(): void {
   )
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Windows-safe entrypoint guard: pathToFileURL normalises drive letters and
+// backslashes so the comparison works on win32 as well as macOS/Linux.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main()
 }
