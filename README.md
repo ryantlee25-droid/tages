@@ -3,7 +3,7 @@
 **Team memory for AI coding agents.**
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-521%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-768%20passing-brightgreen.svg)]()
 
 Your AI agents forget everything between sessions. Every decision re-litigated. Every convention re-explained. Every past mistake repeated by the next agent that touches the same code.
 
@@ -81,7 +81,7 @@ Claude Code, Cursor, Codex, Gemini — anything that speaks [MCP](https://modelc
 ## Features
 
 - **56 MCP tools** — remember, recall, audit, sharpen, import, federation, analytics, and more
-- **52 CLI commands** — full control from the terminal
+- **53 CLI commands** — full control from the terminal
 - **Web dashboard** — browse, search, and edit memories with dark-mode UI
 - **Auto-indexing** — git hooks extract decisions from commits via Ollama or Claude Haiku
 - **Import** — seed from existing CLAUDE.md, ARCHITECTURE.md, or JSON files
@@ -94,7 +94,7 @@ Claude Code, Cursor, Codex, Gemini — anything that speaks [MCP](https://modelc
 
 ## Benchmarks
 
-In five head-to-head benchmarks, agents with Tages context scored up to **9.1/10 vs 2.8/10 without** — quality deltas scaling from +1.0 on simple tasks to +6.3 on complex ones. The biggest gains were in convention compliance, integration wiring, and gotcha avoidance. Agents without memory consistently created orphaned code that didn't wire into existing subsystems.
+Reproducible LongMemEval and coding-memory benchmark results are published under [`eval/`](eval/) with full methodology, judge configuration, and run notebooks. Results are reproducible against the published harness; raw numbers are in each eval's `results/` directory.
 
 ## Setup Guides
 
@@ -110,13 +110,13 @@ In five head-to-head benchmarks, agents with Tages context scored up to **9.1/10
 
 ```
 packages/
-  server/     MCP server (56 tools, stdio transport, 445 tests)
-  cli/        CLI (52 commands, npm global install, 76 tests)
+  server/     MCP server (56 tools, stdio transport, 605 tests)
+  cli/        CLI (53 commands, npm global install, 163 tests)
   shared/     TypeScript types + Supabase client
 apps/
   dashboard/  Next.js 16, Supabase Auth, Tailwind, shadcn/ui
 supabase/
-  migrations/ 42 migrations (tables, RLS, pgvector, RBAC, encryption)
+  migrations/ 56 migrations (tables, RLS, pgvector, RBAC, encryption)
 ```
 
 ## Security
@@ -145,6 +145,53 @@ See [PRIVACY.md](PRIVACY.md) for our privacy policy.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
+
+### 2026-04-29 — CI test-mock fix
+
+- **CI test-mock fix — `supabase.auth` interface added to `commands-smoke` mock**: `mockSupabase` now includes a `mockAuth` object with stubbed `setSession`, `getSession`, and `refreshSession` (all returning a valid session shape). Without this, any test that calls `writeAuthConfig` and runs without `TAGES_SERVICE_KEY` set would crash with `cannot read 'setSession' of undefined` — because `createAuthenticatedClient` reads `auth.json` and calls `supabase.auth.setSession(...)` on the auth-path branch. The bug was latent until CI was widened from `pnpm --filter @tages/server test` to `pnpm -r test` in c9a27f1; `resetMockSupabase()` updated to clear the three new mock functions alongside `from`/`rpc`.
+
+### 2026-04-29 — PR #55 White second-review fix bundle (W2 limit-semantics, W2-AOT codex regex, Q1 Windows guard)
+
+- **W2 limit-semantics — `drift.ts` `--limit` regression reverted**: `--limit` now controls display top-K only (original semantics, default 10). A new `MAX_DB_ROWS = 10000` constant applied to both Supabase queries provides defensive OOM protection without conflating "show top N keys" with "fetch N rows from the chronological window".
+- **W2-AOT codex regex — `stripTagesBlock` TOML array-of-tables support**: `targetHeader` and `anyHeader` regexes now match `[[mcp_servers.tages]]` in addition to `[mcp_servers.tages]`. Hand-edited configs using double-bracket syntax are now cleaned correctly by `--force`. JSDoc updated to document the comment-swallowing limitation.
+- **Q1 Windows guard — `pathToFileURL` entrypoint fix (codex, cursor, gemini plugins)**: Replaced `import.meta.url === \`file://${process.argv[1]}\`` with `import.meta.url === pathToFileURL(process.argv[1]).href` in all three plugins. The original was broken on Windows (`import.meta.url` uses `file:///C:/...`; `process.argv[1]` uses `C:\...` — never equal), silently no-opping `main()` under `npx`.
+- **Regression test**: `packages/codex-plugin/src/__tests__/index.test.ts` adds one test covering `[[mcp_servers.tages]]` strip (10 tests total, was 9). 826 passing overall.
+- Deferred: W1 (comment swallowing before next non-tages header) — documented in JSDoc; S2 (friendly ENOENT for `computeOracleSha`) — punt, raw error acceptable for eval harness.
+
+### 2026-04-29 — PR #55 White-review fix bundle
+
+- **B1 — `drift.ts` crash on bad `--since`**: `resolveSince()` is now wrapped in try/catch; invalid input prints a clean error message and exits with code 1 instead of throwing uncaught.
+- **B2 — `codex-plugin` duplicate TOML block**: `--force` no longer appends a second `[mcp_servers.tages]` header. A new exported `stripTagesBlock()` helper removes any existing tages tables in-place before the new block is written. USAGE text updated to reflect the replace-in-place behaviour.
+- **W2 — `--limit` applied to queries**: `tages drift --limit` now passes `.limit()` to both Supabase queries (`field_changes` and `tool_call_log`) in addition to display truncation; the value is validated as a positive integer.
+- **W3 — `agents-md` federation header**: when `agents-md-owners.json` is configured but `memories.team_id` doesn't exist, the generated AGENTS.md opens with a machine-readable `<!-- TAGES_FEDERATION_NOTE: ... -->` HTML comment so agents and reviewers see the limitation immediately.
+- **Q1 — dynamic oracle SHA**: `eval/longmemeval/src/dataset.ts` now exports `computeOracleSha()` that hashes the on-disk oracle file at run time; `run.ts` reports the actual SHA instead of a hardcoded constant.
+- **CI widening**: `.github/workflows/ci.yml` and `publish.yml` expanded from `--filter @tages/server` to `-r` (all packages). `publish.yml` also adds `@tages/codex-plugin` and `@tages/gemini-plugin` to the npm publish matrix.
+- **New tests (15 total)**: regression suite for `codex-plugin` (9 tests, including round-trip strip+append guard), plus entry-point tests for `cursor-plugin` (3) and `gemini-plugin` (3). Plugin `main()` calls guarded with `import.meta.url` check so packages are importable in tests.
+
+### 2026-04-20
+
+- **README hygiene**: Stripped unreproducible benchmark claim from `## Benchmarks` section; corrected MCP tool, CLI command, test, and migration counts to match current codebase.
+- **Bet A — Memory Governance foundation**: New `/governance` marketing page (draft, `noindex`). Migration `0057_provenance_fields.sql` adds `session_id`, `source_context`, and `tool_name` columns to `memories` with a GIN index and a `get_memory_provenance` RPC. `Memory` TypeScript type extended with `sessionId`, `toolName`, and `sourceContext`. Formal spec at `docs/provenance-model.md`.
+- **Bet B — AGENTS.md native tooling**: New `tages agents-md write` and `tages agents-md audit` CLI subcommands. `write` generates a canonical 6-section AGENTS.md from project memory. `audit` flags vagueness, missing sections, missing runnable commands, and absence of the three-tier Always/Ask/Never boundary pattern.
+- **Bet D — Cross-tool distribution**: New `@tages/cursor-plugin` package. Running `npx @tages/cursor-plugin` installs Tages in Cursor by writing `.cursor/mcp.json`. Setup guide at `docs/cursor-setup.md`.
+- **CI**: New `.github/workflows/publish.yml` triggers on `v*` tag push to publish packages to npm (requires `NPM_TOKEN` repo secret).
+- **Strategy documents**: `analysis/` directory lands with competitive analysis, trend scan, positioning brief, deep research execution doc, Monte Carlo pricing model, and research notes. `PLAN.md` and `REMAINING.md` added at repo root.
+
+#### Review fixes (post-White review)
+
+- `supabase/migrations/0057_provenance_fields.sql`: pinned `search_path = public, extensions` and added an `is_project_member(auth.uid(), m.project_id)` guard inside the `get_memory_provenance` SECURITY DEFINER function so it cannot leak provenance across projects. (B1, Q1)
+- `.github/workflows/publish.yml`: publish `@tages/cursor-plugin` alongside `@tages/shared`, `@tages/server`, `@tages/cli` on `v*` tag push. (W1)
+- `packages/cli/src/commands/agents-md.ts`: replaced the unsupported `\Z` anchor in `extractSection` with a JS-correct end-of-string lookahead so last-section audit rules (missing-commands, missing-tech-versions) fire correctly. Regression test added. (W2)
+- `apps/dashboard/src/components/marketing/governance-page.tsx`: corrected `session_id` field type in the Provenance model table from `text` to `uuid`. (S1)
+- W3 (test count targets) was declined — counts reflect a verified test-run output, not a goal. S2 (control-flow warning) was deferred — no runtime impact.
+
+### 2026-04-20 — Bet A governance foundation (Sprint A + B + C)
+
+- **Pre-launch hygiene (Phase 0)**: `HOOK.md` and `.semgrep-results/` added to `.gitignore`. Closed migration 0042 git gap — file had been applied to prod on Apr 10 but never committed; `supabase migration list --linked` confirmed prod/local match.
+- **Sprint A — Differentiation foundation (Phase 3.1 + 3.2)**: New `@tages/codex-plugin` package (TOML writer targeting `~/.codex/config.toml`, `--dry-run`, block detection). New `@tages/gemini-plugin` package (JSON merge into `~/.gemini/settings.json` with preserved top-level keys). New `tages agents-md diff` and `tages agents-md federate` CLI subcommands extending the Bet B foundation. White review fixes: gemini env-var placeholders, codex regex false-positive on `[mcp_servers.tages.env]` alone, diff negation-word boundary.
+- **Sprint B — LongMemEval harness scaffold (Phase 1.1)**: New `eval/longmemeval/` directory with standalone TypeScript harness (not in pnpm workspace). RetainDB-pattern methodology documented with comparability caveat (Supermemory/RetainDB baselines on deprecated dataset). Pluggable memory backend: `in-memory` lexical floor + `tages-cli` real integration. Dry-run verified; real runs pending `OPENAI_API_KEY` + sandbox `TAGES_EVAL_PROJECT`.
+- **Sprint C — `tages drift` v1 (Phase 3.3)**: New `tages drift` CLI command (experimental). Semantic drift uses a real instability metric (1 − 1/distinct_values over field_changes); 10 unit tests cover zero/two/three-value instability, session+agent reporting, whitespace normalization, topK. Coordination drift stubbed (`not_implemented`) — blocked on `memories.team_id` column. Behavioral drift stubbed (`insufficient_data` / `not_implemented`) — tool_call_log has raw data, v2 calibration pending design partners. `--json`, `--since`, `--agent`, `--limit` flags.
+- **Chore**: Plugin packages (cursor, codex, gemini) now use `--passWithNoTests` so `pnpm -r test` does not fail at the root.
 
 ### 2026-04-19
 

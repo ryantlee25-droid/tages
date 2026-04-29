@@ -60,6 +60,32 @@ export interface Memory {
   encrypted?: boolean
   createdBy?: string
   updatedBy?: string
+  // Provenance (migration 0057) — traces which agent session and tool wrote this memory
+  sessionId?: string
+  toolName?: string
+  sourceContext?: MemorySourceContext
+}
+
+export interface MemorySourceContext {
+  filePath?: string
+  prNumber?: number
+  commitSha?: string
+  ticketId?: string
+  url?: string
+  // Free-form for tool-specific metadata not covered by the fields above
+  extra?: Record<string, unknown>
+}
+
+export interface MemoryProvenance {
+  memoryId: string
+  userId?: string
+  userDisplay: string
+  agentName?: string
+  sessionId?: string
+  toolName?: string
+  sourceContext?: MemorySourceContext
+  createdAt: string
+  updatedAt: string
 }
 
 export interface Project {

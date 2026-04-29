@@ -5,36 +5,41 @@ Connect Tages to OpenAI Codex for persistent codebase memory.
 ## Prerequisites
 
 - Node.js 20+
+- Codex CLI installed
 
-## Setup
-
-### 1. Install
+## Install via plugin (recommended)
 
 ```bash
-npm install -g @tages/cli
-tages init
+npx @tages/codex-plugin
 ```
 
-### 2. Configure Codex MCP
+Appends a `[mcp_servers.tages]` block to `~/.codex/config.toml`. Use `--dry-run` to preview the block before writing.
 
-Add to your Codex MCP configuration:
+## Install via Codex CLI
 
-```json
-{
-  "mcpServers": {
-    "tages": {
-      "command": "npx",
-      "args": ["-y", "@tages/server"],
-      "env": {
-        "TAGES_SUPABASE_URL": "your-supabase-url",
-        "TAGES_SUPABASE_ANON_KEY": "your-anon-key",
-        "TAGES_PROJECT_ID": "your-project-id"
-      }
-    }
-  }
-}
+```bash
+codex mcp add tages -- npx -y @tages/server
 ```
 
-### 3. Usage
+Both paths write the same config.
 
-Codex will automatically discover the Tages tools. Ask it to remember conventions, recall past decisions, or get context for files.
+## Manual setup
+
+If you'd rather hand-edit `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.tages]
+command = "npx"
+args = ["-y", "@tages/server"]
+
+[mcp_servers.tages.env]
+TAGES_SUPABASE_URL = "your-supabase-url"
+TAGES_SUPABASE_ANON_KEY = "your-anon-key"
+TAGES_PROJECT_ID = "your-project-id"
+```
+
+## Usage
+
+Restart Codex after installing. The Tages tools appear alongside other MCP tools — ask Codex to remember conventions, recall past decisions, or get context for files.
+
+Run `tages init` (from `@tages/cli`) to create a project and populate the env values.

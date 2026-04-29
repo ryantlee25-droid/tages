@@ -1,0 +1,326 @@
+===============================================================================================
+  TAGES MONTE CARLO SIMULATION — DATA USAGE & PRICING THRESHOLDS
+  5,000 simulations × 24 months × 4 scenarios
+===============================================================================================
+
+┌─ OUR INFRASTRUCTURE COSTS ──────────────────────────────────────────────────────┐
+│  SUPABASE:  Free $0 (500MB) | Pro $25/mo (8GB) | Team $599/mo (64GB)            │
+│  VERCEL:    Hobby $0 (100GB BW) | Pro $20/mo (1TB BW) | Enterprise $500/mo      │
+└──────────────────────────────────────────────────────────────────────────────────┘
+┌─ USER-BORNE AI COSTS (not our expense) ─────────────────────────────────────────┐
+│  Embeddings: Ollama FREE or OpenAI $0.02/1M tok (~$0.0003/memory)                │
+│  Indexing:   Ollama FREE or Haiku $1/$5 per MTok (~$0.003/extraction)            │
+│  Sharpen:    Haiku only, ~$0.0005/call                                           │
+└──────────────────────────────────────────────────────────────────────────────────┘
+┌─ TAGES REVENUE ──────────────────────────────────────────────────────────────────┐
+│  Free: $0 (10K memories)  |  Pro: $14/mo (50K)  |  Team: $29/seat/mo (100K)     │
+└──────────────────────────────────────────────────────────────────────────────────┘
+
+───────────────────────────────────────────────────────────────────────────────────────────────
+  SCENARIO: CONSERVATIVE — Slow organic growth, mostly free users
+───────────────────────────────────────────────────────────────────────────────────────────────
+
+  USERS & REVENUE (median)
+   Mo     Free    Pro   Team  Seats   Memories    DB MB    Rev/mo
+  ───  ───────  ─────  ─────  ─────  ─────────  ───────  ────────
+    1       72      7      1      3        577       14      $185
+    3      113     13      1      3       4.0K       58      $269
+    6      168     25      2      6      24.5K      192      $524
+   12      275     61      7     21     167.7K      820     $1.4K
+   18      389    108     15     45     515.5K     2.1K     $2.8K
+   24      531    167     28     84       1.1M     4.3K     $4.8K
+
+  OUR COST BREAKDOWN (median, monthly)
+   Mo   Supabase    Vercel     Total    Rev/mo    Net/mo    Cum Net
+  ───  ─────────  ────────  ────────  ────────  ────────  ─────────
+    1         $0        $0        $0      $185      $185       $185
+    3         $0        $0        $0      $269      $269       $667
+    6         $0        $0        $0      $524      $524      $2.0K
+   12        $25        $0       $25     $1.4K     $1.4K      $8.0K
+   18        $25        $0       $25     $2.8K     $2.8K     $21.2K
+   24        $25        $0       $25     $4.8K     $4.8K     $44.6K
+
+  USER-BORNE AI COSTS (median, monthly — NOT our expense)
+   Mo     Embed   Haiku Idx   Sharpen     Total   Cum Total   $/user
+  ───  ────────  ──────────  ────────  ────────  ──────────  ───────
+    1        $0          $1        $0        $1          $1    $0.10
+    3        $0          $2        $0        $2          $4    $0.10
+    6        $0          $3        $0        $3         $12    $0.11
+   12        $0          $8        $0        $8         $47    $0.09
+   18        $0         $14        $0       $14        $114    $0.09
+   24        $0         $22        $0       $22        $224    $0.09
+
+  Uncertainty (P5–P95):
+    M12: DB 724–921 MB | Rev $1.2K–$1.7K/mo | Our Cost $25–$25/mo | Net $6.7K–$9.6K cum.
+    M24: DB 3.9K–4.7K MB | Rev $4.2K–$5.4K/mo | Our Cost $25–$25/mo | Net $39.1K–$50.4K cum.
+
+  Infrastructure tier probability:
+    M6: Supabase: Free 100%
+         Vercel:   Hobby 100%
+    M12: Supabase: Pro 100%
+         Vercel:   Hobby 100%
+    M24: Supabase: Pro 100%
+         Vercel:   Hobby 100%
+
+  KEY THRESHOLDS:
+    M10: >50% need Supabase Pro (median DB: 548 MB)
+    Vercel Hobby tier sufficient for full 24 months
+    M 1: Monthly breakeven (rev $185 > total cost $0)
+    M12: Gross margin 98% (rev $1.4K, supa $25, vcel $0)
+    M24: Gross margin 99% (rev $4.8K, supa $25, vcel $0)
+
+───────────────────────────────────────────────────────────────────────────────────────────────
+  SCENARIO: BASE CASE — Moderate growth, solid Pro conversion
+───────────────────────────────────────────────────────────────────────────────────────────────
+
+  USERS & REVENUE (median)
+   Mo     Free    Pro   Team  Seats   Memories    DB MB    Rev/mo
+  ───  ───────  ─────  ─────  ─────  ─────────  ───────  ────────
+    1      285     28      4     20       1.7K      117      $986
+    3      459     53      8     40      17.1K      499     $1.9K
+    6      746    107     17     85     101.0K     1.6K     $4.0K
+   12     1.5K    291     52    260     705.9K     7.0K    $11.7K
+   18     2.8K    618    116    580       2.4M    19.6K    $25.5K
+   24     4.9K   1.2K    227   1.1K       5.9M    44.6K    $49.5K
+
+  OUR COST BREAKDOWN (median, monthly)
+   Mo   Supabase    Vercel     Total    Rev/mo    Net/mo    Cum Net
+  ───  ─────────  ────────  ────────  ────────  ────────  ─────────
+    1         $0        $0        $0      $986      $986       $986
+    3         $0        $0        $0     $1.9K     $1.8K      $4.2K
+    6        $25        $0       $25     $4.0K     $4.0K     $13.7K
+   12        $25        $0       $25    $11.7K    $11.6K     $62.1K
+   18       $599        $0      $599    $25.5K    $24.9K    $173.0K
+   24       $599       $20      $619    $49.5K    $48.9K    $399.9K
+
+  USER-BORNE AI COSTS (median, monthly — NOT our expense)
+   Mo     Embed   Haiku Idx   Sharpen     Total   Cum Total   $/user
+  ───  ────────  ──────────  ────────  ────────  ──────────  ───────
+    1        $0          $5        $0        $5          $5    $0.10
+    3        $0          $9        $0        $9         $20    $0.09
+    6        $0         $17        $0       $17         $62    $0.09
+   12        $0         $43        $0       $44        $251    $0.08
+   18        $1         $90        $1       $92        $669    $0.08
+   24        $1        $171        $2      $174       $1.5K    $0.08
+
+  Uncertainty (P5–P95):
+    M12: DB 6.4K–7.7K MB | Rev $9.9K–$13.5K/mo | Our Cost $25–$25/mo | Net $53.7K–$71.4K cum.
+    M24: DB 41.3K–48.0K MB | Rev $43.4K–$56.0K/mo | Our Cost $619–$619/mo | Net $358.2K–$444.1K cum.
+
+  Infrastructure tier probability:
+    M6: Supabase: Pro 100%
+         Vercel:   Hobby 100%
+    M12: Supabase: Pro 100% | Team 0%
+         Vercel:   Hobby 100%
+    M24: Supabase: Team 100%
+         Vercel:   Pro 100%
+
+  KEY THRESHOLDS:
+    M 4: >50% need Supabase Pro (median DB: 787 MB)
+    M19: >50% need Vercel Pro
+    M 1: Monthly breakeven (rev $986 > total cost $0)
+    M12: Gross margin 100% (rev $11.7K, supa $25, vcel $0)
+    M24: Gross margin 99% (rev $49.5K, supa $599, vcel $20)
+
+───────────────────────────────────────────────────────────────────────────────────────────────
+  SCENARIO: OPTIMISTIC — Strong word-of-mouth, HN/Reddit traction
+───────────────────────────────────────────────────────────────────────────────────────────────
+
+  USERS & REVENUE (median)
+   Mo     Free    Pro   Team  Seats   Memories    DB MB    Rev/mo
+  ───  ───────  ─────  ─────  ─────  ─────────  ───────  ────────
+    1      800     74     14    112          0      416     $4.3K
+    3     1.5K    150     27    216      21.1K     1.9K     $8.4K
+    6     2.7K    345     63    504     206.9K     6.5K    $19.4K
+   12     7.0K   1.2K    214   1.7K       2.0M    32.5K    $65.9K
+   18    16.7K   3.1K    573   4.6K       8.0M   105.8K   $175.9K
+   24    38.8K   7.4K   1.4K  11.2K      23.9M   287.5K   $428.5K
+
+  OUR COST BREAKDOWN (median, monthly)
+   Mo   Supabase    Vercel     Total    Rev/mo    Net/mo    Cum Net
+  ───  ─────────  ────────  ────────  ────────  ────────  ─────────
+    1         $0        $0        $0     $4.3K     $4.3K      $4.3K
+    3        $25        $0       $25     $8.4K     $8.4K     $18.7K
+    6        $25        $0       $25    $19.4K    $19.4K     $64.7K
+   12       $599       $20      $619    $65.9K    $65.3K    $320.8K
+   18      $1.5K       $20     $1.5K   $175.9K   $174.3K      $1.0M
+   24      $1.5K      $500     $2.0K   $428.5K   $426.5K      $2.9M
+
+  USER-BORNE AI COSTS (median, monthly — NOT our expense)
+   Mo     Embed   Haiku Idx   Sharpen     Total   Cum Total   $/user
+  ───  ────────  ──────────  ────────  ────────  ──────────  ───────
+    1        $0         $14        $0       $14         $14    $0.08
+    3        $0         $27        $0       $28         $62    $0.08
+    6        $0         $58        $1       $59        $205    $0.07
+   12        $1        $184        $2      $187        $957    $0.07
+   18        $3        $474        $5      $482       $3.0K    $0.06
+   24        $8       $1.1K       $12     $1.2K       $8.0K    $0.06
+
+  Uncertainty (P5–P95):
+    M12: DB 29.5K–35.7K MB | Rev $54.5K–$77.7K/mo | Our Cost $619–$619/mo | Net $274.3K–$371.2K cum.
+    M24: DB 266.3K–310.7K MB | Rev $364.2K–$496.4K/mo | Our Cost $2.0K–$2.0K/mo | Net $2.5M–$3.2M cum.
+
+  Infrastructure tier probability:
+    M6: Supabase: Pro 100%
+         Vercel:   Hobby 100%
+    M12: Supabase: Team 100%
+         Vercel:   Pro 100%
+    M24: Supabase: Enterprise 100%
+         Vercel:   Enterprise 100% | Pro 0%
+
+  KEY THRESHOLDS:
+    M 2: >50% need Supabase Pro (median DB: 1.0K MB)
+    M 9: >50% need Vercel Pro
+    M 1: Monthly breakeven (rev $4.3K > total cost $0)
+    M12: Gross margin 99% (rev $65.9K, supa $599, vcel $20)
+    M24: Gross margin 100% (rev $428.5K, supa $1.5K, vcel $500)
+
+───────────────────────────────────────────────────────────────────────────────────────────────
+  SCENARIO: VIRAL — Major coverage, rapid adoption, enterprise interest
+───────────────────────────────────────────────────────────────────────────────────────────────
+
+  USERS & REVENUE (median)
+   Mo     Free    Pro   Team  Seats   Memories    DB MB    Rev/mo
+  ───  ───────  ─────  ─────  ─────  ─────────  ───────  ────────
+    1     1.8K    153     34    408          0     1.0K    $14.1K
+    3     3.6K    341     67    804          0     4.7K    $28.0K
+    6     7.6K    877    163   2.0K     221.0K    17.4K    $69.1K
+   12    24.9K   3.6K    662   7.9K       3.8M   101.3K   $280.7K
+   18    75.4K  11.8K   2.2K  26.2K      19.3M   391.4K   $925.2K
+   24   226.3K  36.3K   6.7K  80.6K      70.8M     1.3M     $2.8M
+
+  OUR COST BREAKDOWN (median, monthly)
+   Mo   Supabase    Vercel     Total    Rev/mo    Net/mo    Cum Net
+  ───  ─────────  ────────  ────────  ────────  ────────  ─────────
+    1        $25        $0       $25    $14.1K    $14.0K     $14.0K
+    3        $25        $0       $25    $28.0K    $28.0K     $62.1K
+    6       $599       $20      $619    $69.1K    $68.5K    $220.8K
+   12      $1.5K       $20     $1.5K   $280.7K   $279.2K      $1.3M
+   18      $1.5K      $500     $2.0K   $925.2K   $923.2K      $4.9M
+   24      $1.6K      $500     $2.1K     $2.8M     $2.8M     $16.1M
+
+  USER-BORNE AI COSTS (median, monthly — NOT our expense)
+   Mo     Embed   Haiku Idx   Sharpen     Total   Cum Total   $/user
+  ───  ────────  ──────────  ────────  ────────  ──────────  ───────
+    1        $0         $31        $0       $32         $32    $0.06
+    3        $0         $66        $1       $67        $146    $0.06
+    6        $1        $157        $1      $159        $520    $0.06
+   12        $4        $604        $6      $614       $2.8K    $0.05
+   18       $14       $1.9K       $19     $2.0K      $10.6K    $0.05
+   24       $42       $5.9K       $58     $6.0K      $34.5K    $0.05
+
+  Uncertainty (P5–P95):
+    M12: DB 91.6K–111.7K MB | Rev $225.9K–$337.4K/mo | Our Cost $1.5K–$1.5K/mo | Net $1.1M–$1.5M cum.
+    M24: DB 1.2M–1.4M MB | Rev $2.3M–$3.4M/mo | Our Cost $2.1K–$2.1K/mo | Net $14.0M–$18.3M cum.
+
+  Infrastructure tier probability:
+    M6: Supabase: Team 100%
+         Vercel:   Pro 100%
+    M12: Supabase: Enterprise 100%
+         Vercel:   Pro 100%
+    M24: Supabase: Enterprise 100%
+         Vercel:   Enterprise 100%
+
+  KEY THRESHOLDS:
+    M 1: >50% need Supabase Pro (median DB: 1.0K MB)
+    M 5: >50% need Vercel Pro
+    M 1: Monthly breakeven (rev $14.1K > total cost $25)
+    M12: Gross margin 99% (rev $280.7K, supa $1.5K, vcel $20)
+    M24: Gross margin 100% (rev $2.8M, supa $1.6K, vcel $500)
+
+===============================================================================================
+  PRICING SENSITIVITY — BASE CASE
+  8 pricing configs × 2,000 simulations each
+===============================================================================================
+
+  Config                               Conv   M12 Rev   M24 Rev       M24 Range   Margin     Cum Net
+  ───────────────────────────────────  ────  ────────  ────────  ──────────────  ───────  ──────────
+  Enterprise:  Pro $24 / Team $49      0.71    $14.8K    $63.3K    $59.0K-67.7K      99%     $512.8K ★
+  Top Shelf:   Pro $29 / Team $59      0.57    $14.7K    $63.1K    $58.0K-68.3K      99%     $511.3K
+  High Team:   Pro $14 / Team $39      1.00    $14.4K    $61.3K    $57.9K-64.8K      99%     $494.7K
+  Premium:     Pro $19 / Team $39      0.86    $13.8K    $58.9K    $55.4K-62.4K      99%     $475.5K
+  Low Pro:     Pro $9  / Team $29      1.18    $11.8K    $50.4K    $47.8K-52.9K      99%     $405.6K
+  Current:     Pro $14 / Team $29      1.00    $11.7K    $49.8K    $47.2K-52.4K      99%     $401.4K ◄ NOW
+  High Pro:    Pro $19 / Team $29      0.86    $11.5K    $48.8K    $46.2K-51.5K      99%     $394.3K
+  Aggressive:  Pro $9  / Team $19      1.18     $8.8K    $37.3K    $35.5K-39.0K      98%     $298.3K
+
+  Best: Enterprise:  Pro $24 / Team $49 → $512,844 cumulative net over 24 months
+  Current: Current:     Pro $14 / Team $29 → $401,355
+  Potential uplift: +$111,489 by switching to Enterprise:  Pro $24 / Team $49
+
+===============================================================================================
+  PRICING SENSITIVITY — OPTIMISTIC
+  8 pricing configs × 2,000 simulations each
+===============================================================================================
+
+  Config                               Conv   M12 Rev   M24 Rev       M24 Range   Margin     Cum Net
+  ───────────────────────────────────  ────  ────────  ────────  ──────────────  ───────  ──────────
+  Enterprise:  Pro $24 / Team $49      0.71    $83.7K   $545.7K  $498.2K-590.4K     100%       $3.7M ★
+  Top Shelf:   Pro $29 / Team $59      0.57    $83.6K   $541.3K  $486.3K-595.4K     100%       $3.7M
+  High Team:   Pro $14 / Team $39      1.00    $83.5K   $544.6K  $507.9K-580.4K     100%       $3.7M
+  Premium:     Pro $19 / Team $39      0.86    $77.9K   $508.4K  $471.0K-544.6K     100%       $3.4M
+  Low Pro:     Pro $9  / Team $29      1.18    $69.7K   $454.3K  $427.1K-481.2K     100%       $3.0M
+  Current:     Pro $14 / Team $29      1.00    $66.2K   $431.5K  $403.7K-458.5K     100%       $2.9M ◄ NOW
+  High Pro:    Pro $19 / Team $29      0.86    $62.9K   $409.5K  $381.1K-436.7K     100%       $2.7M
+  Aggressive:  Pro $9  / Team $19      1.18    $49.8K   $324.0K  $305.9K-342.1K     100%       $2.2M
+
+  Best: Enterprise:  Pro $24 / Team $49 → $3,671,219 cumulative net over 24 months
+  Current: Current:     Pro $14 / Team $29 → $2,889,868
+  Potential uplift: +$781,351 by switching to Enterprise:  Pro $24 / Team $49
+
+===============================================================================================
+  RECOMMENDATIONS
+===============================================================================================
+
+  ┌─ COST RESPONSIBILITY MATRIX ────────────────────────────────────────────────┐
+  │                                                                             │
+  │  COST TYPE              WHO PAYS        HOW                                 │
+  │  ─────────────────────  ──────────────  ──────────────────────────────────  │
+  │  Database storage       WE (Tages)      Supabase subscription               │
+  │  Dashboard hosting      WE (Tages)      Vercel subscription                 │
+  │  Stripe fees            WE (Tages)      2.9% + $0.30 per transaction        │
+  │  Domain / DNS           WE (Tages)      ~$12/yr                             │
+  │  Embedding generation   USER            Ollama (free) or OpenAI API key     │
+  │  LLM auto-indexing      USER            Ollama (free) or Anthropic API key  │
+  │  Memory sharpening      USER            Anthropic API key (Haiku)           │
+  │  Local SQLite cache     USER            Free (disk space)                   │
+  │                                                                             │
+  │  KEY: All AI compute runs on USER's machine (stdio MCP transport).          │
+  │  We have ZERO variable AI costs. Our costs are purely infrastructure.       │
+  └─────────────────────────────────────────────────────────────────────────────┘
+
+  1. SUPABASE FREE TIER RUNWAY
+     Conservative → 10+ months on Free. Base Case → upgrade to Pro ($25/mo) by M3-6.
+     Optimistic/Viral → budget Supabase Pro from day 1.
+
+  2. VERCEL COSTS ARE MINIMAL
+     Dashboard traffic is light (dev tool, not consumer app). Vercel Hobby ($0)
+     covers Conservative/Base Case for 12+ months. Pro ($20/mo) only needed
+     at Optimistic+ scale with 1K+ dashboard users.
+
+  3. TOTAL INFRA COST IS TINY
+     Supabase + Vercel combined: $0–$45/mo for first year in Base Case.
+     Even at Viral scale, infra is <1% of revenue. This is a very capital-
+     efficient business model because AI compute is externalized to users.
+
+  4. USER AI COST IS LOW (GOOD FOR RETENTION)
+     Average user pays ~$0.10–$2.00/mo in AI costs (mostly free via Ollama).
+     This is well below the $14/mo Pro price — users get clear value surplus.
+     Risk: if we ever move AI compute server-side, margins collapse.
+
+  5. PRICING SENSITIVITY
+     Higher Team price ($39-49/seat) is the highest-leverage change.
+     Pro at $14 undercuts Mem0 ($19) and Zep ($25) — good anchor.
+     Consider: $14 Pro / $39 Team as next pricing move.
+
+  6. MONITORING TRIGGERS
+     Supabase: 400 MB → alert, 500 MB → must upgrade Pro, 7 GB → alert Team
+     Vercel: 80 GB BW → alert, 100 GB → upgrade Pro
+     Track: DB size, growth rate, largest project, dashboard MAU
+
+  7. NEVER MOVE EMBEDDINGS SERVER-SIDE
+     Current model: $0 AI cost to us, users bring their own compute.
+     If we hosted embeddings: at Base Case M24, embedding cost alone would
+     be ~$500-2K/mo (eating 5-20% of margin). Keep the stdio architecture.
+
+===============================================================================================

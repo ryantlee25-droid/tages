@@ -37,6 +37,8 @@ import { auditCommand } from './commands/audit.js'
 import { sharpenCommand } from './commands/sharpen.js'
 import { teamInviteCommand, teamListCommand, teamRemoveCommand, teamRoleCommand } from './commands/team.js'
 import { settingsAutoSaveCommand } from './commands/settings.js'
+import { agentsMdWriteCommand, agentsMdAuditCommand, agentsMdDiffCommand, agentsMdFederateCommand } from './commands/agents-md.js'
+import { driftCommand } from './commands/drift.js'
 
 const program = new Command()
 
@@ -464,5 +466,55 @@ settingsCmd
   .option('-p, --project <slug>', 'Project slug')
   .option('-y, --yes', 'Skip confirmation prompt')
   .action(settingsAutoSaveCommand)
+
+// AGENTS.md — write and audit the canonical AGENTS.md file from project memory.
+const agentsMdCmd = program
+  .command('agents-md')
+  .description('Generate and audit AGENTS.md from the project memory graph')
+
+agentsMdCmd
+  .command('write')
+  .description('Generate AGENTS.md from project memories (6 canonical sections)')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('-o, --output <path>', 'Output path (default: AGENTS.md in cwd)')
+  .option('--dry-run', 'Print to stdout instead of writing')
+  .option('--force', 'Overwrite an existing AGENTS.md')
+  .action(agentsMdWriteCommand)
+
+agentsMdCmd
+  .command('audit [path]')
+  .description('Lint an AGENTS.md file for vagueness, missing sections, and anti-patterns')
+  .option('--json', 'Emit machine-readable report')
+  .action((filePath: string | undefined, opts: { json?: boolean }) =>
+    agentsMdAuditCommand({ path: filePath, json: opts.json }),
+  )
+
+agentsMdCmd
+  .command('diff')
+  .description('Compare committed AGENTS.md against live Tages memory — reports stale, missing, and contradicting drift')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('-f, --file <path>', 'Path to AGENTS.md (default: AGENTS.md in cwd)')
+  .option('--json', 'Emit machine-readable diff report')
+  .action(agentsMdDiffCommand)
+
+agentsMdCmd
+  .command('federate')
+  .description('Manage .tages/agents-md-owners.json — map section names to team slugs')
+  .option('--section <name>', 'Section name to set or remove')
+  .option('--team <slug>', 'Team slug to assign to the section')
+  .option('--list', 'Print the current owner map')
+  .option('--remove', 'Remove the mapping for --section')
+  .action(agentsMdFederateCommand)
+
+// Experimental — Agent Stability Index
+program
+  .command('drift')
+  .description('Report memory drift across sessions and agents (experimental)')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('--since <window>', 'Time window (e.g. 7d, 30d, or ISO timestamp)')
+  .option('--agent <name>', 'Filter to a single agent_name')
+  .option('--limit <n>', 'Max top-diverging keys to show (default 10)', '10')
+  .option('--json', 'Emit the full report as JSON instead of human-readable output')
+  .action(driftCommand)
 
 program.parse()
