@@ -20,6 +20,8 @@ async function loadDriftModule() {
     computeDrift: (input: {
       projectId: string
       since?: string
+      baselineSince?: string
+      currentSince?: string
       agentFilter?: string
       fieldChanges: FieldChangeRow[]
       toolCalls: ToolCallRow[]
@@ -30,6 +32,8 @@ async function loadDriftModule() {
 export interface DriftOptions {
   project?: string
   since?: string // e.g. '7d', '30d', or ISO timestamp
+  baselineSince?: string // explicit baseline window start for behavioral drift
+  currentSince?: string // explicit current window start for behavioral drift
   agent?: string
   json?: boolean
   limit?: string
@@ -51,12 +55,34 @@ export async function driftCommand(options: DriftOptions): Promise<void> {
   }
 
   let sinceIso: string | undefined
+  let baselineSinceIso: string | undefined
+  let currentSinceIso: string | undefined
   try {
     sinceIso = resolveSince(options.since)
+    baselineSinceIso = resolveSince(options.baselineSince)
+    currentSinceIso = resolveSince(options.currentSince)
   } catch (err) {
     console.error(chalk.red((err as Error).message))
     process.exit(1)
   }
+
+  // --baseline-since and --current-since must come as a pair; one without the
+  // other doesn't define a valid two-window comparison.
+  if ((baselineSinceIso && !currentSinceIso) || (!baselineSinceIso && currentSinceIso)) {
+    console.error(
+      chalk.red(
+        '--baseline-since and --current-since must be provided together (or omit both for default midpoint split).',
+      ),
+    )
+    process.exit(1)
+  }
+  if (baselineSinceIso && currentSinceIso && baselineSinceIso >= currentSinceIso) {
+    console.error(
+      chalk.red(`--baseline-since (${baselineSinceIso}) must be earlier than --current-since (${currentSinceIso}).`),
+    )
+    process.exit(1)
+  }
+
   const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
 
   // --limit controls display top-K only; a separate fixed cap protects against
@@ -131,13 +157,15 @@ export async function driftCommand(options: DriftOptions): Promise<void> {
     })
     .filter((r) => !options.agent || r.agent_name === options.agent)
 
-  // 3. tool_call_log for behavioral metric (stub consumes but v1 only checks agent count)
+  // 3. tool_call_log for behavioral metric. Window cutoff: baseline-since
+  // takes precedence (it's the earlier of the two windows); otherwise --since.
+  const tcCutoff = baselineSinceIso ?? sinceIso
   let tcQuery = supabase
     .from('tool_call_log')
     .select('project_id, session_id, agent_name, tool_name, created_at')
     .eq('project_id', config.projectId)
     .limit(MAX_DB_ROWS)
-  if (sinceIso) tcQuery = tcQuery.gte('created_at', sinceIso)
+  if (tcCutoff) tcQuery = tcQuery.gte('created_at', tcCutoff)
   if (options.agent) tcQuery = tcQuery.eq('agent_name', options.agent)
 
   const { data: tcData, error: tcError } = await tcQuery
@@ -150,6 +178,8 @@ export async function driftCommand(options: DriftOptions): Promise<void> {
   const report = computeDrift({
     projectId: config.projectId,
     since: sinceIso,
+    baselineSince: baselineSinceIso,
+    currentSince: currentSinceIso,
     agentFilter: options.agent,
     fieldChanges,
     toolCalls,
@@ -212,4 +242,31 @@ function renderHuman(report: DriftReport, topLimit: number): void {
   console.log('')
   console.log(chalk.bold('Behavioral drift') + chalk.yellow(` [${report.behavioral.status}]`))
   console.log(chalk.dim(`  ${report.behavioral.note}`))
+  if (report.behavioral.status === 'ok') {
+    const b = report.behavioral
+    console.log(`  score: ${pct(b.score)}` + (b.jsd !== undefined ? chalk.dim(`  (raw JSD: ${b.jsd.toFixed(4)})`) : ''))
+    if (b.agentCount !== undefined) console.log(`  agents in comparison: ${b.agentCount}`)
+    if (b.windowA && b.windowB) {
+      console.log(
+        chalk.dim(
+          `  baseline: ${b.windowA.since.slice(0, 10)} → ${b.windowA.until.slice(0, 10)} (${b.windowA.toolCallCount} calls)`,
+        ),
+      )
+      console.log(
+        chalk.dim(
+          `  current:  ${b.windowB.since.slice(0, 10)} → ${b.windowB.until.slice(0, 10)} (${b.windowB.toolCallCount} calls)`,
+        ),
+      )
+    }
+    console.log(chalk.dim('  thresholds: <10% healthy  10-30% warn  >30% high'))
+    if (b.agentDistributions && b.agentDistributions.length > 0) {
+      console.log(chalk.dim('  top tools per agent (current window):'))
+      for (const a of b.agentDistributions) {
+        const tools = a.topTools
+          .map((t) => `${t.tool}(${(t.share * 100).toFixed(0)}%)`)
+          .join('  ')
+        console.log(`    ${a.agent.padEnd(20)} ${tools}`)
+      }
+    }
+  }
 }

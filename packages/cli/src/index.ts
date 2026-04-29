@@ -512,6 +512,14 @@ program
   .description('Report memory drift across sessions and agents (experimental)')
   .option('-p, --project <slug>', 'Project slug')
   .option('--since <window>', 'Time window (e.g. 7d, 30d, or ISO timestamp)')
+  .option(
+    '--baseline-since <window>',
+    'Behavioral drift: explicit baseline window start (e.g. 14d, ISO). Pair with --current-since.',
+  )
+  .option(
+    '--current-since <window>',
+    'Behavioral drift: explicit current window start (e.g. 7d, ISO). Pair with --baseline-since.',
+  )
   .option('--agent <name>', 'Filter to a single agent_name')
   .option('--limit <n>', 'Max top-diverging keys to show (default 10)', '10')
   .option('--json', 'Emit the full report as JSON instead of human-readable output')

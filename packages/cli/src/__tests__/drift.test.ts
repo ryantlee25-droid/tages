@@ -35,4 +35,15 @@ describe('resolveSince', () => {
   it('rejects mixed units', () => {
     expect(() => resolveSince('7dx')).toThrow(/Unrecognized --since value/)
   })
+
+  it('parses --baseline-since and --current-since values the same way', () => {
+    // Behavioral-drift CLI accepts the same Nd / Nh / ISO grammar via
+    // resolveSince. A cross-check that the parser is reused unchanged.
+    const baseline = resolveSince('14d')
+    const current = resolveSince('7d')
+    expect(baseline).toBeDefined()
+    expect(current).toBeDefined()
+    // baseline is older than current (further back)
+    expect(new Date(baseline!).getTime()).toBeLessThan(new Date(current!).getTime())
+  })
 })

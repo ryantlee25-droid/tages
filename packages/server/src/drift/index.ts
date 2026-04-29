@@ -8,6 +8,9 @@ export type {
   SemanticDriftReport,
   SemanticDriftKeyReport,
   MetricStub,
+  BehavioralDriftReport,
+  AgentToolDistribution,
+  BehavioralWindow,
   FieldChangeRow,
   ToolCallRow,
 } from './types.js'
