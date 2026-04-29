@@ -33,6 +33,9 @@ export function Nav() {
           <Link href="/security" className="text-sm text-zinc-400 hover:text-white transition-colors">
             Security
           </Link>
+          <Link href="/governance" className="text-sm text-zinc-400 hover:text-white transition-colors">
+            Governance
+          </Link>
           <a
             href="https://github.com/ryantlee25-droid/tages"
             target="_blank"
@@ -78,6 +81,9 @@ export function Nav() {
             </Link>
             <Link href="/security" onClick={() => setOpen(false)} className="text-sm text-zinc-400 hover:text-white">
               Security
+            </Link>
+            <Link href="/governance" onClick={() => setOpen(false)} className="text-sm text-zinc-400 hover:text-white">
+              Governance
             </Link>
             <a
               href="https://github.com/ryantlee25-droid/tages"
