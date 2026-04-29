@@ -146,6 +146,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-04-29 — CI test-mock fix
+
+- **CI test-mock fix — `supabase.auth` interface added to `commands-smoke` mock**: `mockSupabase` now includes a `mockAuth` object with stubbed `setSession`, `getSession`, and `refreshSession` (all returning a valid session shape). Without this, any test that calls `writeAuthConfig` and runs without `TAGES_SERVICE_KEY` set would crash with `cannot read 'setSession' of undefined` — because `createAuthenticatedClient` reads `auth.json` and calls `supabase.auth.setSession(...)` on the auth-path branch. The bug was latent until CI was widened from `pnpm --filter @tages/server test` to `pnpm -r test` in c9a27f1; `resetMockSupabase()` updated to clear the three new mock functions alongside `from`/`rpc`.
+
 ### 2026-04-29 — PR #55 White second-review fix bundle (W2 limit-semantics, W2-AOT codex regex, Q1 Windows guard)
 
 - **W2 limit-semantics — `drift.ts` `--limit` regression reverted**: `--limit` now controls display top-K only (original semantics, default 10). A new `MAX_DB_ROWS = 10000` constant applied to both Supabase queries provides defensive OOM protection without conflating "show top N keys" with "fetch N rows from the chronological window".

@@ -98,9 +98,20 @@ function makeMockChain(data?: unknown[] | null, error?: { message: string } | nu
 let mockData: unknown[] | null = []
 let mockError: { message: string } | null = null
 
+// Mock the supabase.auth surface used by createAuthenticatedClient. Without
+// these, code paths that read auth.json (any test using writeAuthConfig) crash
+// with "cannot read 'setSession' of undefined" — surfaced by widening CI to
+// pnpm -r test where TAGES_SERVICE_KEY isn't set, so the auth-path branch runs.
+const mockAuth = {
+  setSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'm' } }, error: null }),
+  getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'm' } }, error: null }),
+  refreshSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'm', refresh_token: 'm' } }, error: null }),
+}
+
 const mockSupabase = {
   from: vi.fn(() => makeMockChain(mockData, mockError)),
   rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
+  auth: mockAuth,
 }
 
 function resetMockSupabase() {
@@ -108,6 +119,9 @@ function resetMockSupabase() {
   mockError = null
   mockSupabase.from = vi.fn(() => makeMockChain(mockData, mockError))
   mockSupabase.rpc = vi.fn().mockResolvedValue({ data: [], error: null })
+  mockAuth.setSession.mockClear()
+  mockAuth.getSession.mockClear()
+  mockAuth.refreshSession.mockClear()
 }
 
 vi.mock('@tages/shared', () => ({
