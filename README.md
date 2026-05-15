@@ -146,6 +146,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-05-15 — T2: pending memory auto-promotion sweep
+
+- **T2 — `auto_save_threshold` now drives pending→live promotion at session end**: `auto_save_threshold` (added in migration 0054) was previously written by the CLI and stored in Postgres but never read at session end — the sweep path was missing. This PR wires it end-to-end: `cache/sqlite.ts` gains `promoteMemories(projectId, threshold)` (single atomic SQL UPDATE); `tools/session-end.ts` accepts an optional `autoSaveThreshold` param and runs the sweep only when non-null (preserving the prior opt-out default for callers that don't pass it); `index.ts` wires the already-in-scope `autoSaveThreshold` value to the call site. 8 new tests cover below/at/above threshold, idempotency, empty pending, and null-threshold opt-out. 640 server tests pass.
+
 ### 2026-04-29 — Week 1 housekeeping (governance unghost, action-setup v6, drop provenance user_id)
 
 - **A1 — Governance page indexed**: removed `robots: 'noindex, nofollow'` from `/governance` metadata. The page is now crawlable and eligible for Google Search Console indexing. Added `/governance` link to both the desktop nav (after Security, before GitHub) and the mobile menu using the same styling as adjacent links.

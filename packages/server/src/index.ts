@@ -375,7 +375,7 @@ async function main() {
       extractMemories: SessionEndSchema.shape.extractMemories,
     },
     async (args) => {
-      const result = await handleSessionEnd(args, projectId, cache, sync, callerUserId)
+      const result = await handleSessionEnd(args, projectId, cache, sync, callerUserId, autoSaveThreshold)
       await tracker.endSession()
       return result
     },

@@ -7,6 +7,11 @@ import { extractMemoriesFromSummary } from './session-extract'
 /**
  * Parses a session summary and auto-extracts memories.
  * Agents call this at the end of a session with a summary of what was built/decided.
+ *
+ * If autoSaveThreshold is provided (non-null), a promotion sweep runs after extraction:
+ * any pending memory for the project with confidence >= threshold is promoted to live.
+ * Session-extracted memories are written at confidence=0.8 and will be swept if the
+ * threshold is <= 0.8.  Pass null (or omit) to skip the sweep entirely (default).
  */
 export async function handleSessionEnd(
   args: { summary: string; extractMemories?: boolean },
@@ -14,6 +19,7 @@ export async function handleSessionEnd(
   cache: SqliteCache,
   sync: SupabaseSync | null,
   callerUserId?: string,
+  autoSaveThreshold: number | null = null,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const shouldExtract = args.extractMemories !== false
   const extracted = shouldExtract ? extractMemoriesFromSummary(args.summary) : []
@@ -42,6 +48,13 @@ export async function handleSessionEnd(
         await sync.remoteInsert(memory)
       }
     }
+  }
+
+  // Run the auto-promotion sweep over all pending memories for this project
+  // (including pre-existing ones from observe calls, and just-written session extracts).
+  // Guard: only runs when the caller supplies a non-null threshold — opt-in per the spec.
+  if (autoSaveThreshold != null) {
+    cache.promoteMemories(projectId, autoSaveThreshold)
   }
 
   if (extracted.length > 0) {
