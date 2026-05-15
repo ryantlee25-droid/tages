@@ -146,6 +146,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-05-15 — Honcho boundary positioning doc
+
+- **Positioning decision**: `docs/positioning/honcho-boundary.md` documents the choice to stay at the codebase-memory substrate layer rather than build user modeling natively or bundle Honcho. Tages stores what your codebase demands; it does not model who you are as a developer — that is a different layer that Honcho-like systems can sit on top of Tages to provide. Anchors a positioning sentence ready to drop into the homepage and pitch decks.
+
 ### 2026-04-29 — Week 1 housekeeping (governance unghost, action-setup v6, drop provenance user_id)
 
 - **A1 — Governance page indexed**: removed `robots: 'noindex, nofollow'` from `/governance` metadata. The page is now crawlable and eligible for Google Search Console indexing. Added `/governance` link to both the desktop nav (after Security, before GitHub) and the mobile menu using the same styling as adjacent links.
