@@ -401,6 +401,28 @@ export class SqliteCache {
     return rows.map(rowToMemory)
   }
 
+  /**
+   * T2: Pending memory auto-promotion sweep.
+   * Promotes all pending memories for the project whose confidence >= threshold
+   * to live status. Idempotent — already-live memories are not matched by
+   * the WHERE clause, so running twice on the same data is safe.
+   *
+   * Returns the number of memories promoted.
+   */
+  promoteMemories(projectId: string, threshold: number): number {
+    const now = new Date().toISOString()
+    const result = this.db.prepare(`
+      UPDATE memories
+      SET status = 'live', verified_at = ?, dirty = 1, updated_at = ?
+      WHERE project_id = ? AND status = 'pending' AND confidence >= ?
+    `).run(now, now, projectId, threshold)
+    const promoted = result.changes
+    if (promoted > 0) {
+      console.error(`[tages] promoteMemories: promoted ${promoted} pending ${promoted === 1 ? 'memory' : 'memories'} (threshold=${threshold})`)
+    }
+    return promoted
+  }
+
   updateMemoryStatus(id: string, status: MemoryStatus, verifiedAt?: string): void {
     if (verifiedAt) {
       this.db.prepare(
