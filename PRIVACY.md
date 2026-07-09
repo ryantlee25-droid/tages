@@ -46,8 +46,23 @@ When you authenticate and sync to the cloud, we store:
 - Your source code
 - Your repository contents
 - Your file system structure
-- Your IDE or editor activity
 - Telemetry or analytics (unless you explicitly opt in)
+
+**Exception:** if you explicitly opt in to the Instrumented Harness described below, we collect a redacted record of your AI coding agent's tool-call activity. We do not collect general IDE or editor activity, and we collect nothing from the harness until you take the affirmative step of enabling it yourself.
+
+### The Instrumented Harness (opt-in, off by default)
+
+Tages offers an optional, **per-developer opt-in** capture path for Claude Code. It is off by default and is never turned on for you or your team automatically — each developer who wants it runs `tages harness enable` on their own machine. Enabling it is a personal choice, not a team-wide or admin-forced setting.
+
+If you enable it:
+
+- **What's captured:** the tool name your AI coding agent invokes (Read, Edit, Bash, etc.), redacted arguments and file paths, exit codes where available, durations where they can be derived, timestamps, your session id, and your agent id.
+- **What's redacted:** secrets and PII are stripped out of the captured data **before anything is written to disk or synced anywhere**. Raw, unredacted tool-call payloads never leave your machine — the redaction happens locally, first.
+- **Local vs. synced:** capture always writes to a local SQLite log on your machine first. Nothing is uploaded automatically. A batch `sync` command you run (or trigger) uploads the already-redacted records to your own project.
+- **Where the config lives:** enabling the harness writes hook configuration to your own `.claude/settings.local.json` — a file that is gitignored by convention and personal to you, not a shared or committed project file. It is never pushed to your team.
+- **Retention:** synced records are retained for **90 days** on our servers, then deleted. Your local cache is retained until you clear it yourself (delete the file or run the harness's disable/clear step).
+
+You can disable the harness and stop capture at any time by running `tages harness disable`.
 
 ---
 
