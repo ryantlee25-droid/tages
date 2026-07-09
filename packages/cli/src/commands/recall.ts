@@ -69,7 +69,10 @@ export async function recallCommand(query: string | undefined, options: RecallOp
         p_limit: limit,
       })
 
-      // Semantic search (Ollama, falling back to OpenAI if configured)
+      // Semantic search. Uses Ollama only by default: if the local embedder is
+      // down, generateEmbedding returns null and we fail fast to trigram rather
+      // than making a blocking, billable OpenAI call on the recall hot path.
+      // The OpenAI fallback is opt-in via TAGES_OPENAI_EMBED (see lib/embedding).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let semanticPromise: any = Promise.resolve({ data: null, error: null })
       const embedding = await generateEmbedding(query!)

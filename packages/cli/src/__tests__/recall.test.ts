@@ -211,9 +211,51 @@ describe('recall command', () => {
     expect(output).toContain('unique-key')
   })
 
-  it('falls back to OpenAI for semantic search when Ollama is unavailable (Task 10 parity)', async () => {
+  it('fails fast to trigram (no blocking OpenAI call) when Ollama is down, even with OPENAI_API_KEY set (finding 6)', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
     process.env.OPENAI_API_KEY = 'test-openai-key'
+    // No TAGES_OPENAI_EMBED opt-in — the paid fallback must stay off.
+
+    let openAiCalls = 0
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('11434')) {
+        return Promise.reject(new Error('Connection refused'))
+      }
+      if (typeof url === 'string' && url.includes('api.openai.com')) {
+        openAiCalls++
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ data: [{ embedding: new Array(1536).fill(0.05) }] }),
+        })
+      }
+      return Promise.reject(new Error('unexpected url'))
+    }) as unknown as typeof fetch
+
+    mockRpc.mockResolvedValue({
+      data: [{ id: '1', key: 'trigram-key', value: 'value', type: 'convention', similarity: 0.9 }],
+      error: null,
+    })
+
+    const start = Date.now()
+    await recallCommand('test', {})
+    const elapsed = Date.now() - start
+
+    const output = console_.logs.join('\n')
+    // Trigram-only method, results returned, and NO OpenAI network call.
+    expect(output).toContain('trigram')
+    expect(output).not.toContain('semantic')
+    expect(output).toContain('trigram-key')
+    expect(openAiCalls).toBe(0)
+    // Returns promptly — no 10s OpenAI-timeout stall on the hot path.
+    expect(elapsed).toBeLessThan(2000)
+
+    delete process.env.OPENAI_API_KEY
+  })
+
+  it('uses the OpenAI-embedded query for semantic search only when opted in via TAGES_OPENAI_EMBED (finding 5/6)', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    process.env.OPENAI_API_KEY = 'test-openai-key'
+    process.env.TAGES_OPENAI_EMBED = '1'
 
     globalThis.fetch = vi.fn().mockImplementation((url: string) => {
       if (typeof url === 'string' && url.includes('11434')) {
@@ -229,7 +271,7 @@ describe('recall command', () => {
     }) as unknown as typeof fetch
 
     mockRpc.mockResolvedValue({
-      data: [{ id: '1', key: 'openai-fallback-key', value: 'value', type: 'convention', similarity: 0.9 }],
+      data: [{ id: '1', key: 'opt-in-key', value: 'value', type: 'convention', similarity: 0.9 }],
       error: null,
     })
 
@@ -237,8 +279,9 @@ describe('recall command', () => {
 
     const output = console_.logs.join('\n')
     expect(output).toContain('hybrid (trigram + semantic)')
-    expect(output).toContain('openai-fallback-key')
+    expect(output).toContain('opt-in-key')
 
     delete process.env.OPENAI_API_KEY
+    delete process.env.TAGES_OPENAI_EMBED
   })
 })
