@@ -146,6 +146,17 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-07-09 — Instrumented Claude Code hook capture for behavioral drift (Milestone 1)
+
+- **New `packages/harness-claude-code` capture package**: an opt-in, local-first Claude Code hook (bin) that parses stdin tool-call events, redacts secrets, and appends them to a local SQLite log. Fail-closed by design — any parse/write error is swallowed and the process still exits 0, so a broken hook can never block or crash an agent's tool call. Additive to the existing MCP path; ships ahead of a Mersive engineering team dogfooding it for a baseline data window.
+- **Secret redaction extracted to `@tages/shared`**: new `redactSensitiveData` helper, shared between the MCP server's existing `safety.ts` and the new hook capture package, redacting before persistence rather than after.
+- **Migration `0059_harness_tool_events`**: new table for captured tool-call events; RLS policies copied verbatim from `tool_call_log` (both the owner and `team_members` branches) to avoid the RLS-drift class of bug.
+- **CLI `tages harness enable|disable|status|sync`**: per-developer opt-in. `enable` writes an absolute-path hook entry into the developer's gitignored `.claude/settings.local.json` (never into shared repo config); `sync` batch-uploads redacted rows to Supabase.
+- **`PRIVACY.md`** amended to disclose the opt-in harness and its 90-day retention window.
+- **Quality gate**: 971 tests passing, typecheck clean across all 9 packages. A high-effort review plus 3 adversarial review rounds found and fixed 8 defects, including 3 distinct secret/PII redaction leaks (nested-object, numeric, and argv-split forms), a silent-no-op hook path, and a slug-misroute regression. A subprocess smoke test confirmed end-to-end capture + redaction against the real compiled bin.
+- **Coverage warnings (non-blocking)**: `harness.ts` ~76% line coverage, `packages/harness-claude-code/src/index.ts` ~90% — flagged for follow-up, not a merge blocker.
+- **Deferred to Milestone 2 / follow-up**: `harness sync` is currently at-least-once (needs a dedup/unique constraint or upsert on `harness_tool_events`); redaction is still marker-gated regex (brittle — a bare secret with no adjacent marker is indistinguishable from a SHA/base64, worth an entropy-based or structural deny-by-default pass); `harness_tool_events` still needs to be merged into the drift computation in `drift.ts`; and the server's `embeddings.ts` OpenAI fallback (pre-existing, from PR #65) should be gated behind an env flag the same way the CLI already is.
+
 ### 2026-07-09 — LongMemEval-driven memory-quality fixes (product + eval harness)
 
 - **Product fix: document embeddings were never written (the #1 bug)** — `remember` never populated the pgvector `embedding` column, so semantic recall had been silently trigram-only since it shipped. `packages/server/src/tools/remember.ts` and `packages/server/src/embeddings.ts` now generate and persist the embedding on write; `packages/server/src/sync/supabase-sync.ts` syncs it to Supabase narrowly, serialized against concurrent writes/deletes so a late embedding upsert can no longer revert a newer value, resurrect a `forget`-ed memory, or strand a dirty flag.
