@@ -9,16 +9,28 @@ import { getProjectsDir } from './paths.js'
  * to the directory basename if no marker exists.
  */
 function detectSlugFromCwd(): string | null {
-  const markerPath = path.join(process.cwd(), '.tages', 'config.json')
-  if (fs.existsSync(markerPath)) {
-    try {
-      const marker = JSON.parse(fs.readFileSync(markerPath, 'utf-8'))
-      if (marker.slug && typeof marker.slug === 'string') return marker.slug
-    } catch {
-      // Marker corrupt — fall through to directory name detection
+  // Walk UP the directory tree looking for a `.tages/config.json` marker so
+  // the CLI resolves the same project whether it's run from the repo root or a
+  // subdirectory. This mirrors the harness local-log's detectSlug() walk-up so
+  // capture and sync/status never disagree on which project (and which
+  // `<slug>-harness.db`) they're operating on.
+  let dir = process.cwd()
+  for (;;) {
+    const markerPath = path.join(dir, '.tages', 'config.json')
+    if (fs.existsSync(markerPath)) {
+      try {
+        const marker = JSON.parse(fs.readFileSync(markerPath, 'utf-8'))
+        if (marker.slug && typeof marker.slug === 'string') return marker.slug
+      } catch {
+        // Marker corrupt — fall through to directory name detection
+      }
+      break
     }
+    const parent = path.dirname(dir)
+    if (parent === dir) break // reached filesystem root
+    dir = parent
   }
-  // Fall back to sanitized directory name
+  // Fall back to sanitized directory name of the original cwd
   const dirName = path.basename(process.cwd()).toLowerCase().replace(/[^a-z0-9-]/g, '-')
   return dirName || null
 }

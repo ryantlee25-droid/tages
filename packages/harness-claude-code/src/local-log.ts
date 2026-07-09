@@ -114,16 +114,31 @@ function toRow(raw: RawRow): HarnessEventRow {
  * cwd directory name.
  */
 export function detectSlug(cwd: string): string {
-  const markerPath = path.join(cwd, '.tages', 'config.json')
-  if (fs.existsSync(markerPath)) {
-    try {
-      const marker = JSON.parse(fs.readFileSync(markerPath, 'utf-8'))
-      if (marker && typeof marker.slug === 'string' && marker.slug) return marker.slug
-    } catch {
-      // Marker corrupt — fall through to directory name detection.
+  // Walk UP the directory tree looking for a `.tages/config.json` marker. This
+  // is required so capture (which derives cwd from the hook payload, usually
+  // the repo root) and sync/status (which use process.cwd(), possibly a
+  // subdirectory) resolve the SAME `<slug>-harness.db`. Without the walk-up,
+  // running the CLI from a subdir picked a different slug and stranded events
+  // in the root-slug DB while sync reported "nothing to sync".
+  let dir = path.resolve(cwd)
+  for (;;) {
+    const markerPath = path.join(dir, '.tages', 'config.json')
+    if (fs.existsSync(markerPath)) {
+      try {
+        const marker = JSON.parse(fs.readFileSync(markerPath, 'utf-8'))
+        if (marker && typeof marker.slug === 'string' && marker.slug) return marker.slug
+      } catch {
+        // Marker corrupt — fall through to directory-name detection below.
+      }
+      break
     }
+    const parent = path.dirname(dir)
+    if (parent === dir) break // reached filesystem root
+    dir = parent
   }
-  const dirName = path.basename(cwd).toLowerCase().replace(/[^a-z0-9-]/g, '-')
+  // No usable marker found anywhere up the tree — fall back to a sanitized
+  // name for the ORIGINAL cwd (unchanged legacy behavior).
+  const dirName = path.basename(path.resolve(cwd)).toLowerCase().replace(/[^a-z0-9-]/g, '-')
   return dirName || 'default'
 }
 

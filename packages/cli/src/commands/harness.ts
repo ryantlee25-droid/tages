@@ -38,10 +38,19 @@ export interface HarnessCommandOptions {
   yes?: boolean
 }
 
-/** The command every Tages-owned hook entry points at. Used both to write
- * new entries and to identify (and only remove) Tages' own entries on
- * disable, so unrelated hooks from other tools/plugins are never touched. */
+/** Legacy/default hook command string (the bare bin name). Kept as the
+ * default so `mergeHarnessHooks({})` stays deterministic for pure-logic tests,
+ * but real `enable` now writes an ABSOLUTE `node <path>` invocation resolved at
+ * enable-time (see resolveHarnessBinCommand) — a bare bin name never resolves
+ * for an installed CLI because @tages/cli doesn't depend on the harness
+ * package, so capture silently never ran. */
 const TAGES_HOOK_COMMAND = 'tages-harness-claude-code'
+
+/** Substring that identifies ANY Tages-owned hook command — the legacy bare
+ * `tages-harness-claude-code` and the absolute `node .../harness-claude-code/
+ * dist/index.js` form both contain it. Used to find (and only remove) Tages'
+ * own entries so unrelated hooks from other tools/plugins are never touched. */
+const TAGES_HOOK_MARKER = 'harness-claude-code'
 
 const HARNESS_HOOK_EVENTS = ['PreToolUse', 'PostToolUse', 'SessionEnd', 'Stop'] as const
 type HarnessHookEvent = (typeof HARNESS_HOOK_EVENTS)[number]
@@ -97,7 +106,53 @@ function writeSettings(settingsPath: string, settings: ClaudeSettings): void {
 }
 
 function isTagesOwnedGroup(group: HookMatcherGroup): boolean {
-  return Array.isArray(group.hooks) && group.hooks.some((h) => h.command === TAGES_HOOK_COMMAND)
+  return (
+    Array.isArray(group.hooks) &&
+    group.hooks.some((h) => typeof h.command === 'string' && h.command.includes(TAGES_HOOK_MARKER))
+  )
+}
+
+/**
+ * Resolves the ABSOLUTE `node <path>` command that a Tages hook must invoke.
+ * A bare `tages-harness-claude-code` on PATH won't resolve for an installed
+ * CLI (the CLI doesn't depend on the harness package), so capture silently
+ * never fires. We resolve the compiled harness entry to an absolute path and
+ * invoke it via node.
+ *
+ * Resolution order:
+ *   1. `require.resolve('@tages/harness-claude-code')` (works if it ever
+ *      becomes a real dependency / is hoisted into node_modules).
+ *   2. Walk up from this file to `packages/harness-claude-code/dist/index.js`
+ *      (the monorepo/source-checkout layout — mirrors loadHarnessLogModule()).
+ *
+ * Returns null when it can't be resolved, so `enable` can fail loudly instead
+ * of writing a broken hook.
+ */
+export function resolveHarnessBinPath(): string | null {
+  const require = createRequire(import.meta.url)
+  try {
+    return require.resolve('@tages/harness-claude-code')
+  } catch {
+    // Not resolvable as a dependency — fall through to the dist-walk.
+  }
+  try {
+    const __filename = fileURLToPath(import.meta.url)
+    let dir = path.dirname(__filename)
+    for (let i = 0; i < 10; i++) {
+      const candidate = path.join(dir, 'packages', 'harness-claude-code', 'dist', 'index.js')
+      if (fs.existsSync(candidate)) return candidate
+      dir = path.dirname(dir)
+    }
+  } catch {
+    // fall through
+  }
+  return null
+}
+
+/** Builds the shell command string a hook entry runs, from an absolute bin
+ * path. Quoted so paths with spaces still execute. */
+function harnessHookCommand(binPath: string): string {
+  return `node ${JSON.stringify(binPath)}`
 }
 
 /**
@@ -107,14 +162,17 @@ function isTagesOwnedGroup(group: HookMatcherGroup): boolean {
  * Idempotent: re-running replaces only the prior Tages-owned group per
  * event, never duplicates it.
  */
-export function mergeHarnessHooks(settings: ClaudeSettings): ClaudeSettings {
+export function mergeHarnessHooks(
+  settings: ClaudeSettings,
+  command: string = TAGES_HOOK_COMMAND,
+): ClaudeSettings {
   const mergedHooks: Partial<Record<string, HookMatcherGroup[]>> = { ...(settings.hooks ?? {}) }
   for (const event of HARNESS_HOOK_EVENTS) {
     const existing = mergedHooks[event] ?? []
     const withoutTages = existing.filter((g) => !isTagesOwnedGroup(g))
     mergedHooks[event] = [
       ...withoutTages,
-      { matcher: '*', hooks: [{ type: 'command', command: TAGES_HOOK_COMMAND }] },
+      { matcher: '*', hooks: [{ type: 'command', command }] },
     ]
   }
   return { ...settings, hooks: mergedHooks }
@@ -146,10 +204,17 @@ export function removeHarnessHooks(settings: ClaudeSettings): ClaudeSettings {
   return result
 }
 
-/** True only when every harness hook event has a Tages-owned group present. */
+/**
+ * True when ANY harness hook event has a Tages-owned group present.
+ *
+ * Deliberately "any", not "all": a partial state (e.g. one of the four groups
+ * was manually removed, or a prior disable/enable was interrupted) still means
+ * capture hooks are firing. Treating that as "enabled" lets `disable` fully
+ * clean it up instead of no-op'ing and leaving orphaned capture hooks live.
+ */
 export function isHarnessEnabled(settings: ClaudeSettings): boolean {
   if (!settings.hooks) return false
-  return HARNESS_HOOK_EVENTS.every((event: HarnessHookEvent) => {
+  return HARNESS_HOOK_EVENTS.some((event: HarnessHookEvent) => {
     const groups = settings.hooks![event]
     return Array.isArray(groups) && groups.some(isTagesOwnedGroup)
   })
@@ -241,7 +306,10 @@ async function loadHarnessLogModule(): Promise<void> {
 // Commands
 // ---------------------------------------------------------------------------
 
-export async function harnessEnableCommand(options: HarnessCommandOptions): Promise<void> {
+export async function harnessEnableCommand(
+  options: HarnessCommandOptions,
+  deps: { resolveBin?: () => string | null } = {},
+): Promise<void> {
   const config = loadProjectConfig(options.project)
   if (!config) {
     console.error(
@@ -252,6 +320,28 @@ export async function harnessEnableCommand(options: HarnessCommandOptions): Prom
     process.exit(1)
     return
   }
+
+  // PREFLIGHT: resolve the capture bin's absolute path BEFORE writing anything.
+  // A bare bin name on PATH won't resolve for an installed CLI, so writing it
+  // would silently disable capture. Fail loudly instead of writing a broken
+  // hook.
+  const resolveBin = deps.resolveBin ?? resolveHarnessBinPath
+  const binPath = resolveBin()
+  if (!binPath) {
+    console.error(
+      chalk.red(
+        'Could not locate the Tages harness capture binary (@tages/harness-claude-code).',
+      ),
+    )
+    console.error(
+      chalk.dim(
+        'The harness package must be installed/built alongside the CLI. No hooks were written — capture would not have run.',
+      ),
+    )
+    process.exit(1)
+    return
+  }
+  const hookCommand = harnessHookCommand(binPath)
 
   console.log()
   console.log(chalk.bold('Instrumented Harness — per-developer opt-in'))
@@ -298,7 +388,7 @@ export async function harnessEnableCommand(options: HarnessCommandOptions): Prom
 
   const settingsPath = getSettingsPath()
   const existing = readSettings(settingsPath)
-  const merged = mergeHarnessHooks(existing)
+  const merged = mergeHarnessHooks(existing, hookCommand)
   writeSettings(settingsPath, merged)
 
   console.log(chalk.green(`Instrumented harness enabled. Hooks written to ${settingsPath}.`))
@@ -309,6 +399,11 @@ export async function harnessDisableCommand(_options: HarnessCommandOptions): Pr
   const settingsPath = getSettingsPath()
   const existing = readSettings(settingsPath)
 
+  // "enabled" is now ANY Tages-owned group being present (see isHarnessEnabled),
+  // so a partial/interrupted state still qualifies. Whenever anything Tages-owned
+  // is present, ALWAYS run removeHarnessHooks to strip ALL Tages groups —
+  // never leave orphaned capture hooks firing because the state looked
+  // incomplete.
   if (!isHarnessEnabled(existing)) {
     console.log(chalk.dim('Instrumented harness is not enabled — nothing to do.'))
     return
@@ -377,50 +472,62 @@ export async function harnessSyncCommand(options: HarnessCommandOptions): Promis
     return
   }
 
+  const BATCH_SIZE = 500
   const log = new HarnessLogCtor(dbPath)
-  const rows = log.getUnsynced(500)
 
-  if (rows.length === 0) {
+  const firstBatch = log.getUnsynced(BATCH_SIZE)
+  if (firstBatch.length === 0) {
     console.log(chalk.dim('No pending harness events to sync.'))
     log.close()
     return
   }
 
-  const spinner = ora(`Syncing ${rows.length} harness event(s)...`).start()
+  const spinner = ora('Syncing harness events...').start()
 
   try {
     const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
 
-    // ONE batched insert carrying every pending row — never one call per row.
-    const payload = rows.map((r) => ({
-      project_id: config.projectId,
-      session_id: r.sessionId,
-      agent_name: r.agentName,
-      source: r.source,
-      tool_name: r.toolName,
-      event_type: r.eventType,
-      exit_code: r.exitCode,
-      file_path: r.filePath,
-      duration_ms: r.durationMs,
-      args_scrubbed: r.argsScrubbed,
-      result_summary: r.resultSummary,
-      secrets_redacted_count: r.secretsRedactedCount,
-      created_at: r.createdAt,
-    }))
+    // DRAIN in a loop: a backlog larger than one batch used to upload only the
+    // first BATCH_SIZE rows yet still report success, silently stranding the
+    // rest. Keep fetching/inserting/marking until nothing is left, reporting
+    // the TRUE total uploaded. Each insert is still ONE batched call.
+    let totalUploaded = 0
+    let batch = firstBatch
+    while (batch.length > 0) {
+      const payload = batch.map((r) => ({
+        project_id: config.projectId,
+        session_id: r.sessionId,
+        agent_name: r.agentName,
+        source: r.source,
+        tool_name: r.toolName,
+        event_type: r.eventType,
+        exit_code: r.exitCode,
+        file_path: r.filePath,
+        duration_ms: r.durationMs,
+        args_scrubbed: r.argsScrubbed,
+        result_summary: r.resultSummary,
+        secrets_redacted_count: r.secretsRedactedCount,
+        created_at: r.createdAt,
+      }))
 
-    // Supabase's `.from().insert()` returns PromiseLike, not Promise — wrap
-    // with Promise.resolve() so `.catch()`/try-catch behave (memory:
-    // feedback_supabase_promiselike).
-    const { error } = await Promise.resolve(supabase.from('harness_tool_events').insert(payload))
+      // Supabase's `.from().insert()` returns PromiseLike, not Promise — wrap
+      // with Promise.resolve() so `.catch()`/try-catch behave (memory:
+      // feedback_supabase_promiselike).
+      const { error } = await Promise.resolve(supabase.from('harness_tool_events').insert(payload))
 
-    if (error) {
-      spinner.fail(`Sync failed: ${error.message}`)
-      process.exit(1)
-      return
+      if (error) {
+        spinner.fail(`Sync failed after ${totalUploaded} event(s): ${error.message}`)
+        process.exit(1)
+        return
+      }
+
+      log.markSynced(batch.map((r) => r.id))
+      totalUploaded += batch.length
+      spinner.text = `Syncing harness events... ${totalUploaded} uploaded`
+      batch = log.getUnsynced(BATCH_SIZE)
     }
 
-    log.markSynced(rows.map((r) => r.id))
-    spinner.succeed(`Synced ${rows.length} harness event(s).`)
+    spinner.succeed(`Synced ${totalUploaded} harness event(s).`)
   } finally {
     log.close()
   }

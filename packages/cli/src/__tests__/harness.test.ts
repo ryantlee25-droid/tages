@@ -44,6 +44,7 @@ import {
   mergeHarnessHooks,
   removeHarnessHooks,
   isHarnessEnabled,
+  resolveHarnessBinPath,
   harnessEnableCommand,
   harnessDisableCommand,
   harnessSyncCommand,
@@ -169,6 +170,64 @@ describe('harness enable/disable — filesystem integration against .claude/sett
     expect(fs.existsSync(settingsPath())).toBe(true)
     const written = JSON.parse(fs.readFileSync(settingsPath(), 'utf-8'))
     expect(isHarnessEnabled(written)).toBe(true)
+  })
+
+  it('F1: the written hook command is an ABSOLUTE path that exists on disk (not a bare bin name)', async () => {
+    await harnessEnableCommand({ project: 'test-project', yes: true })
+
+    const written = JSON.parse(fs.readFileSync(settingsPath(), 'utf-8'))
+    const command: string = written.hooks.PreToolUse[0].hooks[0].command
+    // Shape: `node "<absolute path>"`.
+    expect(command.startsWith('node ')).toBe(true)
+    const binPath = JSON.parse(command.slice('node '.length))
+    expect(path.isAbsolute(binPath)).toBe(true)
+    expect(fs.existsSync(binPath)).toBe(true)
+    expect(binPath).toContain('harness-claude-code')
+  })
+
+  it('F1: enable FAILS loudly and writes NO hook when the capture bin cannot be resolved', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit called')
+    })
+
+    await expect(
+      harnessEnableCommand({ project: 'test-project', yes: true }, { resolveBin: () => null }),
+    ).rejects.toThrow('process.exit called')
+
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    // No broken hook file written.
+    expect(fs.existsSync(settingsPath())).toBe(false)
+    exitSpy.mockRestore()
+  })
+
+  it('F1: resolveHarnessBinPath resolves the compiled harness entry in the monorepo', () => {
+    const binPath = resolveHarnessBinPath()
+    expect(binPath).not.toBeNull()
+    expect(path.isAbsolute(binPath!)).toBe(true)
+    expect(fs.existsSync(binPath!)).toBe(true)
+  })
+
+  it('F6: disable fully cleans up a PARTIAL state (one Tages group manually removed)', async () => {
+    await harnessEnableCommand({ project: 'test-project', yes: true })
+
+    // Simulate a partial/interrupted state: strip just the SessionEnd group,
+    // leaving the other three Tages capture hooks still firing.
+    const partial = JSON.parse(fs.readFileSync(settingsPath(), 'utf-8'))
+    delete partial.hooks.SessionEnd
+    fs.writeFileSync(settingsPath(), JSON.stringify(partial, null, 2))
+    // Sanity: three Tages groups still present.
+    expect(partial.hooks.PreToolUse).toBeDefined()
+    expect(partial.hooks.PostToolUse).toBeDefined()
+    expect(partial.hooks.Stop).toBeDefined()
+
+    await harnessDisableCommand({})
+
+    const written = JSON.parse(fs.readFileSync(settingsPath(), 'utf-8'))
+    // ALL Tages capture groups gone — no orphaned hooks left firing.
+    expect(isHarnessEnabled(written)).toBe(false)
+    expect(written.hooks?.PreToolUse).toBeUndefined()
+    expect(written.hooks?.PostToolUse).toBeUndefined()
+    expect(written.hooks?.Stop).toBeUndefined()
   })
 
   it('enable MERGES into a pre-populated settings.local.json fixture, preserving unrelated content untouched', async () => {
@@ -307,6 +366,27 @@ describe('harness sync — batches unsynced local rows into ONE Supabase insert 
   })
 
   it('does nothing when there are no local events to sync', async () => {
+    await harnessSyncCommand({ project: 'test-project' })
+    expect(insertMock).not.toHaveBeenCalled()
+  })
+
+  it('F8: drains a backlog >500 across multiple batched inserts, uploading ALL rows', async () => {
+    seedLocalLog(600)
+
+    await harnessSyncCommand({ project: 'test-project' })
+
+    // Two batched calls (500 + 100), never one-per-row.
+    expect(insertMock).toHaveBeenCalledTimes(2)
+    const total = insertMock.mock.calls.reduce(
+      (sum, call) => sum + (call[0] as unknown[]).length,
+      0,
+    )
+    expect(total).toBe(600)
+    expect((insertMock.mock.calls[0][0] as unknown[]).length).toBe(500)
+    expect((insertMock.mock.calls[1][0] as unknown[]).length).toBe(100)
+
+    // Nothing stranded: a follow-up sync has zero pending rows.
+    insertMock.mockClear()
     await harnessSyncCommand({ project: 'test-project' })
     expect(insertMock).not.toHaveBeenCalled()
   })

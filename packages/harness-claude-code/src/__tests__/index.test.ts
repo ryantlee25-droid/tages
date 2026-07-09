@@ -196,6 +196,121 @@ describe('handleRawPayload', () => {
     }
   })
 
+  it('F3: a secret nested two levels deep produces a DB row with no literal secret substring', () => {
+    // Self-identifying secret (AWS access key) two levels deep — structural
+    // recursion must reach the leaf; the old stringify-then-scan on keyed
+    // patterns could not.
+    const awsKey = 'AKIAIOSFODNN7EXAMPLE'
+    // A keyed secret whose VALUE is not self-identifying — only the object key
+    // (`api_key`) marks it sensitive. The old code stored this raw because
+    // JSON's `"api_key":"..."` never matched the `api_key=...` pattern.
+    const opaqueApiKey = 'abcdefghijklmnopqrstuvwxyz0123456789'
+    const payload = preToolUsePayload({
+      tool_name: 'Bash',
+      tool_input: {
+        config: {
+          credentials: { aws_key: awsKey },
+          api_key: opaqueApiKey,
+        },
+      },
+    })
+
+    handleRawPayload(JSON.stringify(payload), { dbPath })
+
+    const log = new HarnessLog(dbPath)
+    try {
+      const rows = log.getUnsynced()
+      expect(rows).toHaveLength(1)
+      const serializedRow = JSON.stringify(rows[0])
+      expect(serializedRow).not.toContain(awsKey)
+      expect(serializedRow).not.toContain(opaqueApiKey)
+      expect(rows[0].secretsRedactedCount).toBeGreaterThan(0)
+      // Structure preserved, just with redacted leaves.
+      const args = rows[0].argsScrubbed as Record<string, unknown>
+      expect(args.config).toBeTypeOf('object')
+    } finally {
+      log.close()
+    }
+  })
+
+  it('F3: a secret inside an array produces a DB row with no literal secret substring', () => {
+    const awsKey = 'AKIAIOSFODNN7EXAMPLE'
+    const payload = preToolUsePayload({
+      tool_name: 'Bash',
+      tool_input: { items: ['harmless', awsKey, 'also-harmless'] },
+    })
+
+    handleRawPayload(JSON.stringify(payload), { dbPath })
+
+    const log = new HarnessLog(dbPath)
+    try {
+      const rows = log.getUnsynced()
+      expect(rows).toHaveLength(1)
+      const serializedRow = JSON.stringify(rows[0])
+      expect(serializedRow).not.toContain(awsKey)
+      expect(rows[0].secretsRedactedCount).toBeGreaterThan(0)
+      const args = rows[0].argsScrubbed as Record<string, unknown>
+      expect(Array.isArray(args.items)).toBe(true)
+      // Harmless siblings survive — no over-redaction of the whole array.
+      expect(args.items as unknown[]).toContain('harmless')
+    } finally {
+      log.close()
+    }
+  })
+
+  it('F4: a card number sent as a JSON number is redacted at the persisted-row level', () => {
+    const card = 4111111111111111
+    const payload = preToolUsePayload({
+      tool_name: 'Bash',
+      tool_input: { card },
+    })
+
+    handleRawPayload(JSON.stringify(payload), { dbPath })
+
+    const log = new HarnessLog(dbPath)
+    try {
+      const rows = log.getUnsynced()
+      expect(rows).toHaveLength(1)
+      const serializedRow = JSON.stringify(rows[0])
+      expect(serializedRow).not.toContain('4111111111111111')
+      expect(rows[0].secretsRedactedCount).toBeGreaterThan(0)
+    } finally {
+      log.close()
+    }
+  })
+
+  it('F4: an SSN sent as a JSON number is redacted at the persisted-row level', () => {
+    const ssn = 123456789
+    const payload = preToolUsePayload({
+      tool_name: 'Bash',
+      tool_input: { ssn },
+    })
+
+    handleRawPayload(JSON.stringify(payload), { dbPath })
+
+    const log = new HarnessLog(dbPath)
+    try {
+      const rows = log.getUnsynced()
+      expect(rows).toHaveLength(1)
+      const serializedRow = JSON.stringify(rows[0])
+      expect(serializedRow).not.toContain('123456789')
+      expect(rows[0].secretsRedactedCount).toBeGreaterThan(0)
+    } finally {
+      log.close()
+    }
+  })
+
+  it('F4: an ordinary number (line count) keeps its numeric type, not over-redacted', () => {
+    const payload = preToolUsePayload({
+      tool_name: 'Bash',
+      tool_input: { limit: 42 },
+    })
+    const event = parseHookPayload(payload)
+    expect(event).not.toBeNull()
+    expect((event!.argsScrubbed as Record<string, unknown>).limit).toBe(42)
+    expect(event!.secretsRedactedCount).toBe(0)
+  })
+
   it('a payload with a fake AWS key and a password field produces a DB row with no literal secret substring', () => {
     const fakeAwsKey = 'AKIAABCDEFGHIJKLMNOP'
     const fakePassword = 'hunter2hunter2superSecret'

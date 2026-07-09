@@ -42,41 +42,96 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** Redacts and caps a single raw value down to a persistable string. */
-function scrubFieldValue(value: unknown): { value: string; redactedCount: number } {
-  const raw = typeof value === 'string' ? value : JSON.stringify(value)
-  const { redacted, count } = redactSensitiveData(raw)
-  if (redacted.length <= MAX_FIELD_LENGTH) {
-    return { value: redacted, redactedCount: count }
-  }
-  const truncated = `${redacted.slice(0, MAX_FIELD_LENGTH)}…[truncated, ${redacted.length} chars total]`
-  return { value: truncated, redactedCount: count }
+/** Caps a single already-redacted string to MAX_FIELD_LENGTH. */
+function capString(s: string): string {
+  if (s.length <= MAX_FIELD_LENGTH) return s
+  return `${s.slice(0, MAX_FIELD_LENGTH)}…[truncated, ${s.length} chars total]`
 }
 
-/** Redacts + caps every value in a tool_input/tool_response-shaped object.
- * Non-string, non-object primitives (booleans, numbers, null) pass through
- * unscrubbed — they can't carry secrets or uncapped content. */
-function scrubRecord(record: Record<string, unknown> | null): { scrubbed: Record<string, unknown> | null; redactedCount: number } {
-  if (!record) return { scrubbed: null, redactedCount: 0 }
+/** Redacts + caps a plain string leaf (used for tool_response summaries, which
+ * are always strings and carry no object-key context). */
+function scrubFieldValue(value: string): { value: string; redactedCount: number } {
+  const { redacted, count } = redactSensitiveData(value)
+  return { value: capString(redacted), redactedCount: count }
+}
 
-  let redactedCount = 0
-  const scrubbed: Record<string, unknown> = {}
+/**
+ * Recursively redacts + caps every leaf of a tool_input/tool_response value,
+ * rebuilding the structure with redacted leaves. This is a STRUCTURAL walk,
+ * not stringify-then-scan: a credential nested inside `{config:{api_key:...}}`
+ * or inside an array is reached and scrubbed instead of being hidden from the
+ * `key=value` patterns by JSON's `"key":"value"` framing.
+ *
+ * - strings: redacted (then capped). When the string sits under an object key,
+ *   the `key=value` form is ALSO scanned so keyed secret patterns
+ *   (api_key=, token=, password=, aws_secret_access_key=, ...) fire even though
+ *   nested JSON stores them as `"key":"value"`; if the key context alone
+ *   triggers a match, the whole value is replaced.
+ * - numbers: coerced to string and run through the SAME redaction path, so a
+ *   card/SSN sent as a JSON number can't slip through unscrubbed. A number that
+ *   carries nothing sensitive keeps its numeric type.
+ * - booleans / null: passed through — they can't carry secrets.
+ * - objects / arrays: walked structurally.
+ */
+function scrubValue(value: unknown, keyHint?: string): { value: unknown; redactedCount: number } {
+  if (value === null || value === undefined) return { value: value ?? null, redactedCount: 0 }
+  if (typeof value === 'boolean') return { value, redactedCount: 0 }
 
-  for (const [key, value] of Object.entries(record)) {
-    if (value === null || value === undefined) {
-      scrubbed[key] = value ?? null
-      continue
-    }
-    if (typeof value === 'number' || typeof value === 'boolean') {
-      scrubbed[key] = value
-      continue
-    }
-    const { value: scrubbedValue, redactedCount: fieldCount } = scrubFieldValue(value)
-    scrubbed[key] = scrubbedValue
-    redactedCount += fieldCount
+  if (typeof value === 'number') {
+    const { redacted, count } = redactSensitiveData(String(value))
+    // Only downgrade a number to a redacted string when something was actually
+    // stripped; otherwise keep it numeric so ordinary numbers stay usable.
+    return count > 0 ? { value: capString(redacted), redactedCount: count } : { value, redactedCount: 0 }
   }
 
-  return { scrubbed, redactedCount }
+  if (typeof value === 'string') {
+    const direct = redactSensitiveData(value)
+    let redacted = direct.redacted
+    let count = direct.count
+    if (keyHint) {
+      const keyed = redactSensitiveData(`${keyHint}=${value}`)
+      if (keyed.count > count) {
+        // A keyed pattern matched only because of the object-key context —
+        // the entire value is sensitive, so redact all of it.
+        redacted = `[REDACTED:${keyHint}]`
+        count = keyed.count
+      }
+    }
+    return { value: capString(redacted), redactedCount: count }
+  }
+
+  if (Array.isArray(value)) {
+    let redactedCount = 0
+    const out = value.map((item) => {
+      const r = scrubValue(item)
+      redactedCount += r.redactedCount
+      return r.value
+    })
+    return { value: out, redactedCount }
+  }
+
+  if (isRecord(value)) {
+    let redactedCount = 0
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value)) {
+      const r = scrubValue(v, k)
+      out[k] = r.value
+      redactedCount += r.redactedCount
+    }
+    return { value: out, redactedCount }
+  }
+
+  // Any other exotic type — stringify + redact defensively so nothing raw slips.
+  const { redacted, count } = redactSensitiveData(String(value))
+  return { value: capString(redacted), redactedCount: count }
+}
+
+/** Redacts + caps every leaf of a tool_input/tool_response-shaped object,
+ * recursing structurally into nested objects and arrays. */
+function scrubRecord(record: Record<string, unknown> | null): { scrubbed: Record<string, unknown> | null; redactedCount: number } {
+  if (!record) return { scrubbed: null, redactedCount: 0 }
+  const { value, redactedCount } = scrubValue(record)
+  return { scrubbed: value as Record<string, unknown>, redactedCount }
 }
 
 interface RawHookPayload {

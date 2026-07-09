@@ -123,6 +123,26 @@ describe('detectSlug', () => {
     fs.writeFileSync(path.join(tmpDir, '.tages', 'config.json'), '{not valid json')
     expect(detectSlug(tmpDir)).toBe(path.basename(tmpDir).toLowerCase())
   })
+
+  it('F7: resolves the SAME slug from a repo subdir as from the repo root (walk-up)', () => {
+    // Marker lives at the repo root only.
+    fs.mkdirSync(path.join(tmpDir, '.tages'))
+    fs.writeFileSync(
+      path.join(tmpDir, '.tages', 'config.json'),
+      JSON.stringify({ slug: 'root-project' }),
+    )
+    const subdir = path.join(tmpDir, 'packages', 'cli', 'src')
+    fs.mkdirSync(subdir, { recursive: true })
+
+    const fromRoot = detectSlug(tmpDir)
+    const fromSubdir = detectSlug(subdir)
+
+    // Capture (cwd = root) and sync/status (cwd = subdir) must agree, else
+    // events strand in one DB while sync reads another.
+    expect(fromRoot).toBe('root-project')
+    expect(fromSubdir).toBe('root-project')
+    expect(fromSubdir).toBe(fromRoot)
+  })
 })
 
 describe('getHarnessDbPath', () => {
