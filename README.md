@@ -146,6 +146,14 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-07-09 — Long-input embedding fix + 3-date temporal anchoring (Tier-1 retrieval quality)
+
+- **Embedding silent-drop fix (Tasks A+B)**: memories over ~8192 tokens got NO embedding at all — OpenAI's 400 was swallowed, so the memory was invisible to semantic search with no error surfaced. `generateEmbedding()` (new `chunking.ts` in both `packages/cli` and `packages/server`) now token-aware chunks long input and mean-pools the resulting vectors; HTTP error bodies are logged instead of discarded; 429s are retried with a fresh per-attempt timeout and total backoff capped at 2s so the recall read path can't hang.
+- **Temporal 3-date anchoring (Task C)**: new `referenced_date`/`relative_date` columns (migration `0060_temporal_date_anchoring`, drops and recreates `hybrid_recall`/`semantic_recall` to return them with every original clause preserved verbatim), a rule-based date extractor, a narrowed temporal-query classifier, and relevance-preserving date-proximity reordering in recall. Targets temporal reasoning, the universal weak spot (23–54%) across every LongMemEval run to date.
+- **Quality gate**: 1,089 tests passing, typecheck clean. White (Opus) review + Gray + a high-effort `/code-review` workflow pass; the workflow caught real blockers White/Gray missed (temporal reorder was discarding relevance, the classifier over-fired on "may"/"after", and the retry hardening had re-introduced the silent-drop and could hang recall) — all fixed and adversarially re-verified READY.
+- **Must-do before prod**: migration `0060` is SQL and not exercised by the test suite — apply it against a Supabase dev branch and confirm `hybrid_recall`/`semantic_recall` return the new columns and existing recall still works before it reaches prod.
+- **Follow-ups (non-blocking)**: classifier still misses bare relative phrases like "last week"/"last month" (pre-existing, not a regression); previously-silently-dropped long memories need a manual per-project embedding backfill via `packages/server/scripts/backfill-embeddings.ts`; the CLI's `remember` command still never generates embeddings at all (separate gap, out of scope here, needs its own ticket).
+
 ### 2026-07-09 — Instrumented Claude Code hook capture for behavioral drift (Milestone 1)
 
 - **New `packages/harness-claude-code` capture package**: an opt-in, local-first Claude Code hook (bin) that parses stdin tool-call events, redacts secrets, and appends them to a local SQLite log. Fail-closed by design — any parse/write error is swallowed and the process still exits 0, so a broken hook can never block or crash an agent's tool call. Additive to the existing MCP path; ships ahead of a Mersive engineering team dogfooding it for a baseline data window.
