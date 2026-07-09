@@ -38,6 +38,25 @@ function toIso(date: Date): string | undefined {
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString()
 }
 
+/**
+ * Subtract `n` calendar months from `date` (UTC) without month-end overflow.
+ * `setUTCMonth(month - n)` alone rolls Feb 31 forward into March; this anchors
+ * to the first of the month before shifting, then clamps the day to the target
+ * month's last valid day. E.g. 2026-03-31 minus 1 month -> 2026-02-28, not
+ * 2026-03-03.
+ */
+function subtractUTCMonths(date: Date, n: number): Date {
+  const originalDay = date.getUTCDate()
+  const d = new Date(date)
+  d.setUTCDate(1)
+  d.setUTCMonth(d.getUTCMonth() - n)
+  const lastDayOfTargetMonth = new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0),
+  ).getUTCDate()
+  d.setUTCDate(Math.min(originalDay, lastDayOfTargetMonth))
+  return d
+}
+
 /** Absolute date patterns: ISO 8601, "Month D, YYYY", "MM/DD/YYYY". */
 function extractAbsoluteDate(text: string): Date | undefined {
   // ISO 8601: YYYY-MM-DD, optionally with a time component.
@@ -108,7 +127,7 @@ function extractRelativeDate(text: string, anchorDate: Date): Date | undefined {
     const d = new Date(anchorDate)
     if (unit.startsWith('day')) d.setUTCDate(d.getUTCDate() - n)
     else if (unit.startsWith('week')) d.setUTCDate(d.getUTCDate() - n * 7)
-    else if (unit.startsWith('month')) d.setUTCMonth(d.getUTCMonth() - n)
+    else if (unit.startsWith('month')) return subtractUTCMonths(anchorDate, n)
     return d
   }
 
@@ -160,5 +179,29 @@ export function extractDates(text: string, anchorDate: Date = new Date()): Extra
     return result
   } catch {
     return {}
+  }
+}
+
+/**
+ * Extract dates from a memory's KEY and VALUE separately, preferring the key.
+ *
+ * The write path previously ran extractDates on `${key} ${value}` and took the
+ * first date literal ANYWHERE, so an incidental date buried in the value (a
+ * quoted log line like "error at 2023-01-01T00:00:00", a code snippet) would
+ * populate referencedDate and mis-anchor the memory. The key is the curated,
+ * human-authored summary — the date there, if any, is the semantic one — so
+ * this checks the key first and only falls back to the value when the key
+ * carries no date. Kept logic-identical to the server copy.
+ */
+export function extractDatesFromMemory(
+  key: string,
+  value: string,
+  anchorDate: Date = new Date(),
+): ExtractedDates {
+  const fromKey = extractDates(key, anchorDate)
+  const fromValue = extractDates(value, anchorDate)
+  return {
+    referencedDate: fromKey.referencedDate ?? fromValue.referencedDate,
+    relativeDate: fromKey.relativeDate ?? fromValue.relativeDate,
   }
 }

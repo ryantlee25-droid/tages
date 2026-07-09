@@ -77,9 +77,9 @@ export async function generateEmbedding(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: 'nomic-embed-text', prompt: text }),
-        signal: AbortSignal.timeout(3000),
       },
       'Ollama',
+      3000,
     ) as { embedding: number[] } | null
     if (data && data.embedding && data.embedding.length > 0) return normalizeTo1536(data.embedding)
   } catch {
@@ -105,9 +105,9 @@ export async function generateEmbedding(
             'Authorization': `Bearer ${openaiKey}`,
           },
           body: JSON.stringify({ model: 'text-embedding-3-small', input: text }),
-          signal: AbortSignal.timeout(10000),
         },
         'OpenAI',
+        10000,
       ) as { data: Array<{ embedding: number[] }> } | null
       if (data?.data?.[0]?.embedding) return normalizeTo1536(data.data[0].embedding)
     } catch {
@@ -141,9 +141,9 @@ async function embedLongTextViaOpenAI(text: string, apiKey: string): Promise<num
           'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify({ model: 'text-embedding-3-small', input: chunk }),
-        signal: AbortSignal.timeout(10000),
       },
       'OpenAI (chunk)',
+      10000,
     ) as { data: Array<{ embedding: number[] }> } | null
 
     const embedding = data?.data?.[0]?.embedding
@@ -152,16 +152,23 @@ async function embedLongTextViaOpenAI(text: string, apiKey: string): Promise<num
   }
 
   if (chunkEmbeddings.length === 0) return null
-  return normalizeTo1536(meanPool(chunkEmbeddings))
+
+  // Degenerate mean guard (W1): if the pooled vector's norm is ~0 (e.g. chunk
+  // embeddings that cancel out), normalizing would yield an all-zero vector,
+  // which stores as a zero embedding -> NaN cosine -> the memory silently never
+  // matches. Treat that as "no embedding" (return null) rather than persisting
+  // a poisoned vector.
+  const pooled = meanPool(chunkEmbeddings)
+  const pooledNorm = Math.sqrt(pooled.reduce((sum, x) => sum + x * x, 0))
+  if (!(pooledNorm > 1e-8)) return null
+  return normalizeTo1536(pooled.map((x) => x / pooledNorm))
 }
 
 /**
- * Mean-pool a set of equal-dimension vectors and L2-renormalize the result to
- * unit length. Chunk embeddings from text-embedding-3-small are already
- * unit-length; averaging N unit vectors produces a vector with norm <= 1 (not
- * unit length unless the inputs are identical), so this renormalizes
- * explicitly rather than assuming normalizeTo1536's dimension-only handling
- * covers it.
+ * Mean-pool a set of equal-dimension vectors, returning the raw (un-normalized)
+ * average. The caller (embedLongTextViaOpenAI) checks the pooled norm for the
+ * degenerate near-zero case before L2-renormalizing, so normalization is owned
+ * there rather than hidden here.
  */
 function meanPool(vectors: number[][]): number[] {
   const dim = vectors[0].length
@@ -169,14 +176,7 @@ function meanPool(vectors: number[][]): number[] {
   for (const v of vectors) {
     for (let i = 0; i < dim; i++) sums[i] += v[i]
   }
-  const mean = sums.map((s) => s / vectors.length)
-  return l2Normalize(mean)
-}
-
-function l2Normalize(v: number[]): number[] {
-  const norm = Math.sqrt(v.reduce((sum, x) => sum + x * x, 0))
-  if (norm === 0) return v
-  return v.map((x) => x / norm)
+  return sums.map((s) => s / vectors.length)
 }
 
 /**
@@ -186,19 +186,32 @@ function l2Normalize(v: number[]): number[] {
  * non-retryable failure rather than throwing, matching this module's
  * existing "no provider available" contract.
  */
+// Upper bound on cumulative 429 backoff. Even though the recall path gates the
+// OpenAI fallback off by default, keep this identical to the server so the
+// twins don't drift: an unbounded `Retry-After` must never turn a retry into a
+// multi-minute hang. Once the budget is spent, stop retrying and return null.
+const MAX_TOTAL_RETRY_DELAY_MS = 2000
+
 async function fetchEmbeddingJson(
   url: string,
   init: RequestInit,
   providerLabel: string,
+  timeoutMs: number,
   maxRetries = 3,
 ): Promise<unknown | null> {
+  let spentDelayMs = 0
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, init)
+    // Fresh per-attempt timeout: a single shared AbortSignal.timeout would
+    // fire at a fixed wall-clock instant and abort a backed-off retry before
+    // it even starts, re-introducing the silent-embedding-loss this fixes.
+    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
 
     if (res.ok) return res.json()
 
-    if (res.status === 429 && attempt < maxRetries) {
-      await delayForRetry(res, attempt)
+    if (res.status === 429 && attempt < maxRetries && spentDelayMs < MAX_TOTAL_RETRY_DELAY_MS) {
+      const delayMs = Math.min(retryDelayMs(res, attempt), MAX_TOTAL_RETRY_DELAY_MS - spentDelayMs)
+      spentDelayMs += delayMs
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
       continue
     }
 
@@ -208,13 +221,13 @@ async function fetchEmbeddingJson(
   }
 }
 
-async function delayForRetry(res: Response, attempt: number): Promise<void> {
+/** Requested backoff for a 429, honoring a numeric `Retry-After` header. */
+function retryDelayMs(res: Response, attempt: number): number {
   const retryAfterHeader = res.headers?.get?.('retry-after')
   const retryAfterSeconds = retryAfterHeader ? Number(retryAfterHeader) : NaN
-  const delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0
+  return Number.isFinite(retryAfterSeconds) && retryAfterSeconds >= 0
     ? retryAfterSeconds * 1000
     : 2 ** attempt * 100 // 100ms, 200ms, 400ms...
-  await new Promise((resolve) => setTimeout(resolve, delayMs))
 }
 
 function normalizeTo1536(embedding: number[]): number[] {

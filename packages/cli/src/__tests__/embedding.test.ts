@@ -8,6 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { generateEmbedding } from '../lib/embedding.js'
+import { chunkText } from '../lib/chunking.js'
 
 describe('CLI generateEmbedding (provider parity)', () => {
   const originalFetch = globalThis.fetch
@@ -303,5 +304,74 @@ describe('CLI generateEmbedding chunking + error handling (Task A)', () => {
 
     expect(result).toBeNull()
     expect(openAiCalls).toBeGreaterThanOrEqual(2)
+  })
+
+  it('returns null (not a zero vector) when the pooled chunk vectors cancel to a near-zero mean (W1)', async () => {
+    const longText = 'lorem ipsum dolor sit amet '.repeat(2000)
+    const chunkCount = chunkText(longText).length
+    expect(chunkCount).toBeGreaterThan(1)
+
+    let call = 0
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (rejectOllama(url)) return Promise.reject(new Error('connection refused'))
+      call++
+      const embedding =
+        call < chunkCount
+          ? new Array(1536).fill(0.1)
+          : new Array(1536).fill(-0.1 * (chunkCount - 1))
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [{ embedding }] }) })
+    }) as unknown as typeof fetch
+
+    const result = await generateEmbedding(longText)
+    expect(result).toBeNull()
+  })
+
+  it('uses a FRESH timeout signal on each retry attempt (not one latching signal)', async () => {
+    const seenSignals: Array<AbortSignal | undefined> = []
+    let openAiCalls = 0
+    globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (rejectOllama(url)) return Promise.reject(new Error('connection refused'))
+      seenSignals.push(init?.signal ?? undefined)
+      openAiCalls++
+      if (openAiCalls === 1) {
+        return Promise.resolve({
+          ok: false,
+          status: 429,
+          headers: { get: (h: string) => (h.toLowerCase() === 'retry-after' ? '0' : null) },
+          text: () => Promise.resolve('rate limited'),
+        })
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [{ embedding: new Array(1536).fill(0.03) }] }) })
+    }) as unknown as typeof fetch
+
+    const result = await generateEmbedding('a short memory value')
+    expect(result).not.toBeNull()
+    expect(seenSignals.length).toBe(2)
+    expect(seenSignals[0]).toBeInstanceOf(AbortSignal)
+    expect(seenSignals[1]).toBeInstanceOf(AbortSignal)
+    expect(seenSignals[0]).not.toBe(seenSignals[1])
+  })
+
+  it('fails fast (bounded) on a 429 with a huge Retry-After instead of hanging for minutes', async () => {
+    vi.useFakeTimers()
+    let openAiCalls = 0
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (rejectOllama(url)) return Promise.reject(new Error('connection refused'))
+      openAiCalls++
+      return Promise.resolve({
+        ok: false,
+        status: 429,
+        headers: { get: (h: string) => (h.toLowerCase() === 'retry-after' ? '600' : null) },
+        text: () => Promise.resolve('rate limited'),
+      })
+    }) as unknown as typeof fetch
+
+    const promise = generateEmbedding('a short memory value')
+    await vi.runAllTimersAsync()
+    const result = await promise
+    vi.useRealTimers()
+
+    expect(result).toBeNull()
+    expect(openAiCalls).toBe(2)
   })
 })

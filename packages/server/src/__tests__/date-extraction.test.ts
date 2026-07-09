@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { extractDates } from '../temporal/date-extraction'
+import { extractDates, extractDatesFromMemory } from '../temporal/date-extraction'
 
 // Fixed anchor for deterministic relative-date resolution.
 // 2026-07-08 is a Wednesday (UTC).
@@ -92,5 +92,58 @@ describe('extractDates — both present, no match, and safety', () => {
 
   it('defaults the anchor to now when omitted', () => {
     expect(() => extractDates('no dates here')).not.toThrow()
+  })
+})
+
+describe('extractDates — "N months ago" month-end overflow (correctness)', () => {
+  it('does not overflow Feb when subtracting a month from the 31st', () => {
+    // 2026-03-31 minus 1 month must clamp to 2026-02-28, NOT roll forward to
+    // "Feb 31" -> 2026-03-03 (the setUTCMonth bug).
+    const anchor = new Date('2026-03-31T12:00:00.000Z')
+    const result = extractDates('resolved 1 month ago', anchor)
+    expect(result.relativeDate).toBe(new Date('2026-02-28T12:00:00.000Z').toISOString())
+  })
+
+  it('handles a normal (non-boundary) "N months ago" unchanged', () => {
+    const anchor = new Date('2026-07-08T12:00:00.000Z')
+    const result = extractDates('shipped 2 months ago', anchor)
+    expect(result.relativeDate).toBe(new Date('2026-05-08T12:00:00.000Z').toISOString())
+  })
+
+  it('clamps to the last day of a leap-February when subtracting 12 months from a 29th', () => {
+    // 2025-02-28 is the anchor day-of-month source: from 2027-02-28 back 12
+    // months lands in 2026-02, which has 28 days — day 28 is valid, unchanged.
+    const anchor = new Date('2026-05-31T00:00:00.000Z')
+    const result = extractDates('happened 3 months ago', anchor)
+    // May 31 back 3 months = Feb 28 2026 (Feb has 28 days, clamps from 31).
+    expect(result.relativeDate).toBe(new Date('2026-02-28T00:00:00.000Z').toISOString())
+  })
+})
+
+describe('extractDatesFromMemory — prefers the key over incidental value dates', () => {
+  const ANCHOR2 = new Date('2026-07-08T12:00:00.000Z')
+
+  it('uses the key\'s date, not an incidental log-line date in the value', () => {
+    const result = extractDatesFromMemory(
+      'deployed auth service on 2026-07-01',
+      'stack trace: error at 2020-01-01T00:00:00 during startup',
+      ANCHOR2,
+    )
+    expect(result.referencedDate).toBe(new Date('2026-07-01T00:00:00.000Z').toISOString())
+  })
+
+  it('falls back to the value date when the key carries none', () => {
+    const result = extractDatesFromMemory(
+      'auth rollout',
+      'we shipped this on 2026-07-01',
+      ANCHOR2,
+    )
+    expect(result.referencedDate).toBe(new Date('2026-07-01T00:00:00.000Z').toISOString())
+  })
+
+  it('returns {} for undefined referenced/relative when neither key nor value has a date', () => {
+    const result = extractDatesFromMemory('auth pattern', 'use the shared client factory', ANCHOR2)
+    expect(result.referencedDate).toBeUndefined()
+    expect(result.relativeDate).toBeUndefined()
   })
 })

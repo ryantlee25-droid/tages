@@ -7,7 +7,7 @@ import { getEncryptionKey, encryptValue } from '../crypto/encryption'
 import { computeFieldDiff } from '../diff/field-diff'
 import { tokenize } from '../search/tokenizer'
 import { generateEmbedding } from '../embeddings'
-import { extractDates } from '../temporal/date-extraction'
+import { extractDatesFromMemory } from '../temporal/date-extraction'
 
 export async function handleRemember(
   args: {
@@ -117,7 +117,7 @@ export async function handleRemember(
   // Runs inline (NOT fire-and-forget like embedding generation below) —
   // regex-based extraction is local/cheap with no network call, so there's
   // no latency reason to defer it, and it must be set before the upsert.
-  const extractedDates = extractDates(`${memory.key} ${plaintextForIndex}`, new Date(now))
+  const extractedDates = extractDatesFromMemory(memory.key, plaintextForIndex, new Date(now))
   memory.referencedDate = extractedDates.referencedDate
   memory.relativeDate = extractedDates.relativeDate
 

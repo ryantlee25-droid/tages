@@ -477,7 +477,7 @@ export function pgVectorToEmbedding(value: string): number[] {
   return trimmed.split(',').map(Number)
 }
 
-function dbRowToMemory(row: DbRow): Memory {
+export function dbRowToMemory(row: DbRow): Memory {
   return {
     id: row.id,
     projectId: row.project_id,
@@ -507,7 +507,7 @@ function dbRowToMemory(row: DbRow): Memory {
   }
 }
 
-function memoryToDbRow(memory: Memory): DbRow {
+export function memoryToDbRow(memory: Memory): DbRow {
   const row: DbRow = {
     id: memory.id,
     project_id: memory.projectId,
