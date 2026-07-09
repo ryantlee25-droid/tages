@@ -121,6 +121,28 @@ describe('backfillEmbeddings', () => {
     expect(updated).toHaveLength(0)
   })
 
+  it('embeds and writes a previously-un-embeddable long memory now that generateEmbedding handles chunking (Task A regression)', async () => {
+    // Before the Task A chunking fix, a memory value over OpenAI's ~8192-token
+    // limit made generateEmbedding return null (a swallowed 400), so backfill
+    // marked the row failed and it stayed un-embedded forever. generateEmbedding
+    // is mocked at the module boundary here (chunking internals are covered in
+    // embeddings.test.ts) — this asserts backfill's row-processing path treats
+    // a long memory exactly like any other once generateEmbedding succeeds for it.
+    const longValue = 'word '.repeat(12000)
+    const { supabase, updated } = makeSupabaseMock([
+      { id: 'long-row', value: longValue, encrypted: false },
+    ])
+    mockGenerateEmbedding.mockResolvedValue(new Array(1536).fill(0.09))
+
+    const result = await backfillEmbeddings(supabase, 'proj-1')
+
+    expect(result.processed).toBe(1)
+    expect(result.updated).toBe(1)
+    expect(result.failed).toBe(0)
+    expect(updated).toHaveLength(1)
+    expect(mockGenerateEmbedding).toHaveBeenCalledWith(longValue)
+  })
+
   it('never logs plaintext or ciphertext, only ids and error messages', async () => {
     const { supabase } = makeSupabaseMock([
       { id: 'sensitive-row-id', value: 'super secret plaintext content', encrypted: false },

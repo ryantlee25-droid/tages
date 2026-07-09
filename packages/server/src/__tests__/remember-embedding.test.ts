@@ -231,6 +231,34 @@ describe('Task 8: embedding write path', () => {
     // No assertion needed beyond "did not throw" — failure is logged and swallowed.
   })
 
+  it('generates a real (non-null) embedding for a very long memory value via scheduleEmbeddingSync (Task A chunking-bug regression)', async () => {
+    // Before the Task A fix, generateEmbedding silently returned null for any
+    // value over OpenAI's ~8192-token limit; the memory was stored with no
+    // embedding and dropped out of semantic recall with no error anywhere.
+    // generateEmbedding is mocked at the module boundary here (this suite
+    // covers the remember.ts plumbing, not chunking internals — those are
+    // covered directly in embeddings.test.ts), so this asserts the write
+    // path calls through with the full long plaintext and stores whatever
+    // real vector generateEmbedding returns, unskipped, regardless of length.
+    const fakeEmbedding = new Array(1536).fill(0.07)
+    mockGenerateEmbedding.mockResolvedValue(fakeEmbedding)
+
+    const longValue = 'word '.repeat(12000)
+    await handleRemember(
+      { key: 'long-embed-key', value: longValue, type: 'convention' },
+      TEST_PROJECT,
+      cache,
+      null,
+    )
+
+    await flushMicrotasks()
+
+    expect(mockGenerateEmbedding).toHaveBeenCalledWith(longValue)
+    const raw = readRow(dbPath, TEST_PROJECT, 'long-embed-key')
+    expect(raw).not.toBeUndefined()
+    expect(JSON.parse(raw!.embedding!)).toEqual(fakeEmbedding)
+  })
+
   it('skips embedding storage entirely when no provider is available (returns null)', async () => {
     mockGenerateEmbedding.mockResolvedValue(null)
 
