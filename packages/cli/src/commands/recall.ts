@@ -4,6 +4,7 @@ import Database from 'better-sqlite3'
 import { createAuthenticatedClient } from '../auth/session.js'
 import { loadProjectConfig } from '../config/project.js'
 import { getCacheDir } from '../config/paths.js'
+import { generateEmbedding } from '../lib/embedding.js'
 
 interface RecallOptions {
   type?: string
@@ -68,34 +69,24 @@ export async function recallCommand(query: string | undefined, options: RecallOp
         p_limit: limit,
       })
 
-      // Semantic search (if Ollama available)
+      // Semantic search. Uses Ollama only by default: if the local embedder is
+      // down, generateEmbedding returns null and we fail fast to trigram rather
+      // than making a blocking, billable OpenAI call on the recall hot path.
+      // The OpenAI fallback is opt-in via TAGES_OPENAI_EMBED (see lib/embedding).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let semanticPromise: any = Promise.resolve({ data: null, error: null })
-      try {
-        const embedRes = await fetch('http://localhost:11434/api/embeddings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: 'nomic-embed-text', prompt: query }),
-          signal: AbortSignal.timeout(3000),
+      const embedding = await generateEmbedding(query!)
+      if (embedding) {
+        const embeddingStr = `[${embedding.join(',')}]`
+
+        semanticPromise = supabase.rpc('semantic_recall', {
+          p_project_id: config.projectId,
+          p_embedding: embeddingStr,
+          p_type: options.type || null,
+          p_limit: limit,
+          p_threshold: 0.3,
         })
-
-        if (embedRes.ok) {
-          const embedData = await embedRes.json() as { embedding: number[] }
-          let embedding = embedData.embedding
-          if (embedding.length < 1536) embedding = [...embedding, ...new Array(1536 - embedding.length).fill(0)]
-          const embeddingStr = `[${embedding.join(',')}]`
-
-          semanticPromise = supabase.rpc('semantic_recall', {
-            p_project_id: config.projectId,
-            p_embedding: embeddingStr,
-            p_type: options.type || null,
-            p_limit: limit,
-            p_threshold: 0.3,
-          })
-          searchMethod = 'hybrid (trigram + semantic)'
-        }
-      } catch {
-        // Ollama not available
+        searchMethod = 'hybrid (trigram + semantic)'
       }
 
       const [trigramResult, semanticResult] = await Promise.all([trigramPromise, semanticPromise])

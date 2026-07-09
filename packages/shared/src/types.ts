@@ -64,6 +64,10 @@ export interface Memory {
   sessionId?: string
   toolName?: string
   sourceContext?: MemorySourceContext
+  // Semantic search vector (1536-dim, pgvector). Always generated from
+  // pre-encryption plaintext — never from ciphertext. Optional: populated
+  // asynchronously after write, so it may be absent on freshly-read rows.
+  embedding?: number[]
 }
 
 export interface MemorySourceContext {

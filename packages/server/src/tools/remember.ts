@@ -6,6 +6,7 @@ import { scanForSensitiveData, formatSafetyWarnings, hasHighSeverity } from './s
 import { getEncryptionKey, encryptValue } from '../crypto/encryption'
 import { computeFieldDiff } from '../diff/field-diff'
 import { tokenize } from '../search/tokenizer'
+import { generateEmbedding } from '../embeddings'
 
 export async function handleRemember(
   args: {
@@ -131,6 +132,12 @@ export async function handleRemember(
     if (ok) cache.markSynced([memory.id])
   }
 
+  // T8 (Task 8): generate + store + sync the document embedding for semantic
+  // search. Fire-and-forget — never block the tool response on this network
+  // call. Generated from plaintextForIndex (pre-encryption plaintext), never
+  // from ciphertext, so encrypted-at-rest memories still get correct vectors.
+  scheduleEmbeddingSync(memory, plaintextForIndex, cache, sync)
+
   const action = existing ? 'Updated' : 'Stored'
   const extras: string[] = []
   if (args.conditions?.length) extras.push(`${args.conditions.length} conditions`)
@@ -146,4 +153,53 @@ export async function handleRemember(
       text: `${action} memory: "${args.key}" (${args.type})${extraNote}${safetyNote}`,
     }],
   }
+}
+
+/**
+ * Generate a semantic-search embedding for a memory and sync it to the local
+ * cache and Supabase, without blocking the caller.
+ *
+ * Deliberately not awaited by handleRemember — embedding generation is a
+ * network call (Ollama or OpenAI) that can take seconds, and the MCP tool
+ * response must return immediately. Any failure here (no provider available,
+ * network error) is logged and swallowed; the memory itself is already safely
+ * stored by the time this runs.
+ *
+ * Race-safety — this path resolves SECONDS after the original write, so by the
+ * time it runs the row it captured may have been overwritten (a concurrent
+ * remember(key, V2)) or deleted (a concurrent forget). Therefore it must NOT
+ * re-write the full captured row. It performs a NARROW, embedding-only,
+ * (project_id, key)-keyed update in both places:
+ *
+ *   - Locally via cache.setEmbedding: touches only the `embedding` column,
+ *     never value/tags/dirty. No-op if the row was deleted. This avoids
+ *     reverting V2 back to the stale captured V1 (data loss) and avoids
+ *     clearing a dirty flag that a newer update set (stranded flush).
+ *   - Remotely via sync.remoteUpdateEmbedding: an `.update()` (not upsert)
+ *     serialized on the same queue as remoteDelete, so it cannot resurrect a
+ *     row deleted by a concurrent forget, and cannot clobber a newer value.
+ *
+ * We deliberately do NOT markSynced here: the whole-row dirty state belongs to
+ * the write path, not the embedding path.
+ */
+function scheduleEmbeddingSync(
+  memory: Memory,
+  plaintext: string,
+  cache: SqliteCache,
+  sync: SupabaseSync | null,
+): void {
+  const { projectId, key } = memory
+  void generateEmbedding(plaintext)
+    .then(async (embedding) => {
+      if (!embedding) return
+      // Local: embedding-only column update, keyed by (projectId, key).
+      cache.setEmbedding(projectId, key, embedding)
+      if (sync) {
+        // Remote: serialized, embedding-only update; no-op if row was deleted.
+        await sync.remoteUpdateEmbedding(projectId, key, embedding)
+      }
+    })
+    .catch((err) => {
+      console.error('[tages] Embedding generation/sync failed:', (err as Error).message)
+    })
 }

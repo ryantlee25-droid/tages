@@ -241,6 +241,38 @@ export class SupabaseSync {
     }
   }
 
+  /**
+   * Narrow, embedding-only remote update keyed by (project_id, key).
+   *
+   * Routed through the same `enqueue` serialisation queue as remoteInsert's
+   * dirty flush and remoteDelete, so the late-resolving embedding write is
+   * ordered against concurrent writes and deletes. Crucially this is an
+   * `.update()` (not `.upsert()`): it sets ONLY the `embedding` column and
+   * is a no-op when no row matches (the key was `forget`-deleted between the
+   * original write and now) — it never re-creates a deleted row and never
+   * clobbers a newer value written by a concurrent remember(key, V2).
+   */
+  async remoteUpdateEmbedding(projectId: string, key: string, embedding: number[]): Promise<boolean> {
+    return this.enqueue(() => this._remoteUpdateEmbedding(projectId, key, embedding))
+  }
+
+  private async _remoteUpdateEmbedding(projectId: string, key: string, embedding: number[]): Promise<boolean> {
+    try {
+      const { error } = await this.supabase
+        .from('memories')
+        .update({ embedding: embeddingToPgVector(embedding) })
+        .eq('project_id', projectId)
+        .eq('key', key)
+      if (error) {
+        console.error('[tages] Remote embedding update failed:', error.message)
+        return false
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
   async remoteDelete(projectId: string, key: string): Promise<boolean> {
     return this.enqueue(() => this._remoteDelete(projectId, key))
   }
@@ -294,7 +326,7 @@ export class SupabaseSync {
     limit = 5,
   ): Promise<Memory[] | null> {
     try {
-      const embeddingStr = `[${embedding.join(',')}]`
+      const embeddingStr = embeddingToPgVector(embedding)
       const { data, error } = await this.supabase.rpc('hybrid_recall', {
         p_project_id: this.projectId,
         p_query: query,
@@ -423,6 +455,24 @@ interface DbRow {
   created_by: string | null
   updated_by: string | null
   encrypted: boolean
+  // Optional (not `| null`) and deliberately omitted from the row object when
+  // the in-memory Memory has no embedding yet: Supabase's `.upsert()` only
+  // updates columns present in the payload, so omitting the key on a
+  // conflict-update leaves any already-synced embedding untouched instead of
+  // clobbering it with null. See memoryToDbRow below.
+  embedding?: string
+}
+
+/** Serialize a raw embedding vector into the pgvector literal format Supabase expects. */
+export function embeddingToPgVector(embedding: number[]): string {
+  return `[${embedding.join(',')}]`
+}
+
+/** Parse a pgvector literal (or Supabase's string representation of one) back into a number array. */
+export function pgVectorToEmbedding(value: string): number[] {
+  const trimmed = value.trim().replace(/^\[/, '').replace(/\]$/, '')
+  if (!trimmed) return []
+  return trimmed.split(',').map(Number)
 }
 
 function dbRowToMemory(row: DbRow): Memory {
@@ -449,11 +499,12 @@ function dbRowToMemory(row: DbRow): Memory {
     createdBy: row.created_by || undefined,
     updatedBy: row.updated_by || undefined,
     encrypted: row.encrypted || false,
+    embedding: row.embedding ? pgVectorToEmbedding(row.embedding) : undefined,
   }
 }
 
 function memoryToDbRow(memory: Memory): DbRow {
-  return {
+  const row: DbRow = {
     id: memory.id,
     project_id: memory.projectId,
     key: memory.key,
@@ -477,4 +528,11 @@ function memoryToDbRow(memory: Memory): DbRow {
     updated_by: memory.updatedBy || null,
     encrypted: memory.encrypted || false,
   }
+  // Only set the column when we actually have an embedding. Leaving the key
+  // off entirely (rather than setting it to null) means a sync that races
+  // ahead of embedding generation can't stomp a previously-computed embedding.
+  if (memory.embedding && memory.embedding.length > 0) {
+    row.embedding = embeddingToPgVector(memory.embedding)
+  }
+  return row
 }

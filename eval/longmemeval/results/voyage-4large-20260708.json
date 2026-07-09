@@ -1,0 +1,215 @@
+{
+  "run_id": "tages-voyage-cosine-n50-seed42-2026-07-09T01-24-40-883Z",
+  "dataset_sha": "b81b63816bf80b55a70ba0fa4b6673528f22942f",
+  "model_answer": "gpt-4o-2024-08-06",
+  "model_judge": "gpt-4o-2024-08-06",
+  "tages_version": "dev",
+  "n": 50,
+  "overall_accuracy": 0,
+  "accuracy_by_type": {},
+  "duration_seconds": 7,
+  "cost_usd_estimate": 0,
+  "failures": [
+    {
+      "question_id": "6b7dfb22",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "gpt4_468eb063",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "1d4da289",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "gpt4_d31cdae3",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "gpt4_e072b769",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "d596882b",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "9ea5eabc",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "gpt4_e061b84g",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "36b9f61e",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "gpt4_93f6379c",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "681a1674",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "6456829e_abs",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "5c40ec5b",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "21436231",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "gpt4_7f6b06db",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "9a707b81",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "ba358f49",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "bbf86515",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "d851d5ba",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "4fd1909e",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "gpt4_31ff4165",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "gpt4_372c3eed_abs",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "a346bb18",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "gpt4_8279ba02",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "001be529",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "7401057b",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "4baee567",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "993da5e2",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "32260d93",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "726462e0",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "5025383b",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "6f9b354f",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "42ec0761",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "69fee5aa",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "91b15a6e",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "6a1eabeb",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "gpt4_f2262a51",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "fca762bc",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "4d6b87c8",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "078150f1",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "4100d0a0",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "gpt4_b4a80587",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "7a8d0b71",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "eac54add",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "60bf93ed_abs",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "ceb54acb",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "1e043500",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "ba61f0b9",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "caf03d32",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    },
+    {
+      "question_id": "2ebe6c90",
+      "reason": "Voyage embed 429: {\"detail\":\"You have not yet added your payment method in the billing page and will have reduced rate limits of 3 RPM and 10K TPM. To unlock our standard rate limits, please add a payment method in the"
+    }
+  ],
+  "details": []
+}
