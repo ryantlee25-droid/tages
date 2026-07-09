@@ -64,9 +64,22 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
   return null
 }
 
-function normalizeTo1536(embedding: number[]): number[] {
+/**
+ * Normalize an embedding to exactly 1536 dimensions (the pgvector column width).
+ *
+ * Truncating a >1536-dim vector without renormalizing would leave it no longer
+ * unit-length, silently corrupting cosine-similarity rankings against every
+ * other (correctly-normalized) vector in the index. So truncation is always
+ * followed by an L2 renormalization pass.
+ */
+export function normalizeTo1536(embedding: number[]): number[] {
   if (embedding.length === 1536) return embedding
-  if (embedding.length > 1536) return embedding.slice(0, 1536)
+  if (embedding.length > 1536) {
+    const truncated = embedding.slice(0, 1536)
+    const norm = Math.sqrt(truncated.reduce((sum, v) => sum + v * v, 0))
+    if (norm === 0) return truncated
+    return truncated.map((v) => v / norm)
+  }
   // Pad with zeros
   return [...embedding, ...new Array(1536 - embedding.length).fill(0)]
 }
