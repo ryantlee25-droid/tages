@@ -5,6 +5,7 @@ import { createAuthenticatedClient } from '../auth/session.js'
 import { loadProjectConfig } from '../config/project.js'
 import { getCacheDir } from '../config/paths.js'
 import { generateEmbedding } from '../lib/embedding.js'
+import { sortByTemporalProximity } from '../lib/temporal-sort.js'
 
 interface RecallOptions {
   type?: string
@@ -38,7 +39,7 @@ export async function recallCommand(query: string | undefined, options: RecallOp
       // List all memories — no similarity filtering
       let q = supabase
         .from('memories')
-        .select('id, project_id, key, value, type, source, agent_name, file_paths, tags, confidence, conditions, phases, cross_system_refs, examples, execution_flow, created_at, updated_at')
+        .select('id, project_id, key, value, type, source, agent_name, file_paths, tags, confidence, conditions, phases, cross_system_refs, examples, execution_flow, created_at, updated_at, referenced_date, relative_date')
         .eq('project_id', config.projectId)
         .eq('status', 'live')
         .order('type')
@@ -117,7 +118,14 @@ export async function recallCommand(query: string | undefined, options: RecallOp
 
       // Sort by similarity desc, take top N
       merged.sort((a, b) => ((b.similarity as number) || 0) - ((a.similarity as number) || 0))
-      data = merged.slice(0, limit)
+      // Temporal anchoring (migration 0060): when the query is asking about
+      // timing rather than content, reorder by date proximity/recency on top
+      // of the similarity ordering above. Only semantic_recall rows carry
+      // referenced_date/relative_date (recall_memories/trigram rows fall back
+      // to created_at, which every row has) — see 0060's migration header for
+      // why only hybrid_recall/semantic_recall were updated.
+      const temporallySorted = sortByTemporalProximity(merged, query!)
+      data = temporallySorted.slice(0, limit)
 
       if (semanticResult.data === null) searchMethod = 'trigram'
     }
