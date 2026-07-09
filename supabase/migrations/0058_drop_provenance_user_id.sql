@@ -14,9 +14,18 @@
 --
 -- If a future feature genuinely needs the auth.users UUID, re-add via a
 -- new migration. Avoid the temptation to silently re-introduce it here.
+--
+-- NOTE: this must be DROP + CREATE, not CREATE OR REPLACE. Postgres
+-- rejects CREATE OR REPLACE FUNCTION when the RETURNS TABLE shape changes
+-- (SQLSTATE 42P13 - "cannot change return type of existing function"),
+-- which 0057 -> 0058 does (0057's shape includes user_id; this one omits
+-- it). A fresh `db push` from a clean 0001 state would fail at this
+-- migration under CREATE OR REPLACE.
 -- ============================================================
 
-create or replace function get_memory_provenance(p_memory_id uuid)
+drop function if exists get_memory_provenance(uuid);
+
+create function get_memory_provenance(p_memory_id uuid)
 returns table (
   memory_id      uuid,
   user_display   text,

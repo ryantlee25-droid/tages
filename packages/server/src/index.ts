@@ -270,7 +270,7 @@ async function main() {
 
   server.tool(
     'recall',
-    'Search codebase memories by fuzzy query — finds conventions, decisions, patterns, and lessons',
+    'Search codebase memories by fuzzy query — finds conventions, decisions, patterns, and lessons. Results are numbered passages [1..n] with source and date. Before answering, briefly note which numbered passage(s) support your answer, then cite them.',
     {
       query: RecallSchema.shape.query,
       type: RecallSchema.shape.type,

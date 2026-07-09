@@ -6,6 +6,7 @@ import { scanForSensitiveData, formatSafetyWarnings, hasHighSeverity } from './s
 import { getEncryptionKey, encryptValue } from '../crypto/encryption'
 import { computeFieldDiff } from '../diff/field-diff'
 import { tokenize } from '../search/tokenizer'
+import { generateEmbedding } from '../embeddings'
 
 export async function handleRemember(
   args: {
@@ -131,6 +132,12 @@ export async function handleRemember(
     if (ok) cache.markSynced([memory.id])
   }
 
+  // T8 (Task 8): generate + store + sync the document embedding for semantic
+  // search. Fire-and-forget — never block the tool response on this network
+  // call. Generated from plaintextForIndex (pre-encryption plaintext), never
+  // from ciphertext, so encrypted-at-rest memories still get correct vectors.
+  scheduleEmbeddingSync(memory, plaintextForIndex, cache, sync)
+
   const action = existing ? 'Updated' : 'Stored'
   const extras: string[] = []
   if (args.conditions?.length) extras.push(`${args.conditions.length} conditions`)
@@ -146,4 +153,43 @@ export async function handleRemember(
       text: `${action} memory: "${args.key}" (${args.type})${extraNote}${safetyNote}`,
     }],
   }
+}
+
+/**
+ * Generate a semantic-search embedding for a memory and sync it to the local
+ * cache and Supabase, without blocking the caller.
+ *
+ * Deliberately not awaited by handleRemember — embedding generation is a
+ * network call (Ollama or OpenAI) that can take seconds, and the MCP tool
+ * response must return immediately. Any failure here (no provider available,
+ * network error) is logged and swallowed; the memory itself is already safely
+ * stored by the time this runs.
+ *
+ * Race-safety: this pushes the embedding directly via `sync.remoteInsert`
+ * once computed, rather than waiting on the periodic dirty-flag flush cycle.
+ * `memoryToDbRow` (supabase-sync.ts) omits the `embedding` column entirely
+ * when a Memory has no embedding set, instead of writing null, so the
+ * earlier synchronous remoteInsert() call in handleRemember (which runs
+ * before this embedding is ready) cannot clobber an existing embedding —
+ * it simply leaves the column untouched until this fires.
+ */
+function scheduleEmbeddingSync(
+  memory: Memory,
+  plaintext: string,
+  cache: SqliteCache,
+  sync: SupabaseSync | null,
+): void {
+  void generateEmbedding(plaintext)
+    .then(async (embedding) => {
+      if (!embedding) return
+      const embeddedMemory: Memory = { ...memory, embedding }
+      cache.upsertMemoryWithEmbedding(embeddedMemory, embedding, true)
+      if (sync) {
+        const ok = await sync.remoteInsert(embeddedMemory)
+        if (ok) cache.markSynced([memory.id])
+      }
+    })
+    .catch((err) => {
+      console.error('[tages] Embedding generation/sync failed:', (err as Error).message)
+    })
 }

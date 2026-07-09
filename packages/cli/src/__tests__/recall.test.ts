@@ -210,4 +210,35 @@ describe('recall command', () => {
     // unique-key should also appear
     expect(output).toContain('unique-key')
   })
+
+  it('falls back to OpenAI for semantic search when Ollama is unavailable (Task 10 parity)', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    process.env.OPENAI_API_KEY = 'test-openai-key'
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('11434')) {
+        return Promise.reject(new Error('Connection refused'))
+      }
+      if (typeof url === 'string' && url.includes('api.openai.com')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ data: [{ embedding: new Array(1536).fill(0.05) }] }),
+        })
+      }
+      return Promise.reject(new Error('unexpected url'))
+    }) as unknown as typeof fetch
+
+    mockRpc.mockResolvedValue({
+      data: [{ id: '1', key: 'openai-fallback-key', value: 'value', type: 'convention', similarity: 0.9 }],
+      error: null,
+    })
+
+    await recallCommand('test', {})
+
+    const output = console_.logs.join('\n')
+    expect(output).toContain('hybrid (trigram + semantic)')
+    expect(output).toContain('openai-fallback-key')
+
+    delete process.env.OPENAI_API_KEY
+  })
 })

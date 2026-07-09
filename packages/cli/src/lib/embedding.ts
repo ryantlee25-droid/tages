@@ -1,39 +1,33 @@
 /**
- * Embedding generation for semantic search.
- * Tries providers in order: local Ollama → Anthropic API → skip.
+ * CLI-local embedding generation for semantic recall.
  *
- * Uses 1536-dimension embeddings (OpenAI-compatible) for pgvector.
- * Ollama uses nomic-embed-text; Anthropic doesn't have embeddings,
- * so we fall back to OpenAI-compatible API if OPENAI_API_KEY is set.
+ * Mirrors packages/server/src/embeddings.ts's Ollama -> OpenAI fallback chain
+ * and 1536-dim normalization. Deliberately NOT imported from @tages/server:
+ * a runtime dependency on the server package would break `npm install -g
+ * @tages/cli` standalone installs. Keep this file in sync with the server's
+ * copy by hand if either fallback order or normalization logic changes.
  */
 
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434'
 
 export async function generateEmbedding(text: string): Promise<number[] | null> {
-  // Try Ollama first
+  // Try Ollama first (local, fast)
   try {
     const res = await fetch(`${OLLAMA_URL}/api/embeddings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'nomic-embed-text',
-        prompt: text,
-      }),
-      signal: AbortSignal.timeout(5000),
+      body: JSON.stringify({ model: 'nomic-embed-text', prompt: text }),
+      signal: AbortSignal.timeout(3000),
     })
-
     if (res.ok) {
       const data = await res.json() as { embedding: number[] }
-      if (data.embedding?.length > 0) {
-        // Pad or truncate to 1536 dims
-        return normalizeTo1536(data.embedding)
-      }
+      if (data.embedding?.length > 0) return normalizeTo1536(data.embedding)
     }
   } catch {
     // Ollama not available
   }
 
-  // Try OpenAI-compatible API
+  // Fall back to OpenAI-compatible API
   const openaiKey = process.env.OPENAI_API_KEY
   if (openaiKey) {
     try {
@@ -43,18 +37,12 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${openaiKey}`,
         },
-        body: JSON.stringify({
-          model: 'text-embedding-3-small',
-          input: text,
-        }),
+        body: JSON.stringify({ model: 'text-embedding-3-small', input: text }),
         signal: AbortSignal.timeout(10000),
       })
-
       if (res.ok) {
         const data = await res.json() as { data: Array<{ embedding: number[] }> }
-        if (data.data?.[0]?.embedding) {
-          return normalizeTo1536(data.data[0].embedding)
-        }
+        if (data.data?.[0]?.embedding) return normalizeTo1536(data.data[0].embedding)
       }
     } catch {
       // OpenAI not available
@@ -64,15 +52,7 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
   return null
 }
 
-/**
- * Normalize an embedding to exactly 1536 dimensions (the pgvector column width).
- *
- * Truncating a >1536-dim vector without renormalizing would leave it no longer
- * unit-length, silently corrupting cosine-similarity rankings against every
- * other (correctly-normalized) vector in the index. So truncation is always
- * followed by an L2 renormalization pass.
- */
-export function normalizeTo1536(embedding: number[]): number[] {
+function normalizeTo1536(embedding: number[]): number[] {
   if (embedding.length === 1536) return embedding
   if (embedding.length > 1536) {
     const truncated = embedding.slice(0, 1536)
@@ -80,6 +60,5 @@ export function normalizeTo1536(embedding: number[]): number[] {
     if (norm === 0) return truncated
     return truncated.map((v) => v / norm)
   }
-  // Pad with zeros
   return [...embedding, ...new Array(1536 - embedding.length).fill(0)]
 }
