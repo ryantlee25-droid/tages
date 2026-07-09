@@ -60,7 +60,9 @@ CREATE TABLE IF NOT EXISTS memories (
   examples TEXT,
   execution_flow TEXT,
   verified_at TEXT,
-  encrypted INTEGER NOT NULL DEFAULT 0
+  encrypted INTEGER NOT NULL DEFAULT 0,
+  referenced_date TEXT,
+  relative_date TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS memories_project_key ON memories(project_id, key);
@@ -138,6 +140,9 @@ export class SqliteCache {
       'ALTER TABLE memory_conflicts ADD COLUMN merge_base_value TEXT',
       // C1: encrypted flag
       'ALTER TABLE memories ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0',
+      // Task C: 3-date temporal anchoring (migration 0060)
+      'ALTER TABLE memories ADD COLUMN referenced_date TEXT',
+      'ALTER TABLE memories ADD COLUMN relative_date TEXT',
     ]
     for (const sql of upgrades) {
       try { this.db.exec(sql) } catch { /* already exists */ }
@@ -208,8 +213,8 @@ export class SqliteCache {
 
   upsertMemory(memory: Memory, dirty = true): void {
     const stmt = this.db.prepare(`
-      INSERT INTO memories (id, project_id, key, value, type, source, agent_name, file_paths, tags, confidence, created_at, updated_at, dirty, status, conditions, phases, cross_system_refs, examples, execution_flow, encrypted)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO memories (id, project_id, key, value, type, source, agent_name, file_paths, tags, confidence, created_at, updated_at, dirty, status, conditions, phases, cross_system_refs, examples, execution_flow, encrypted, referenced_date, relative_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(project_id, key) DO UPDATE SET
         value = excluded.value,
         type = excluded.type,
@@ -226,7 +231,9 @@ export class SqliteCache {
         cross_system_refs = excluded.cross_system_refs,
         examples = excluded.examples,
         execution_flow = excluded.execution_flow,
-        encrypted = excluded.encrypted
+        encrypted = excluded.encrypted,
+        referenced_date = excluded.referenced_date,
+        relative_date = excluded.relative_date
     `)
     stmt.run(
       memory.id,
@@ -249,6 +256,8 @@ export class SqliteCache {
       memory.examples ? JSON.stringify(memory.examples) : null,
       memory.executionFlow ? JSON.stringify(memory.executionFlow) : null,
       memory.encrypted ? 1 : 0,
+      memory.referencedDate || null,
+      memory.relativeDate || null,
     )
   }
 
@@ -971,6 +980,8 @@ interface SqliteMemoryRow {
   execution_flow: string | null
   verified_at: string | null
   encrypted: number
+  referenced_date: string | null
+  relative_date: string | null
 }
 
 function rowToMemory(row: SqliteMemoryRow): Memory {
@@ -992,6 +1003,8 @@ function rowToMemory(row: SqliteMemoryRow): Memory {
     examples: row.examples ? JSON.parse(row.examples) : undefined,
     executionFlow: row.execution_flow ? JSON.parse(row.execution_flow) : undefined,
     verifiedAt: row.verified_at || undefined,
+    referencedDate: row.referenced_date || undefined,
+    relativeDate: row.relative_date || undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     encrypted: row.encrypted === 1,

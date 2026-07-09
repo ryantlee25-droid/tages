@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { combineScores, rankResults, asTextResults, asSemanticResults } from '../search/ranker'
+import { combineScores, rankResults, asTextResults, asSemanticResults, reorderByTemporalProximity } from '../search/ranker'
 import type { Memory } from '@tages/shared'
 
 function makeMemory(overrides: Partial<Memory> = {}): Memory {
@@ -136,5 +136,137 @@ describe('rankResults', () => {
     expect(scored[0].semanticScore).toBe(0.9)
     expect(scored[1].semanticScore).toBe(0.4)
     expect(scored[0].textScore).toBe(0)
+  })
+})
+
+describe('rankResults — temporal mode (migration 0060)', () => {
+  it('given equal relevance, the memory with the more recent referencedDate sorts first', () => {
+    const recent = makeMemory({
+      key: 'recent',
+      referencedDate: new Date().toISOString(),
+    })
+    const old = makeMemory({
+      key: 'old',
+      referencedDate: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(),
+    })
+    const results = rankResults(
+      [
+        { memory: old, semanticScore: 0.5, textScore: 0.5 },
+        { memory: recent, semanticScore: 0.5, textScore: 0.5 },
+      ],
+      {},
+      'when did this last happen',
+    )
+    expect(results[0].key).toBe('recent')
+    expect(results[1].key).toBe('old')
+  })
+
+  it('given equal relevance, the memory matching a date named in the query sorts first', () => {
+    const matching = makeMemory({
+      key: 'matching',
+      referencedDate: new Date('2026-07-01T00:00:00.000Z').toISOString(),
+    })
+    const distant = makeMemory({
+      key: 'distant',
+      referencedDate: new Date('2020-01-01T00:00:00.000Z').toISOString(),
+    })
+    const results = rankResults(
+      [
+        { memory: distant, semanticScore: 0.5, textScore: 0.5 },
+        { memory: matching, semanticScore: 0.5, textScore: 0.5 },
+      ],
+      {},
+      'what happened on 2026-07-01',
+    )
+    expect(results[0].key).toBe('matching')
+    expect(results[1].key).toBe('distant')
+  })
+
+  it('falls back to relativeDate then createdAt when referencedDate is absent', () => {
+    const withRelative = makeMemory({
+      key: 'has-relative',
+      relativeDate: new Date().toISOString(),
+      createdAt: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(),
+    })
+    const createdOnly = makeMemory({
+      key: 'created-only',
+      createdAt: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(),
+    })
+    const results = rankResults(
+      [
+        { memory: createdOnly, semanticScore: 0.5, textScore: 0.5 },
+        { memory: withRelative, semanticScore: 0.5, textScore: 0.5 },
+      ],
+      {},
+      'when did this happen',
+    )
+    expect(results[0].key).toBe('has-relative')
+  })
+
+  it('non-temporal queries are unaffected by referencedDate (regression)', () => {
+    const higherScore = makeMemory({
+      key: 'higher-score',
+      referencedDate: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(),
+    })
+    const lowerScoreButRecentDate = makeMemory({
+      key: 'lower-score-recent-date',
+      referencedDate: new Date().toISOString(),
+    })
+    const results = rankResults(
+      [
+        { memory: lowerScoreButRecentDate, semanticScore: 0.2, textScore: 0.1 },
+        { memory: higherScore, semanticScore: 0.9, textScore: 0.8 },
+      ],
+      {},
+      "what's our auth pattern",
+    )
+    // Plain relevance ranking wins — temporal proximity plays no role.
+    expect(results[0].key).toBe('higher-score')
+  })
+
+  it('omitting the query entirely leaves ranking unchanged from before this parameter existed', () => {
+    const higherScore = makeMemory({ key: 'high', confidence: 1.0 })
+    const lowerScore = makeMemory({ key: 'low', confidence: 0.3 })
+    const results = rankResults([
+      { memory: lowerScore, semanticScore: 0.3, textScore: 0.2 },
+      { memory: higherScore, semanticScore: 0.9, textScore: 0.8 },
+    ])
+    expect(results[0].key).toBe('high')
+  })
+})
+
+describe('reorderByTemporalProximity', () => {
+  it('reorders by recency for a temporal query with no explicit date', () => {
+    const recent = makeMemory({ key: 'recent', referencedDate: new Date().toISOString() })
+    const old = makeMemory({
+      key: 'old',
+      referencedDate: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(),
+    })
+    const results = reorderByTemporalProximity([old, recent], 'when did this last happen')
+    expect(results[0].key).toBe('recent')
+  })
+
+  it('reorders by proximity to a date named in the query', () => {
+    const matching = makeMemory({
+      key: 'matching',
+      referencedDate: new Date('2026-07-01T00:00:00.000Z').toISOString(),
+    })
+    const distant = makeMemory({
+      key: 'distant',
+      referencedDate: new Date('2020-01-01T00:00:00.000Z').toISOString(),
+    })
+    const results = reorderByTemporalProximity([distant, matching], 'what happened on 2026-07-01')
+    expect(results[0].key).toBe('matching')
+  })
+
+  it('leaves non-temporal query results in their original order', () => {
+    const a = makeMemory({ key: 'a', referencedDate: new Date(0).toISOString() })
+    const b = makeMemory({ key: 'b', referencedDate: new Date().toISOString() })
+    const results = reorderByTemporalProximity([a, b], "what's our auth pattern")
+    expect(results.map(m => m.key)).toEqual(['a', 'b'])
+  })
+
+  it('returns an empty array unchanged', () => {
+    expect(reorderByTemporalProximity([], 'when did this happen')).toEqual([])
   })
 })
