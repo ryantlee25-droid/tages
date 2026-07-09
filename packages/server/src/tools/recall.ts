@@ -108,9 +108,16 @@ export async function handleRecall(
   return formatResults(sliced, args.query, 'local (text match)')
 }
 
-// Format a single memory to a string — used for token estimation
-function formatMemory(m: Memory): string {
-  const parts = [`[${m.type}] ${m.key}`, `   ${m.value}`]
+// Format the calling agent's citation date from a memory's ISO timestamp.
+function formatCiteDate(iso: string): string {
+  return iso.slice(0, 10) // YYYY-MM-DD
+}
+
+// Body lines shared between the per-passage formatter (formatResults) and the
+// token-estimation formatter (formatMemory) below — kept as one function so
+// the two never drift apart.
+function formatMemoryBody(m: Memory): string[] {
+  const parts: string[] = [`   ${m.value}`]
   if (m.filePaths?.length) parts.push(`   Files: ${m.filePaths.join(', ')}`)
   if (m.conditions?.length) parts.push(`   When: ${m.conditions.join('; ')}`)
   if (m.crossSystemRefs?.length) parts.push(`   Related: ${m.crossSystemRefs.join(', ')}`)
@@ -123,7 +130,25 @@ function formatMemory(m: Memory): string {
     }
   }
   if (m.tags?.length) parts.push(`   Tags: ${m.tags.join(', ')}`)
-  return parts.join('\n')
+  return parts
+}
+
+// Format one passage with a stable, citable [n] id plus explicit
+// source/date provenance (Task 13). `index` is the passage's 1-based
+// position in this response — the client agent can cite it directly,
+// e.g. "per [2], ...".
+function formatPassage(m: Memory, index: number): string {
+  const header = `[${index}] [${m.type}] ${m.key}  (source: ${m.source}, updated: ${formatCiteDate(m.updatedAt)})`
+  return [header, ...formatMemoryBody(m)].join('\n')
+}
+
+// Format a single memory to a string — used only for token-budget estimation
+// (packages/server/src/search/token-budget.ts), which needs a per-memory
+// length estimate before the final passage index is known. Passage index 1
+// is used as a stand-in; the length difference vs. the real index is at
+// most a couple of characters and does not materially affect budgeting.
+function formatMemory(m: Memory): string {
+  return formatPassage(m, 1)
 }
 
 function formatResults(
@@ -137,27 +162,13 @@ function formatResults(
     }
   }
 
-  const lines = memories.map((m, i) => {
-    const parts = [`${i + 1}. [${m.type}] ${m.key}`, `   ${m.value}`]
-    if (m.filePaths?.length) parts.push(`   Files: ${m.filePaths.join(', ')}`)
-    if (m.conditions?.length) parts.push(`   When: ${m.conditions.join('; ')}`)
-    if (m.crossSystemRefs?.length) parts.push(`   Related: ${m.crossSystemRefs.join(', ')}`)
-    if (m.executionFlow) {
-      parts.push(`   Flow: ${m.executionFlow.trigger} → ${m.executionFlow.steps.join(' → ')}`)
-    }
-    if (m.examples?.length) {
-      for (const ex of m.examples.slice(0, 2)) {
-        parts.push(`   Example: ${ex.input} → ${ex.output}${ex.note ? ` (${ex.note})` : ''}`)
-      }
-    }
-    if (m.tags?.length) parts.push(`   Tags: ${m.tags.join(', ')}`)
-    return parts.join('\n')
-  })
+  const passages = memories.map((m, i) => formatPassage(m, i + 1))
+  const preamble = `Found ${memories.length} memories for "${query}" (${method}). Passages are numbered [1]-[${memories.length}] — cite the passage number(s) that support your answer.`
 
   return {
     content: [{
       type: 'text',
-      text: `Found ${memories.length} memories for "${query}" (${method}):\n\n${lines.join('\n\n')}`,
+      text: `${preamble}\n\n${passages.join('\n\n')}`,
     }],
   }
 }
