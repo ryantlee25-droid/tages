@@ -109,7 +109,11 @@ export async function handleRecall(
 }
 
 // Format the calling agent's citation date from a memory's ISO timestamp.
-function formatCiteDate(iso: string): string {
+// Guards against a legacy/backfilled row whose updatedAt is missing or empty:
+// calling .slice on undefined would throw and crash the entire recall tool for
+// a single bad row, so fall back to a safe placeholder instead.
+function formatCiteDate(iso: string | undefined | null): string {
+  if (!iso) return 'unknown'
   return iso.slice(0, 10) // YYYY-MM-DD
 }
 
@@ -138,7 +142,8 @@ function formatMemoryBody(m: Memory): string[] {
 // position in this response — the client agent can cite it directly,
 // e.g. "per [2], ...".
 function formatPassage(m: Memory, index: number): string {
-  const header = `[${index}] [${m.type}] ${m.key}  (source: ${m.source}, updated: ${formatCiteDate(m.updatedAt)})`
+  const source = m.source || 'unknown'
+  const header = `[${index}] [${m.type}] ${m.key}  (source: ${source}, updated: ${formatCiteDate(m.updatedAt)})`
   return [header, ...formatMemoryBody(m)].join('\n')
 }
 

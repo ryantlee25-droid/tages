@@ -100,4 +100,32 @@ describe('Task 13: recall output shaping', () => {
     const result = await handleRecall({ query: 'nonexistent-xyz-query' }, TEST_PROJECT, cache, null)
     expect(result.content[0].text).toBe('No memories found matching "nonexistent-xyz-query".')
   })
+
+  it('does not crash formatting a recalled memory whose updatedAt/source are undefined (finding 4)', async () => {
+    // A legacy/backfilled row surfaced via a remote RPC can arrive without a
+    // date or source. formatCiteDate(undefined) used to throw and take down the
+    // whole recall tool; it must now degrade to a safe placeholder instead.
+    const legacyRow = {
+      id: 'legacy-1',
+      projectId: TEST_PROJECT,
+      key: 'legacy-key',
+      value: 'legacy value',
+      type: 'convention',
+      // no source, no updatedAt
+    } as unknown as import('@tages/shared').Memory
+
+    const sync = {
+      remoteRecall: async () => [legacyRow],
+      remoteHybridRecall: async () => null,
+    } as unknown as import('../sync/supabase-sync').SupabaseSync
+
+    // Local cache is empty for this project, so handleRecall falls through to
+    // the remote path and formats the malformed row.
+    const result = await handleRecall({ query: 'legacy' }, TEST_PROJECT, cache, sync)
+    const text = result.content[0].text
+
+    expect(text).toContain('legacy-key')
+    expect(text).toContain('updated: unknown')
+    expect(text).toContain('source: unknown')
+  })
 })
