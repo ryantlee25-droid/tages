@@ -105,6 +105,84 @@ describe('SupabaseSync.remoteInsert — embedding serialization', () => {
   })
 })
 
+describe('SupabaseSync.remoteUpdateEmbedding — narrow, non-clobbering write (findings 1-3)', () => {
+  function makeUpdateMock() {
+    const updateCalls: Array<{ payload: unknown; filters: Array<[string, unknown]> }> = []
+    const supabase = {
+      from: vi.fn(() => ({
+        update: vi.fn((payload: unknown) => {
+          const filters: Array<[string, unknown]> = []
+          const builder = {
+            eq: vi.fn((col: string, val: unknown) => {
+              filters.push([col, val])
+              return builder
+            }),
+            then: (resolve: (v: { error: null }) => void) => {
+              updateCalls.push({ payload, filters })
+              return Promise.resolve({ error: null }).then(resolve)
+            },
+          }
+          return builder
+        }),
+      })),
+    }
+    return { supabase, updateCalls }
+  }
+
+  it('issues an UPDATE that sets ONLY the embedding column, keyed by project_id + key', async () => {
+    const { supabase, updateCalls } = makeUpdateMock()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sync = new SupabaseSync(supabase as any, {} as SqliteCache, 'proj-1')
+
+    const embedding = [0.5, 0.25, -0.1]
+    const ok = await sync.remoteUpdateEmbedding('proj-1', 'test-key', embedding)
+
+    expect(ok).toBe(true)
+    expect(updateCalls).toHaveLength(1)
+    // Payload is embedding-only — it must never carry value/tags/etc that could
+    // revert a newer concurrent write.
+    expect(updateCalls[0].payload).toEqual({ embedding: embeddingToPgVector(embedding) })
+    // Keyed by (project_id, key), never an upsert — a non-existent row is a
+    // no-op, so a deleted memory is not resurrected.
+    expect(updateCalls[0].filters).toEqual([
+      ['project_id', 'proj-1'],
+      ['key', 'test-key'],
+    ])
+  })
+
+  it('serializes on the same queue as remoteDelete so it cannot outrun a delete', async () => {
+    const order: string[] = []
+    const supabase = {
+      from: vi.fn(() => ({
+        update: vi.fn(() => ({
+          eq: vi.fn(function (this: unknown) { return this }),
+          then: (resolve: (v: { error: null }) => void) => {
+            order.push('update')
+            return Promise.resolve({ error: null }).then(resolve)
+          },
+        })),
+        delete: vi.fn(() => ({
+          eq: vi.fn(function (this: unknown) { return this }),
+          then: (resolve: (v: { error: null }) => void) => {
+            order.push('delete')
+            return Promise.resolve({ error: null }).then(resolve)
+          },
+        })),
+      })),
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sync = new SupabaseSync(supabase as any, {} as SqliteCache, 'proj-1')
+
+    // Enqueue a delete first, then an embedding update: the queue must run them
+    // in enqueue order, delete before update.
+    const p1 = sync.remoteDelete('proj-1', 'k')
+    const p2 = sync.remoteUpdateEmbedding('proj-1', 'k', [1, 2, 3])
+    await Promise.all([p1, p2])
+
+    expect(order).toEqual(['delete', 'update'])
+  })
+})
+
 describe('dbRowToMemory (via remoteRecall) — embedding deserialization', () => {
   it('parses a pgvector string column back into Memory.embedding', async () => {
     const embedding = [1, 2.5, -3]

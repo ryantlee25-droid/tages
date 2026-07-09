@@ -211,6 +211,28 @@ describe('SqliteCache', () => {
     })
   })
 
+  describe('setEmbedding (narrow embedding-only update)', () => {
+    it('sets only the embedding, leaving value/dirty untouched', () => {
+      const mem = makeMemory({ key: 'narrow', value: 'original value' })
+      cache.upsertMemory(mem, false) // dirty = 0 (synced)
+
+      cache.setEmbedding(TEST_PROJECT, 'narrow', [1, 0, 0, 0])
+
+      // Value preserved.
+      expect(cache.getByKey(TEST_PROJECT, 'narrow')!.value).toBe('original value')
+      // Dirty flag not touched — this memory is not among the dirty set.
+      expect(cache.getDirty().some((m) => m.key === 'narrow')).toBe(false)
+      // Embedding applied (visible via semanticQuery).
+      const results = cache.semanticQuery(TEST_PROJECT, [1, 0, 0, 0], undefined, 5)
+      expect(results.some((m) => m.key === 'narrow')).toBe(true)
+    })
+
+    it('is a no-op when the row does not exist (does not create it)', () => {
+      cache.setEmbedding(TEST_PROJECT, 'does-not-exist', [1, 0, 0, 0])
+      expect(cache.getByKey(TEST_PROJECT, 'does-not-exist')).toBeNull()
+    })
+  })
+
   describe('getByFilePath', () => {
     it('finds memories referencing a file path', () => {
       cache.upsertMemory(makeMemory({

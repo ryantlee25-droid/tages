@@ -241,6 +241,38 @@ export class SupabaseSync {
     }
   }
 
+  /**
+   * Narrow, embedding-only remote update keyed by (project_id, key).
+   *
+   * Routed through the same `enqueue` serialisation queue as remoteInsert's
+   * dirty flush and remoteDelete, so the late-resolving embedding write is
+   * ordered against concurrent writes and deletes. Crucially this is an
+   * `.update()` (not `.upsert()`): it sets ONLY the `embedding` column and
+   * is a no-op when no row matches (the key was `forget`-deleted between the
+   * original write and now) — it never re-creates a deleted row and never
+   * clobbers a newer value written by a concurrent remember(key, V2).
+   */
+  async remoteUpdateEmbedding(projectId: string, key: string, embedding: number[]): Promise<boolean> {
+    return this.enqueue(() => this._remoteUpdateEmbedding(projectId, key, embedding))
+  }
+
+  private async _remoteUpdateEmbedding(projectId: string, key: string, embedding: number[]): Promise<boolean> {
+    try {
+      const { error } = await this.supabase
+        .from('memories')
+        .update({ embedding: embeddingToPgVector(embedding) })
+        .eq('project_id', projectId)
+        .eq('key', key)
+      if (error) {
+        console.error('[tages] Remote embedding update failed:', error.message)
+        return false
+      }
+      return true
+    } catch {
+      return false
+    }
+  }
+
   async remoteDelete(projectId: string, key: string): Promise<boolean> {
     return this.enqueue(() => this._remoteDelete(projectId, key))
   }

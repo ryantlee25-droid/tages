@@ -260,6 +260,24 @@ export class SqliteCache {
   }
 
   /**
+   * Narrow, embedding-only update keyed by (project_id, key).
+   *
+   * Used by the fire-and-forget embedding path in handleRemember, which
+   * resolves seconds after the write. It must NOT rewrite value/tags/etc from
+   * the stale captured Memory (a concurrent remember(key, V2) may have run in
+   * the meantime — see the data-loss race), and it must NOT touch the `dirty`
+   * flag (a concurrent later update may have set it; clearing it would strand
+   * that update's local changes). It is a no-op when the row no longer exists
+   * (the key was `forget`-deleted between the write and now) — UPDATE simply
+   * matches nothing and never re-creates the row.
+   */
+  setEmbedding(projectId: string, key: string, embedding: number[]): void {
+    this.db.prepare(
+      'UPDATE memories SET embedding = ? WHERE project_id = ? AND key = ?'
+    ).run(JSON.stringify(embedding), projectId, key)
+  }
+
+  /**
    * Semantic search using local cosine similarity on cached embeddings.
    * No network call needed — runs entirely from SQLite.
    */
