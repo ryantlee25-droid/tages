@@ -42,6 +42,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/**
+ * Derives a key hint from a CLI-flag array element like `--secret-access-key`
+ * (or `-p`) so a secret split across two argv elements
+ * (`["--secret-access-key", "<value>"]`) is scanned as `hint=value` and caught
+ * by the same keyed secret patterns that object keys use. Returns undefined for
+ * anything that isn't a lone flag token, so ordinary flags like `--verbose`
+ * followed by `true` never trigger redaction (their `hint=value` form matches no
+ * secret pattern).
+ */
+function flagKeyHint(prev: unknown): string | undefined {
+  if (typeof prev !== 'string') return undefined
+  const m = /^--?([A-Za-z][A-Za-z0-9_-]*)$/.exec(prev.trim())
+  return m ? m[1] : undefined
+}
+
 /** Caps a single already-redacted string to MAX_FIELD_LENGTH. */
 function capString(s: string): string {
   if (s.length <= MAX_FIELD_LENGTH) return s
@@ -102,8 +117,11 @@ function scrubValue(value: unknown, keyHint?: string): { value: unknown; redacte
 
   if (Array.isArray(value)) {
     let redactedCount = 0
-    const out = value.map((item) => {
-      const r = scrubValue(item)
+    const out = value.map((item, i) => {
+      // A secret can be split across two argv elements (["--secret-access-key",
+      // "<value>"]); the value element carries no adjacent marker on its own, so
+      // derive a key hint from the preceding flag element and scan `hint=value`.
+      const r = scrubValue(item, flagKeyHint(value[i - 1]))
       redactedCount += r.redactedCount
       return r.value
     })

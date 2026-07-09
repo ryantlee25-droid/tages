@@ -258,6 +258,50 @@ describe('handleRawPayload', () => {
     }
   })
 
+  it('B1-array: a bare secret split across two argv elements (["--secret-access-key","<40>"]) is redacted', () => {
+    // The value element carries no adjacent marker; the redaction must derive a
+    // key hint from the preceding CLI flag. This shape is reachable via MCP/custom
+    // tools that pass a pre-split argv array (Tages is itself an MCP server).
+    const bareSecret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
+    const payload = preToolUsePayload({
+      tool_name: 'CustomMcpTool',
+      tool_input: { argv: ['aws', 'configure', 'set', '--secret-access-key', bareSecret] },
+    })
+
+    handleRawPayload(JSON.stringify(payload), { dbPath })
+
+    const log = new HarnessLog(dbPath)
+    try {
+      const rows = log.getUnsynced()
+      expect(rows).toHaveLength(1)
+      const serializedRow = JSON.stringify(rows[0])
+      expect(serializedRow).not.toContain(bareSecret)
+      expect(rows[0].secretsRedactedCount).toBeGreaterThan(0)
+    } finally {
+      log.close()
+    }
+  })
+
+  it('B1-array: a benign flag+value pair (["--verbose","true"]) is NOT over-redacted', () => {
+    const payload = preToolUsePayload({
+      tool_name: 'CustomMcpTool',
+      tool_input: { argv: ['--verbose', 'true', '--count', '42'] },
+    })
+
+    handleRawPayload(JSON.stringify(payload), { dbPath })
+
+    const log = new HarnessLog(dbPath)
+    try {
+      const rows = log.getUnsynced()
+      expect(rows).toHaveLength(1)
+      expect(rows[0].secretsRedactedCount).toBe(0)
+      const args = rows[0].argsScrubbed as Record<string, unknown>
+      expect(args.argv as unknown[]).toEqual(['--verbose', 'true', '--count', '42'])
+    } finally {
+      log.close()
+    }
+  })
+
   it('F4: a card number sent as a JSON number is redacted at the persisted-row level', () => {
     const card = 4111111111111111
     const payload = preToolUsePayload({
