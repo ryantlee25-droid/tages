@@ -1,0 +1,42 @@
+{
+  "name": "@tages/harness-claude-code",
+  "version": "0.1.0",
+  "description": "Claude Code hooks capture package for the Tages instrumented harness — reads hook JSON on stdin, redacts secrets, and appends to a local SQLite log.",
+  "type": "commonjs",
+  "main": "./dist/index.js",
+  "bin": {
+    "tages-harness-claude-code": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "tsc",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "license": "MIT",
+  "author": "Ryan Lee <ryantlee25@gmail.com>",
+  "homepage": "https://tages.ai",
+  "bugs": {
+    "url": "https://github.com/ryantlee25-droid/tages/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ryantlee25-droid/tages.git",
+    "directory": "packages/harness-claude-code"
+  },
+  "keywords": ["claude-code", "hooks", "instrumentation", "mcp", "tages"],
+  "dependencies": {
+    "@tages/shared": "workspace:*",
+    "better-sqlite3": "^12.8.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^20.19.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.5"
+  }
+}
