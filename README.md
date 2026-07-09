@@ -146,6 +146,17 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-07-09 — LongMemEval-driven memory-quality fixes (product + eval harness)
+
+- **Product fix: document embeddings were never written (the #1 bug)** — `remember` never populated the pgvector `embedding` column, so semantic recall had been silently trigram-only since it shipped. `packages/server/src/tools/remember.ts` and `packages/server/src/embeddings.ts` now generate and persist the embedding on write; `packages/server/src/sync/supabase-sync.ts` syncs it to Supabase narrowly, serialized against concurrent writes/deletes so a late embedding upsert can no longer revert a newer value, resurrect a `forget`-ed memory, or strand a dirty flag.
+- **CLI/server embedding parity**: `packages/cli/src/lib/embedding.ts` and `packages/cli/src/commands/recall.ts` gain the same Ollama-primary embedding path the server uses, with the OpenAI fallback made opt-in (`TAGES_OPENAI_EMBED`) rather than a blocking, billable per-recall call — closes both the hot-path cost/latency issue and the Ollama(768-dim)/OpenAI(1536-dim) vector-space mismatch.
+- **Structured, citable recall output**: `packages/server/src/tools/recall.ts` reshapes passages for the client-agent reader (source, updated-at citation, formatted body), and now guards against undefined `updatedAt`/`source` on legacy/backfilled rows instead of throwing.
+- **Migration 0058 DDL fix**: `supabase/migrations/0058_drop_provenance_user_id.sql` switched from `CREATE OR REPLACE` to `DROP` + `CREATE` so the function signature change actually applies.
+- **Embedding backfill script**: `packages/server/scripts/backfill-embeddings.ts` — sandbox-scoped, one-time backfill for memories written before the embedding-on-write fix.
+- **Truncate-renormalize guard**: `normalizeTo1536` now renormalizes after truncating embeddings over 1536 dims, so an over-1536-dim future embedding can't silently corrupt cosine-similarity rankings.
+- **Eval harness (Phase 1, EVAL-ONLY)**: per-type judge, type-aware answer prompt, retrieved-memory logging, a real `recall@k` retrieval metric, turn-level ingest, a Chain-of-Note reader, and a correction to `eval/longmemeval/README.md`.
+- **Validation**: 918 tests passing (669 server + 204 CLI + 45 eval), monorepo typecheck clean. Quality gate ran White + Gray + a high-effort `/code-review`; the high-effort pass caught 6 concurrency/correctness blockers (embedding-sync races, a recall crash on null dates, CLI blocking-paid-embed cost, vector-space mismatch) — all fixed and re-verified READY before this PR.
+
 ### 2026-07-08 — LongMemEval eval-backend expansion + memory-quality fix plan
 
 - **Pluggable LongMemEval embedder backends**: `eval/longmemeval/src/memory.ts` gains three new `Backend` variants — `tages-semantic` (nomic/pgvector via Tages' own semantic store, `semantic-store.ts`), `openai-cosine` (OpenAI embeddings + cosine similarity, `openai-store.ts`), and `voyage-cosine` (Voyage AI embeddings, `voyage-store.ts`) — alongside the existing `tages-cli` and `in-memory` backends. Also fixes the `tages remember` memory type passed by `TagesCliStore` from `fact` to `entity`.
