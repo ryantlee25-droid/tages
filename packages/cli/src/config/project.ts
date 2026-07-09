@@ -9,6 +9,16 @@ import { getProjectsDir } from './paths.js'
  * to the directory basename if no marker exists.
  */
 function detectSlugFromCwd(): string | null {
+  // Legacy resolution ONLY: a `.tages/config.json` marker in the CURRENT
+  // directory, else the sanitized cwd basename. Deliberately NOT a walk-up.
+  //
+  // This function backs every slug-dependent CLI command (remember/recall/
+  // forget/status via loadProjectConfig). A walk-up here silently REPOINTS a
+  // basename-configured project (its own `<basename>.json` exists, no `tages
+  // link`) to an ANCESTOR's `.tages` slug whenever it sits in a subdir under
+  // one — misrouting memory writes. The harness's own slug resolution keeps a
+  // walk-up (harness-claude-code's detectSlug + `tages harness` DB path), which
+  // is where F7 needs it; it does NOT depend on this function.
   const markerPath = path.join(process.cwd(), '.tages', 'config.json')
   if (fs.existsSync(markerPath)) {
     try {

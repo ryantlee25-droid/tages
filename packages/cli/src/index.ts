@@ -39,6 +39,12 @@ import { teamInviteCommand, teamListCommand, teamRemoveCommand, teamRoleCommand 
 import { settingsAutoSaveCommand } from './commands/settings.js'
 import { agentsMdWriteCommand, agentsMdAuditCommand, agentsMdDiffCommand, agentsMdFederateCommand } from './commands/agents-md.js'
 import { driftCommand } from './commands/drift.js'
+import {
+  harnessEnableCommand,
+  harnessDisableCommand,
+  harnessStatusCommand,
+  harnessSyncCommand,
+} from './commands/harness.js'
 
 const program = new Command()
 
@@ -524,5 +530,34 @@ program
   .option('--limit <n>', 'Max top-diverging keys to show (default 10)', '10')
   .option('--json', 'Emit the full report as JSON instead of human-readable output')
   .action(driftCommand)
+
+// Instrumented Harness — per-developer opt-in Claude Code hook capture.
+const harnessCmd = program
+  .command('harness')
+  .description('Manage the instrumented harness (opt-in Claude Code hook capture)')
+
+harnessCmd
+  .command('enable')
+  .description('Opt yourself in to the instrumented harness (merges hooks into .claude/settings.local.json)')
+  .option('-p, --project <slug>', 'Project slug')
+  .option('-y, --yes', 'Skip confirmation prompt')
+  .action(harnessEnableCommand)
+
+harnessCmd
+  .command('disable')
+  .description('Remove the instrumented harness hooks from .claude/settings.local.json')
+  .action(harnessDisableCommand)
+
+harnessCmd
+  .command('status')
+  .description('Show instrumented harness enabled state, last sync time, and pending event count')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(harnessStatusCommand)
+
+harnessCmd
+  .command('sync')
+  .description('Batch-sync unsynced local harness events to Supabase')
+  .option('-p, --project <slug>', 'Project slug')
+  .action(harnessSyncCommand)
 
 program.parse()
