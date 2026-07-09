@@ -355,3 +355,136 @@ Per positioning.md §10 and trend-scan §"What Would Flip the Call":
 3. **Tages LongMemEval run lands below 70% overall accuracy.** This puts Tages visibly below Supermemory (81.6%) and RetainDB (79%). Forces either a retrieval-stack engineering sprint before any benchmark publication, or a narrower positioning that does not lead with accuracy claims.
 
 4. **A competitor (Hmem, MemPalace, or a funded entrant) ships `agents-md write` before Phase 2.** Bet B's first-mover advantage evaporates. Accelerate 2.2 ahead of schedule; consider shipping a minimal `write` in Phase 1 if competitive signal emerges.
+
+---
+
+# Plan: Tier-1 Retrieval-Quality Fixes (Embedding Chunking + Temporal Anchoring)
+_Created: 2026-07-09 | Type: Bug Fix + New Feature | Base branch: `main`_
+
+Note on scope relative to the plan above: the earlier "Phase 0-4 Differentiation Execution" plan is a GTM/positioning roadmap from 2026-04-19 and is largely already superseded by shipped work (migrations 0057/0058 referenced there as "to create" are already merged on `main` as of this writing; current tip is 0059). It also states Tages "stays on trigram + pgvector + decay" and explicitly cuts "temporal knowledge graphs" — that statement is about *not* building a Zep/Graphiti-style knowledge-graph architecture for marketing positioning; it does not conflict with this plan's Task C, which adds two nullable date columns and recall-ordering logic, not a graph.
+
+## Goal
+Fix the confirmed long-input embedding silent-failure bug, ship a coherent token-aware chunking strategy for memory embeddings, and add 3-date temporal anchoring to recall — so long memories are always searchable and temporal-reasoning queries (Tages' 23–54% weak spot across every eval run) improve.
+
+## Background
+A LongMemEval-driven investigation (this session, confirmed empirically) found that `generateEmbedding()` in both `packages/cli/src/lib/embedding.ts` and `packages/server/src/embeddings.ts` POSTs the full memory text to OpenAI with no length guard. Text over ~8192 tokens gets HTTP 400, which the code silently converts to `return null` inside the fire-and-forget write path (`packages/server/src/tools/remember.ts`), so the memory is stored with **no embedding** and becomes invisible to semantic search — no error, no log, no signal to the user. Separately, the eval proved ingest chunk granularity dominates retrieval quality (per-turn 48%, whole-doc 10% — largely *because* of this bug, 4k-char chunks 78%), and temporal-reasoning accuracy never moved above ~54% regardless of embedder, motivating Mastra's 3-date anchoring approach (95.5% on their temporal-reasoning suite).
+
+## Scope
+
+**In scope:**
+- `packages/cli/src/lib/embedding.ts`, `packages/server/src/embeddings.ts` — chunking, pooling, error handling
+- `packages/server/src/tools/remember.ts`, `packages/cli/src/commands/remember.ts` — write-path integration
+- `packages/server/src/tools/recall.ts`, `packages/cli/src/commands/recall.ts`, `packages/server/src/search/ranker.ts` — read-path integration
+- `supabase/migrations/0060_*.sql` — new migration (schema is currently at 0059 on `main`)
+- `packages/server/src/cache/sqlite.ts`, `packages/server/src/sync/supabase-sync.ts`, `packages/shared/src/types.ts` — schema mirrors
+- `packages/server/scripts/backfill-embeddings.ts` — regression coverage only (no logic change expected)
+
+**Out of scope:**
+- `apps/dashboard` — no UI work for chunking or date display (not in the task's named scope)
+- `eval/` (LongMemEval harness) — this plan is product-code only, per instructions
+- CLI `remember` command's total lack of embedding generation (`packages/cli/src/commands/remember.ts` writes via `openCliSync`/`SupabaseSync.flush()` and never calls `generateEmbedding` at all — confirmed during Step 1 grep). This is a real, separate gap but is **not** the confirmed bug this plan targets. Flagged as a follow-on ticket, not fixed here.
+- Multi-row (child-table) chunk storage — considered and explicitly rejected for Tier-1 in favor of pooling (see Task A/B rationale). Left as a documented Tier-2 follow-on.
+- LLM-assisted date extraction for Task C — regex/rule-based only in this plan; LLM-assisted extraction flagged as Tier-2 follow-on.
+- Full-production embedding backfill (existing `backfill-embeddings.ts` is explicitly scoped to one project at a time per its own header comment; not widened here).
+
+**Ambiguities resolved:**
+- Pooling vs multi-row storage for chunked embeddings → **pooling** (average + L2-renormalize into the existing single `memories.embedding` column). Justification: `generateEmbedding()`'s return signature (`number[] | null`) stays identical, so every call site (`scheduleEmbeddingSync` in `remember.ts`, `recall.ts` ×2, `backfill-embeddings.ts`) needs zero changes. Multi-row storage would require a new child table, new RPC joins, SQLite cache schema changes, and ranker aggregation logic — a much larger, higher-risk change for a Tier-1 ship. Only the tail of memories (value cap is 100,000 chars ≈ ~25K tokens ≈ 3-4x the 8192-token limit, per `packages/server/src/schemas.ts:28`) are ever affected, so precision loss from pooling is bounded.
+- Where the write-time date extraction runs → inline/synchronous (not fire-and-forget like embeddings), because regex-based extraction is local/cheap with no network call, unlike embedding generation.
+- Observation date → reuses the existing `memories.created_at` column; no new column needed for that leg of the 3-date model.
+
+## Type Dependencies
+- `Memory` interface in `packages/shared/src/types.ts:39` — Task C adds `referencedDate?: string` and `relativeDate?: string`. Consumed by `packages/server/src/tools/recall.ts`, `packages/server/src/tools/remember.ts`, `packages/server/src/search/ranker.ts`, `packages/server/src/sync/supabase-sync.ts` (`dbRowToMemory`/row mapper), `packages/server/src/cache/sqlite.ts` (`rowToMemory`), `packages/cli/src/commands/recall.ts`.
+- `GenerateEmbeddingOptions` in `packages/cli/src/lib/embedding.ts:46` — unchanged signature; Task A only changes internal implementation.
+
+## Technical Approach
+
+**Task A (fix the bug):** Add a new chunker module per package (`packages/server/src/chunking.ts`, `packages/cli/src/lib/chunking.ts` — duplicated by design, matching the existing hand-synced pattern documented in `embedding.ts`'s header comment). `generateEmbedding()` estimates token count with a conservative char-based heuristic (reusing the ratio already used by `packages/server/src/search/token-budget.ts:4`'s `estimateTokens`, but with a safety margin below the real 8192-token OpenAI limit since char/4 is an approximation). Text under the threshold takes the existing single-call path unchanged. Text over threshold is split into overlapping chunks, each chunk embedded via the existing HTTP call, and the resulting per-chunk vectors are averaged + L2-renormalized into one 1536-dim vector — same shape `normalizeTo1536` already expects. All non-OK HTTP responses now read and log the body before returning null; 429s get retried with backoff (respecting `Retry-After` if present) before giving up.
+
+**Task B (chunking strategy):** Depends on Task A's chunker files. Tunes the chunk-size/overlap constants in `chunking.ts` from "whatever avoids a 400" (large, API-limit-driven) to the eval-validated sweet spot (~4k chars per chunk, ~15% overlap, matching the harness's 78%-accuracy chunk granularity finding). No storage-layer changes — pooling from Task A already means recall needs no chunk-aggregation logic, since there's still exactly one embedding per memory row.
+
+**Task C (temporal anchoring):** New migration 0060 adds `referenced_date` and `relative_date` timestamptz columns to `memories` (nullable, no backfill for historical rows — same convention as migration 0057). A new rule-based date-extraction utility (duplicated per-package like the embedding/chunking modules) parses memory key+value text for absolute dates and relative expressions, resolving relative expressions against `created_at` as the anchor. Extraction runs inline at write time in both `remember.ts` (server) and `remember.ts` (CLI). Recall gets a lightweight temporal-query classifier; when a query looks temporal, results are reordered by proximity to (or recency of) `referenced_date` → `relative_date` → `created_at`, in that fallback order, layered on top of (not replacing) existing relevance scoring in `ranker.ts`. The three dates are also surfaced in `recall.ts`'s per-passage text output (currently only `updatedAt` is cited via `formatCiteDate`) so the anchoring is actually usable by the model answering the question, not just stored.
+
+## Bug Summary (Task A)
+- **Symptom**: A memory whose value exceeds ~8192 tokens is stored with `embedding IS NULL` and silently drops out of semantic recall — no error surfaced anywhere.
+- **Suspected cause**: `packages/cli/src/lib/embedding.ts:51-95` and `packages/server/src/embeddings.ts:12-63` — the OpenAI `fetch` call's response is only handled `if (res.ok)`; a 400 (or any non-OK status) falls through every branch to the final `return null` with the error body never read. The fire-and-forget caller, `scheduleEmbeddingSync()` in `packages/server/src/tools/remember.ts:159-176`, does `if (!embedding) return` — no logging, no retry, no user-visible signal.
+- **Reproduction**: `generateEmbedding('word'.repeat(12000))` (with `TAGES_OPENAI_EMBED=1` and `OPENAI_API_KEY` set, Ollama unavailable) → OpenAI 400 ("maximum context length is 8192 tokens") → function returns `null`. Confirmed this session; short input under the same conditions returns a 200 and a vector.
+
+## Tasks
+
+- [ ] **Task A: Chunk + pool long-input embeddings, stop swallowing HTTP errors** — Add token-aware chunking with mean-pooling to `generateEmbedding()` in both packages; read and log all non-OK HTTP response bodies; retry 429 with backoff.
+  - Files:
+    - Create `packages/server/src/chunking.ts` — `estimateTokenCount(text)`, `chunkText(text, opts)` returning overlapping chunks under a token ceiling.
+    - Create `packages/cli/src/lib/chunking.ts` — duplicated CLI copy (same pattern as `embedding.ts`'s existing header-documented duplication).
+    - Modify `packages/server/src/embeddings.ts` — call `chunkText`, embed each chunk, mean-pool + `normalizeTo1536`; read/log error bodies; add 429 retry-with-backoff.
+    - Modify `packages/cli/src/lib/embedding.ts` — same, using the CLI's `chunking.ts` copy.
+  - Tests:
+    - `packages/server/src/__tests__/embeddings.test.ts` — add cases: text over threshold triggers multiple chunk calls; pooled result is 1536-dim and unit-length; a 400 response is logged (spy `console.error`) rather than silently swallowed; a 429 followed by a 200 succeeds via retry; short text still takes the single-call path unchanged (no regression).
+    - `packages/cli/src/__tests__/embedding.test.ts` — mirror the above for the CLI copy.
+    - `packages/server/src/__tests__/remember-embedding.test.ts` — regression test with `'word'.repeat(12000)` as the memory value: `cache.setEmbedding` is called with a real vector (not skipped) via `scheduleEmbeddingSync`.
+    - `packages/server/scripts/backfill-embeddings.test.ts` — add a case for a previously-un-embeddable long memory now succeeding via the fixed `generateEmbedding`.
+  - Depends on: nothing
+  - Effort: M (algorithmic change across 2 duplicated files + 4 test files; no schema/RPC change; base M, no multiplier — not auth/security code, not a DB migration, parallelizable against C)
+  - Pre-mortem: If this takes 3x longer, it will be because the mean-pooling math (accumulating N unit vectors, renormalizing) has a subtle bug that produces a technically-valid-but-semantically-degenerate vector (e.g. near-zero after cancellation on adversarial chunk content) that only shows up as a silent recall-quality regression, not a test failure — mitigate by asserting pooled-vector cosine similarity to each individual chunk's vector is positive and reasonably high in tests, not just checking dimensionality/unit-length.
+  - Notes: `generateEmbedding()`'s exported signature (`Promise<number[] | null>`) does not change — every existing caller (`scheduleEmbeddingSync` in `remember.ts`, `recall.ts` in both packages, `backfill-embeddings.ts`) needs zero code changes. Reuse the char-based token-estimate ratio already established in `packages/server/src/search/token-budget.ts:4` (`estimateTokens`) as the starting heuristic, with an explicit safety margin below 8192 since char/4 is approximate.
+
+- [ ] **Task B: Tune chunk size/overlap to the eval-validated granularity** — Reuse Task A's chunker; change chunk-size constants from "just under the API limit" to the eval's proven ~4k-char sweet spot, and document the pooling-over-multi-row decision in the module header.
+  - Files:
+    - Modify `packages/server/src/chunking.ts` — tune `CHUNK_TARGET_CHARS`/overlap constants, add header comment documenting the pooling decision and the deferred multi-row alternative.
+    - Modify `packages/cli/src/lib/chunking.ts` — same.
+  - Tests:
+    - Create `packages/server/src/__tests__/chunking.test.ts` — chunk boundaries match expected ~4k-char/overlap granularity on a representative long document; overlap actually preserves shared text across adjacent chunk boundaries; single-chunk (short text) path returns exactly one chunk equal to the input.
+    - Create `packages/cli/src/__tests__/chunking.test.ts` — mirror for CLI copy.
+  - Depends on: Task A (same files — sequential, not parallel; both own `chunking.ts` in each package)
+  - Effort: S (tuning constants + tests, no new call sites, no schema change)
+  - Notes: No recall-side aggregation logic is needed under the pooling design — this is purely a chunker-tuning task. If Ryan wants multi-row precision instead (see Open Questions), this task's scope changes materially and should be re-estimated, not extended in place.
+
+- [ ] **Task C: 3-date temporal anchoring (schema + extraction + recall ordering)** — Add `referenced_date`/`relative_date` columns, a rule-based extractor, a temporal-query classifier, and date-aware reordering in recall.
+  - Files:
+    - Create `supabase/migrations/0060_temporal_date_anchoring.sql` — `ALTER TABLE memories ADD COLUMN referenced_date timestamptz, ADD COLUMN relative_date timestamptz`; supporting index(es); `CREATE OR REPLACE FUNCTION hybrid_recall(...)` and `semantic_recall(...)` (current definitions in `supabase/migrations/0012_fix_hybrid_thresholds.sql` and `0008_pgvector.sql`/`0013`/`0014` lineage) to additionally `SELECT`/return `m.referenced_date, m.relative_date`.
+    - Modify `packages/shared/src/types.ts` — add `referencedDate?: string`, `relativeDate?: string` to `Memory` (after `verifiedAt` field, `types.ts:57`).
+    - Create `packages/server/src/temporal/date-extraction.ts` — `extractDates(text, anchorDate): { referencedDate?: string; relativeDate?: string }`, regex-based (absolute: ISO 8601, `Month D, YYYY`, `MM/DD/YYYY`; relative: `N days/weeks/months ago`, `last/next <weekday>`, `yesterday`, `tomorrow`), resolves relative expressions against `anchorDate`.
+    - Create `packages/cli/src/lib/date-extraction.ts` — duplicated CLI copy.
+    - Create `packages/server/src/search/temporal-query.ts` — `isTemporalQuery(query): boolean` classifier (regex/keyword: "when", "what date", "before", "after", "last time", weekday/month names, "ago"); `extractTargetDate(query, anchor)` for queries that themselves reference a date.
+    - Create `packages/cli/src/lib/temporal-sort.ts` — small standalone reorder helper for the CLI's direct-RPC recall path (mirrors the reorder logic in `ranker.ts` without pulling in the full server ranker).
+    - Modify `packages/server/src/tools/remember.ts` — call `extractDates(key + ' ' + plaintextForIndex, now)` inline (not fire-and-forget) before `cache.upsertMemory`; populate `memory.referencedDate`/`memory.relativeDate`.
+    - Modify `packages/cli/src/commands/remember.ts` — same inline call using the CLI's date-extraction copy.
+    - Modify `packages/server/src/cache/sqlite.ts` — add `referenced_date`/`relative_date` columns to the `CREATE TABLE IF NOT EXISTS memories` DDL (`sqlite.ts:40-56`) and the migration-array pattern used for the existing `embedding` column addition (`sqlite.ts:126`); update the upsert `INSERT INTO memories (...)` column list (`sqlite.ts:211`) and `rowToMemory` mapper.
+    - Modify `packages/server/src/sync/supabase-sync.ts` — `dbRowToMemory` (read mapper, near line 502) and the row-serialization function (near line 531-535) to map `referencedDate`/`relativeDate` to/from `referenced_date`/`relative_date`; `remoteHybridRecall` (`supabase-sync.ts:322-347`) already passes through whatever `hybrid_recall` returns via `dbRowToMemory`, so it picks up the new columns once the mapper and RPC are updated.
+    - Modify `packages/server/src/search/ranker.ts` — accept a `query` + temporal-mode flag; when `isTemporalQuery(query)` is true, apply a reorder pass by `referencedDate ?? relativeDate ?? createdAt` proximity/recency on top of the existing composite score, before the final dedup/sort in `rankResults` (`ranker.ts:63-93`).
+    - Modify `packages/server/src/tools/recall.ts` — pass `args.query` into the new ranker temporal mode (both the local-cache `rankResults` call and the remote-hybrid path); extend `formatMemoryBody` (`recall.ts` ~line 118-131) to include referenced/relative date alongside the existing `updatedAt`-derived `formatCiteDate` output, so the answering model actually sees the anchoring dates.
+    - Modify `packages/cli/src/commands/recall.ts` — select the two new columns in the Supabase query/RPC call and apply `temporal-sort.ts`'s reorder when the query is temporal.
+  - Tests:
+    - Create `packages/server/src/__tests__/date-extraction.test.ts` — absolute-date parsing (ISO, `Month D, YYYY`, `MM/DD/YYYY`), relative-expression resolution against a fixed anchor (`"3 days ago"`, `"last Tuesday"`, `"yesterday"`), no-match returns `{}` (not throw) on text with no dates.
+    - Create `packages/cli/src/__tests__/date-extraction.test.ts` — parity tests for the CLI copy.
+    - Create `packages/server/src/__tests__/temporal-query.test.ts` — classifier true/false cases (temporal: "when did I last deploy", "what happened before the migration"; non-temporal: "what's our auth pattern").
+    - Modify `packages/server/src/__tests__/ranker.test.ts` — add temporal-mode reorder cases: given equal relevance scores, the memory with the more-recent/matching `referencedDate` sorts first; non-temporal queries are unaffected (regression).
+    - Manual/smoke: apply migration 0060 against a local Supabase instance, confirm `hybrid_recall`/`semantic_recall` return the two new columns and existing recall paths still function (no automated SQL test harness exists in this repo — confirmed via Step 1 search — so this is the established verification convention here).
+  - Depends on: nothing (fully parallel-safe against Task A; different files, different subsystem)
+  - Effort: L (schema migration + RPC redefinition + new extraction/classification modules across both packages + ranker/recall integration + cache/sync mirror updates)
+    - Multiplier applied: 1.5x for database migration (irreversibility/coordination — new columns + RPC signature changes touch every recall path). Base would be M for the code volume alone; migration risk pushes it to L.
+  - Pre-mortem: If this takes 3x longer, it will be because the RPC redefinition (`hybrid_recall`/`semantic_recall`) silently breaks an existing caller's expected return shape — Postgres `CREATE OR REPLACE FUNCTION` with a changed `RETURNS TABLE` signature can require `DROP FUNCTION` first in some Postgres versions, and any missed caller (dashboard, backfill script, other RPC consumers not surfaced in this session's grep) would fail at the DB layer, not in TypeScript. Mitigate by grepping all `.rpc('hybrid_recall'` and `.rpc('semantic_recall'` call sites across the full repo (not just packages/server and packages/cli) before writing the migration, and testing the migration against a scratch Supabase project before applying to dev/prod.
+  - Notes: This is the largest task and is scoped to ship independently of A/B — it touches an entirely different column set (`referenced_date`/`relative_date` vs `embedding`) and a different code path (`ranker.ts`/date extraction vs `embeddings.ts`/chunking). No file overlap with Task A or B.
+
+## File Ownership Matrix
+
+| Task | Creates | Modifies |
+|------|---------|----------|
+| A | `packages/server/src/chunking.ts`, `packages/cli/src/lib/chunking.ts` | `packages/server/src/embeddings.ts`, `packages/cli/src/lib/embedding.ts`, `packages/server/src/__tests__/embeddings.test.ts`, `packages/cli/src/__tests__/embedding.test.ts`, `packages/server/src/__tests__/remember-embedding.test.ts`, `packages/server/scripts/backfill-embeddings.test.ts` |
+| B | `packages/server/src/__tests__/chunking.test.ts`, `packages/cli/src/__tests__/chunking.test.ts` | `packages/server/src/chunking.ts`, `packages/cli/src/lib/chunking.ts` (same files A created — sequential dependency, not parallel) |
+| C | `supabase/migrations/0060_temporal_date_anchoring.sql`, `packages/server/src/temporal/date-extraction.ts`, `packages/cli/src/lib/date-extraction.ts`, `packages/server/src/search/temporal-query.ts`, `packages/cli/src/lib/temporal-sort.ts`, `packages/server/src/__tests__/date-extraction.test.ts`, `packages/cli/src/__tests__/date-extraction.test.ts`, `packages/server/src/__tests__/temporal-query.test.ts` | `packages/shared/src/types.ts`, `packages/server/src/tools/remember.ts`, `packages/cli/src/commands/remember.ts`, `packages/server/src/cache/sqlite.ts`, `packages/server/src/sync/supabase-sync.ts`, `packages/server/src/search/ranker.ts`, `packages/server/src/tools/recall.ts`, `packages/cli/src/commands/recall.ts`, `packages/server/src/__tests__/ranker.test.ts` |
+
+**Zero file overlaps between A/B and C** — A and C can run fully in parallel. B must run after A completes (same two `chunking.ts` files).
+
+## Open Questions
+- [ ] **Pooling vs multi-row chunk storage** — Blocks: nothing (default is pooling, already reflected in Task A/B above). If Ryan wants per-chunk retrieval precision matching the eval's 78% multi-row-granularity finding more closely, Task B's scope grows into a new child table + RPC + ranker aggregation (re-estimate as its own L/XL task). Default if unresolved: ship pooling (Task A/B as written).
+- [ ] **Backfill existing long memories after Task A ships** — `packages/server/scripts/backfill-embeddings.ts` is already scoped to one project at a time (per its own header comment, RQ8 in `PLAN-MEMORY-FIXES.md`). Should it be run against production project(s) once Task A merges, to pick up memories that previously silently failed? Blocks: nothing (backfill script already exists and works once `generateEmbedding` is fixed). Default if unresolved: don't run it automatically; leave as a manual follow-up per project, consistent with the script's existing single-project-scope design.
+- [ ] **Date-parsing dependency** — Hand-rolled regex extractor (as scoped in Task C) vs adding a library (e.g. `chrono-node`) for broader relative-date coverage. Blocks: nothing (Task C ships with regex as written). Default if unresolved: regex-only for Tier-1, consistent with Tages' existing no-new-runtime-deps pattern for the embedding/chunking modules; flag broader NLP-based extraction as a Tier-2 follow-on if regex coverage proves too narrow in practice.
+- [ ] **CLI `remember` command never generates embeddings at all** (separate pre-existing gap, confirmed in Step 1, not part of the named bug) — Blocks: nothing in this plan. Should this be a Tier-2 ticket? Default if unresolved: yes, file separately; not fixed here.
+
+## Definition of Done
+- [ ] Code written and self-reviewed
+- [ ] Tests written or updated for changed logic (see per-task Tests: entries)
+- [ ] `pnpm --filter server test` and `pnpm --filter cli test` pass; `pnpm typecheck` passes
+- [ ] Migration 0060 applied cleanly against a scratch/dev Supabase instance; `hybrid_recall`/`semantic_recall` RPC callers outside `packages/server`/`packages/cli` (if any) re-verified before merging
+- [ ] Quality gates pass (code review, tests, security review)
+- [ ] PR opened with coverage gaps noted in description (multi-row storage and LLM-assisted date extraction explicitly flagged as deferred, not silent gaps)
