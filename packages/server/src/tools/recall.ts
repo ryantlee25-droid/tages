@@ -2,7 +2,7 @@ import type { Memory, MemoryType } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
 import { generateEmbedding } from '../embeddings'
-import { rankResults, asTextResults } from '../search/ranker'
+import { rankResults, asTextResults, reorderByTemporalProximity } from '../search/ranker'
 import type { ScoredMemory } from '../search/ranker'
 import { computeDecayScore, shouldArchive } from '../decay/scoring'
 import { getEncryptionKey, decryptValue } from '../crypto/encryption'
@@ -65,7 +65,7 @@ export async function handleRecall(
       }
     })
 
-    const ranked = rankResults(decayAdjusted)
+    const ranked = rankResults(decayAdjusted, {}, args.query)
     let sliced = decryptMemories(ranked.slice(0, limit))
     if (args.maxTokens !== undefined) {
       sliced = budgetedResults(sliced, args.maxTokens, formatMemory)
@@ -78,7 +78,8 @@ export async function handleRecall(
     if (embedding) {
       const results = await sync.remoteHybridRecall(args.query, embedding, args.type, limit)
       if (results && results.length > 0) {
-        let trimmed = decryptMemories(results)
+        const reordered = reorderByTemporalProximity(results, args.query)
+        let trimmed = decryptMemories(reordered)
         if (args.maxTokens !== undefined) {
           trimmed = budgetedResults(trimmed, args.maxTokens, formatMemory)
         }
@@ -100,7 +101,7 @@ export async function handleRecall(
   const fallback = cache.queryMemories(
     projectId, args.query, args.type as MemoryType | undefined, limit,
   )
-  const ranked = rankResults(asTextResults(fallback))
+  const ranked = rankResults(asTextResults(fallback), {}, args.query)
   let sliced = decryptMemories(ranked.slice(0, limit))
   if (args.maxTokens !== undefined) {
     sliced = budgetedResults(sliced, args.maxTokens, formatMemory)
@@ -122,6 +123,15 @@ function formatCiteDate(iso: string | undefined | null): string {
 // the two never drift apart.
 function formatMemoryBody(m: Memory): string[] {
   const parts: string[] = [`   ${m.value}`]
+  // Temporal anchoring (migration 0060): surface the two extracted dates
+  // alongside the header's `updated:` date so the answering model actually
+  // sees them, not just the fact that they're stored.
+  if (m.referencedDate || m.relativeDate) {
+    const dateBits: string[] = []
+    if (m.referencedDate) dateBits.push(`referenced ${formatCiteDate(m.referencedDate)}`)
+    if (m.relativeDate) dateBits.push(`relative ${formatCiteDate(m.relativeDate)}`)
+    parts.push(`   Dates: ${dateBits.join(', ')}`)
+  }
   if (m.filePaths?.length) parts.push(`   Files: ${m.filePaths.join(', ')}`)
   if (m.conditions?.length) parts.push(`   When: ${m.conditions.join('; ')}`)
   if (m.crossSystemRefs?.length) parts.push(`   Related: ${m.crossSystemRefs.join(', ')}`)

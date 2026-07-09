@@ -4,8 +4,16 @@
  * Combines semantic (embedding cosine similarity) and text (LIKE match) scores
  * into a single composite score with configurable weights. Also applies recency
  * boost and confidence weighting.
+ *
+ * Temporal anchoring (migration 0060): when the query looks temporal
+ * (isTemporalQuery), results are additionally reordered by proximity to (or
+ * recency of) `referencedDate ?? relativeDate ?? createdAt`, layered on top
+ * of — not replacing — the composite score above. Non-temporal queries are
+ * unaffected: the `query` parameter is optional and everything below is a
+ * no-op when it's omitted or not temporal.
  */
 import type { Memory } from '@tages/shared'
+import { isTemporalQuery, extractTargetDate } from './temporal-query'
 
 export interface ScoredMemory {
   memory: Memory
@@ -58,18 +66,50 @@ export function combineScores(
   return blendedScore * confidenceAdjustment * recencyMultiplier
 }
 
+const TEMPORAL_WEIGHT = 0.5
+
+/**
+ * Proximity of a memory's temporal anchor to a comparison instant, in the
+ * range (0, 1]. Uses the fallback chain referencedDate -> relativeDate ->
+ * createdAt (every memory has createdAt, so this never returns 0 for a
+ * valid memory). When `targetDate` is given (the query itself named a date),
+ * proximity favors memories close to that date; otherwise it favors recency
+ * relative to `anchor` (now).
+ */
+function temporalProximity(memory: Memory, anchor: Date, targetDate?: Date): number {
+  const dateStr = memory.referencedDate ?? memory.relativeDate ?? memory.createdAt
+  if (!dateStr) return 0
+  const memTime = new Date(dateStr).getTime()
+  if (Number.isNaN(memTime)) return 0
+  const compareTime = (targetDate ?? anchor).getTime()
+  const diffDays = Math.abs(compareTime - memTime) / (24 * 60 * 60 * 1000)
+  return 1 / (1 + diffDays)
+}
+
 /**
  * Rank a list of scored memories by composite score, deduplicate by id.
  * Returns Memory[] in descending score order.
+ *
+ * `query` is optional — when provided and temporal (isTemporalQuery), the
+ * composite score is multiplied by a temporal-proximity factor before
+ * sorting. Omitting `query` (or a non-temporal query) leaves ranking
+ * unchanged from before this parameter existed.
  */
-export function rankResults(results: ScoredMemory[], config: RankerConfig = {}): Memory[] {
+export function rankResults(results: ScoredMemory[], config: RankerConfig = {}, query?: string): Memory[] {
   if (results.length === 0) return []
 
+  const temporal = !!query && isTemporalQuery(query)
+  const anchor = new Date()
+  const targetDate = temporal ? extractTargetDate(query!, anchor) : undefined
+
   // Score each result
-  const scored = results.map(r => ({
-    memory: r.memory,
-    score: combineScores(r.semanticScore, r.textScore, r.memory, config),
-  }))
+  const scored = results.map(r => {
+    const base = combineScores(r.semanticScore, r.textScore, r.memory, config)
+    const score = temporal
+      ? base * (1 + TEMPORAL_WEIGHT * temporalProximity(r.memory, anchor, targetDate))
+      : base
+    return { memory: r.memory, score }
+  })
 
   // Sort descending, stable tie-breaking by updatedAt then id
   scored.sort((a, b) => {
@@ -94,6 +134,32 @@ export function rankResults(results: ScoredMemory[], config: RankerConfig = {}):
   }
 
   return deduped
+}
+
+/**
+ * Reorder already-ranked remote results by temporal proximity when the query
+ * is temporal. Used for the remote-hybrid recall path (SupabaseSync.
+ * remoteHybridRecall): that path's rows arrive pre-sorted by the `hybrid_
+ * recall` RPC's own similarity score and don't carry the semantic/text score
+ * breakdown `rankResults` needs, so this applies a temporal-only stable
+ * reorder on top of the RPC's existing order rather than recomputing a
+ * composite score. Non-temporal queries return `memories` unchanged.
+ */
+export function reorderByTemporalProximity(memories: Memory[], query: string): Memory[] {
+  if (memories.length === 0 || !isTemporalQuery(query)) return memories
+
+  const anchor = new Date()
+  const targetDate = extractTargetDate(query, anchor)
+
+  return memories
+    .map((memory, index) => ({ memory, index, proximity: temporalProximity(memory, anchor, targetDate) }))
+    .sort((a, b) => {
+      const diff = b.proximity - a.proximity
+      if (Math.abs(diff) > 1e-10) return diff
+      // Stable: preserve the RPC's original relevance order on a proximity tie.
+      return a.index - b.index
+    })
+    .map(r => r.memory)
 }
 
 /**

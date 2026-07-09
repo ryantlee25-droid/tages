@@ -450,6 +450,8 @@ interface DbRow {
   examples: unknown | null
   execution_flow: unknown | null
   verified_at: string | null
+  referenced_date: string | null
+  relative_date: string | null
   created_at: string
   updated_at: string
   created_by: string | null
@@ -494,6 +496,8 @@ function dbRowToMemory(row: DbRow): Memory {
     examples: row.examples as Memory['examples'],
     executionFlow: row.execution_flow as Memory['executionFlow'],
     verifiedAt: row.verified_at || undefined,
+    referencedDate: row.referenced_date || undefined,
+    relativeDate: row.relative_date || undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     createdBy: row.created_by || undefined,
@@ -522,6 +526,8 @@ function memoryToDbRow(memory: Memory): DbRow {
     examples: memory.examples || null,
     execution_flow: memory.executionFlow || null,
     verified_at: memory.verifiedAt || null,
+    referenced_date: memory.referencedDate || null,
+    relative_date: memory.relativeDate || null,
     created_at: memory.createdAt,
     updated_at: memory.updatedAt,
     created_by: memory.createdBy || null,
