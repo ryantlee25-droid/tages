@@ -1,0 +1,243 @@
+{
+  "run_id": "tages-tages-semantic-n50-seed42-2026-07-09T00-32-52-419Z",
+  "dataset_sha": "b81b63816bf80b55a70ba0fa4b6673528f22942f",
+  "model_answer": "gpt-4o-2024-08-06",
+  "model_judge": "gpt-4o-2024-08-06",
+  "tages_version": "dev",
+  "n": 50,
+  "overall_accuracy": 1,
+  "accuracy_by_type": {
+    "single-session-assistant": 1,
+    "single-session-user": 1
+  },
+  "duration_seconds": 33,
+  "cost_usd_estimate": 0.02012,
+  "failures": [
+    {
+      "question_id": "6b7dfb22",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "gpt4_468eb063",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "gpt4_d31cdae3",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "gpt4_e072b769",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "9ea5eabc",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "gpt4_e061b84g",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "36b9f61e",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "gpt4_93f6379c",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "681a1674",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "6456829e_abs",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "5c40ec5b",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "21436231",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "gpt4_7f6b06db",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "9a707b81",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "ba358f49",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "bbf86515",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "d851d5ba",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "gpt4_31ff4165",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "gpt4_372c3eed_abs",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "a346bb18",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "gpt4_8279ba02",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "001be529",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "7401057b",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "993da5e2",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "32260d93",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "726462e0",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "5025383b",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "6f9b354f",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "42ec0761",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "69fee5aa",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "91b15a6e",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "6a1eabeb",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "gpt4_f2262a51",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "4d6b87c8",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "078150f1",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "4100d0a0",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "gpt4_b4a80587",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "7a8d0b71",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "eac54add",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "60bf93ed_abs",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "1e043500",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "ba61f0b9",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "caf03d32",
+      "reason": "Ollama embed failed: 500"
+    },
+    {
+      "question_id": "2ebe6c90",
+      "reason": "Ollama embed failed: 500"
+    }
+  ],
+  "details": [
+    {
+      "question_id": "1d4da289",
+      "question_type": "single-session-assistant",
+      "correct": true,
+      "model_answer": "I mentioned biometric authentication and one-time passwords (OTP) as examples of two-factor authentication methods that companies use to enhance security.",
+      "ground_truth": "I mentioned biometric authentication or one-time passwords (OTP) as examples of two-factor authentication methods.",
+      "recalled_memory_count": 1
+    },
+    {
+      "question_id": "d596882b",
+      "question_type": "single-session-assistant",
+      "correct": true,
+      "model_answer": "The vegan eatery I recommended with multiple locations throughout New York City is By Chloe.",
+      "ground_truth": "By Chloe",
+      "recalled_memory_count": 1
+    },
+    {
+      "question_id": "4fd1909e",
+      "question_type": "single-session-user",
+      "correct": true,
+      "model_answer": "You attended the Imagine Dragons concert at the Xfinity Center on June 15th.",
+      "ground_truth": "Xfinity Center",
+      "recalled_memory_count": 1
+    },
+    {
+      "question_id": "4baee567",
+      "question_type": "single-session-assistant",
+      "correct": true,
+      "model_answer": "The Kansas City Chiefs and the Jacksonville Jaguars played 12 games at Arrowhead Stadium in Kansas City, Missouri.",
+      "ground_truth": "The Chiefs played the Jaguars 12 times at Arrowhead Stadium.",
+      "recalled_memory_count": 1
+    },
+    {
+      "question_id": "fca762bc",
+      "question_type": "single-session-assistant",
+      "correct": true,
+      "model_answer": "The language learning app that uses mnemonics to help learners memorize words and phrases is Memrise.",
+      "ground_truth": "Memrise",
+      "recalled_memory_count": 1
+    },
+    {
+      "question_id": "ceb54acb",
+      "question_type": "single-session-assistant",
+      "correct": true,
+      "model_answer": "The other four options I suggested were:\n\n1. Sexual fixations\n2. Problematic sexual behaviors\n3. Sexual impulsivity\n4. Compulsive sexuality",
+      "ground_truth": "I suggested 'sexual fixations', 'problematic sexual behaviors', 'sexual impulsivity', and 'compulsive sexuality'.",
+      "recalled_memory_count": 1
+    }
+  ]
+}

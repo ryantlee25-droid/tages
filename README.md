@@ -146,6 +146,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-07-08 — LongMemEval eval-backend expansion + memory-quality fix plan
+
+- **Pluggable LongMemEval embedder backends**: `eval/longmemeval/src/memory.ts` gains three new `Backend` variants — `tages-semantic` (nomic/pgvector via Tages' own semantic store, `semantic-store.ts`), `openai-cosine` (OpenAI embeddings + cosine similarity, `openai-store.ts`), and `voyage-cosine` (Voyage AI embeddings, `voyage-store.ts`) — alongside the existing `tages-cli` and `in-memory` backends. Also fixes the `tages remember` memory type passed by `TagesCliStore` from `fact` to `entity`.
+- **Benchmark results captured**: nine result JSONs from tonight's runs across all backends (baseline in-memory, Tages local/cloud-dev/semantic v1+v2, OpenAI small/large, Voyage 4-large/code-3) landed in `eval/longmemeval/results/`.
+- **Memory-quality fix plan**: `PLAN-MEMORY-FIXES.md` lays out a two-phase plan — Phase 1 (EVAL-ONLY) fixes the harness's judge/prompting/ingestion issues; Phase 2 (PRODUCT) fixes the real bug found during this run: the pgvector `embedding` column is never populated on the `remember` write path, so semantic search has been silently trigram-only since it shipped. This commit is the base Phase 1 builds on.
+
 ### 2026-04-29 — Week 1 housekeeping (governance unghost, action-setup v6, drop provenance user_id)
 
 - **A1 — Governance page indexed**: removed `robots: 'noindex, nofollow'` from `/governance` metadata. The page is now crawlable and eligible for Google Search Console indexing. Added `/governance` link to both the desktop nav (after Security, before GitHub) and the mobile menu using the same styling as adjacent links.

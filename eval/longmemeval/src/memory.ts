@@ -15,8 +15,11 @@
  */
 import { execFileSync } from 'node:child_process'
 import type { LongMemEvalQuestion, Turn } from './types.js'
+import { SemanticDevStore } from './semantic-store.js'
+import { OpenAICosineStore } from './openai-store.js'
+import { VoyageCosineStore } from './voyage-store.js'
 
-export type Backend = 'tages-cli' | 'in-memory'
+export type Backend = 'tages-cli' | 'in-memory' | 'tages-semantic' | 'openai-cosine' | 'voyage-cosine'
 
 export interface MemoryStore {
   backend: Backend
@@ -33,6 +36,9 @@ function sessionToText(sessionId: string, date: string, turns: Turn[]): string {
 export function makeStore(backend: Backend): MemoryStore {
   if (backend === 'in-memory') return new InMemoryStore()
   if (backend === 'tages-cli') return new TagesCliStore()
+  if (backend === 'tages-semantic') return new SemanticDevStore()
+  if (backend === 'openai-cosine') return new OpenAICosineStore()
+  if (backend === 'voyage-cosine') return new VoyageCosineStore()
   throw new Error(`Unknown backend: ${backend}`)
 }
 
@@ -100,7 +106,7 @@ class TagesCliStore implements MemoryStore {
       const key = `longmemeval-${q.question_id}-s${i}`
       execFileSync(
         'tages',
-        ['remember', key, text, '--project', this.project, '--type', 'fact'],
+        ['remember', key, text, '--project', this.project, '--type', 'entity'],
         { stdio: 'ignore' },
       )
       this.liveKeys.add(key)

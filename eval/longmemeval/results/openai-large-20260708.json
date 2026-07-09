@@ -1,0 +1,411 @@
+{
+  "run_id": "tages-openai-cosine-n50-seed42-2026-07-09T01-17-58-472Z",
+  "dataset_sha": "b81b63816bf80b55a70ba0fa4b6673528f22942f",
+  "model_answer": "gpt-4o-2024-08-06",
+  "model_judge": "gpt-4o-2024-08-06",
+  "tages_version": "dev",
+  "n": 50,
+  "overall_accuracy": 0.5957446808510638,
+  "accuracy_by_type": {
+    "single-session-preference": 0,
+    "temporal-reasoning": 0.25,
+    "single-session-assistant": 1,
+    "knowledge-update": 0.625,
+    "multi-session": 0.6666666666666666,
+    "single-session-user": 1
+  },
+  "duration_seconds": 517,
+  "cost_usd_estimate": 0.63054,
+  "failures": [
+    {
+      "question_id": "gpt4_7f6b06db",
+      "reason": "429 Rate limit reached for gpt-4o-2024-08-06 (for limit gpt-4o) in organization org-O6Ad6La7ORiEFzmf3SWAc6vT on tokens per min (TPM): Limit 30000, Used 30000, Requested 186. Please try again in 372ms. Visit https://platform.openai.com/account/rate-limits to learn more."
+    },
+    {
+      "question_id": "60bf93ed_abs",
+      "reason": "429 Rate limit reached for gpt-4o-2024-08-06 (for limit gpt-4o) in organization org-O6Ad6La7ORiEFzmf3SWAc6vT on tokens per min (TPM): Limit 30000, Used 30000, Requested 121. Please try again in 242ms. Visit https://platform.openai.com/account/rate-limits to learn more."
+    },
+    {
+      "question_id": "ceb54acb",
+      "reason": "429 Rate limit reached for gpt-4o-2024-08-06 (for limit gpt-4o) in organization org-O6Ad6La7ORiEFzmf3SWAc6vT on tokens per min (TPM): Limit 30000, Used 29954, Requested 451. Please try again in 810ms. Visit https://platform.openai.com/account/rate-limits to learn more."
+    }
+  ],
+  "details": [
+    {
+      "question_id": "6b7dfb22",
+      "question_type": "single-session-preference",
+      "correct": false,
+      "model_answer": "I don't know.",
+      "ground_truth": "The user would prefer responses that build upon their existing sources of inspiration, such as revisiting Instagram art accounts or exploring new techniques from online tutorials. They might also appreciate suggestions that revisit previous themes they found enjoyable, like painting flowers. The user would not prefer generic or vague suggestions for finding inspiration, and would likely appreciate responses that utilize their recent 30-day painting challenge experience.",
+      "recalled_memory_count": 6
+    },
+    {
+      "question_id": "gpt4_468eb063",
+      "question_type": "temporal-reasoning",
+      "correct": false,
+      "model_answer": "I don't know.",
+      "ground_truth": "9 days ago. 10 days (including the last day) is also acceptable.",
+      "recalled_memory_count": 5
+    },
+    {
+      "question_id": "1d4da289",
+      "question_type": "single-session-assistant",
+      "correct": true,
+      "model_answer": "In our previous conversation, I mentioned two-factor authentication methods such as biometric authentication and one-time passwords (OTP).",
+      "ground_truth": "I mentioned biometric authentication or one-time passwords (OTP) as examples of two-factor authentication methods.",
+      "recalled_memory_count": 1
+    },
+    {
+      "question_id": "gpt4_d31cdae3",
+      "question_type": "temporal-reasoning",
+      "correct": true,
+      "model_answer": "The family road trip across the American Southwest was taken first, as the user mentioned they had been to the Grand Canyon with their family on that trip. The solo trip to Europe, where they backpacked through Italy, Switzerland, and Germany, happened later.",
+      "ground_truth": "The family road trip across the American Southwest",
+      "recalled_memory_count": 7
+    },
+    {
+      "question_id": "gpt4_e072b769",
+      "question_type": "temporal-reasoning",
+      "correct": false,
+      "model_answer": "I don't know.",
+      "ground_truth": "3 weeks ago",
+      "recalled_memory_count": 4
+    },
+    {
+      "question_id": "d596882b",
+      "question_type": "single-session-assistant",
+      "correct": true,
+      "model_answer": "The vegan eatery I recommended with multiple locations throughout New York City is By Chloe.",
+      "ground_truth": "By Chloe",
+      "recalled_memory_count": 2
+    },
+    {
+      "question_id": "9ea5eabc",
+      "question_type": "knowledge-update",
+      "correct": true,
+      "model_answer": "You went to Paris on your most recent family trip.",
+      "ground_truth": "Paris",
+      "recalled_memory_count": 10
+    },
+    {
+      "question_id": "gpt4_e061b84g",
+      "question_type": "temporal-reasoning",
+      "correct": false,
+      "model_answer": "I don't know.",
+      "ground_truth": "The company's annual charity soccer tournament.",
+      "recalled_memory_count": 10
+    },
+    {
+      "question_id": "36b9f61e",
+      "question_type": "multi-session",
+      "correct": false,
+      "model_answer": "I don't know. The memories provided don't contain a complete record of your luxury spending over the past few months.",
+      "ground_truth": "$2,500",
+      "recalled_memory_count": 10
+    },
+    {
+      "question_id": "gpt4_93f6379c",
+      "question_type": "temporal-reasoning",
+      "correct": false,
+      "model_answer": "You joined the \"Marketing Professionals\" group on LinkedIn first.",
+      "ground_truth": "Page Turners",
+      "recalled_memory_count": 10
+    },
+    {
+      "question_id": "681a1674",
+      "question_type": "multi-session",
+      "correct": true,
+      "model_answer": "You re-watched Spider-Man: No Way Home and Avengers: Endgame.",
+      "ground_truth": "2",
+      "recalled_memory_count": 10
+    },
+    {
+      "question_id": "6456829e_abs",
+      "question_type": "multi-session",
+      "correct": true,
+      "model_answer": "I don't know. The memories only mention that you initially planted 5 tomato plants, but there is no information about chili peppers.",
+      "ground_truth": "The information provided is not enough. You mentioned planting 5 plants for tomatoes but you did not mention chili peppers.",
+      "recalled_memory_count": 9
+    },
+    {
+      "question_id": "5c40ec5b",
+      "question_type": "knowledge-update",
+      "correct": true,
+      "model_answer": "You have met up with Alex from Germany twice before.",
+      "ground_truth": "We've met up twice.",
+      "recalled_memory_count": 7
+    },
+    {
+      "question_id": "21436231",
+      "question_type": "single-session-user",
+      "correct": true,
+      "model_answer": "You caught 12 largemouth bass on your last fishing trip to Lake Michigan.",
+      "ground_truth": "12",
+      "recalled_memory_count": 5
+    },
+    {
+      "question_id": "9a707b81",
+      "question_type": "temporal-reasoning",
+      "correct": false,
+      "model_answer": "You attended a baking class at a local culinary school the day before you made your friend's birthday cake.",
+      "ground_truth": "21 days. 22 days (including the last day) is also acceptable.",
+      "recalled_memory_count": 10
+    },
+    {
+      "question_id": "ba358f49",
+      "question_type": "multi-session",
+      "correct": false,
+      "model_answer": "I don't know.",
+      "ground_truth": "33",
+      "recalled_memory_count": 9
+    },
+    {
+      "question_id": "bbf86515",
+      "question_type": "temporal-reasoning",
+      "correct": true,
+      "model_answer": "You participated in the \"Turbocharged Tuesdays\" event on June 14th and attended the \"Rack Fest\" event on June 18th. Therefore, you participated in the \"Turbocharged Tuesdays\" event 4 days before the \"Rack Fest.\"",
+      "ground_truth": "4 days.",
+      "recalled_memory_count": 9
+    },
+    {
+      "question_id": "d851d5ba",
+      "question_type": "multi-session",
+      "correct": false,
+      "model_answer": "Based on the memories, you raised over $2,000 for a local animal shelter on January 20th, $1,000 for a local children's hospital at a charity bake sale, and $500 for the American Cancer Society during a charity fitness challenge. In total, you have raised at least $3,500 for charity.",
+      "ground_truth": "$3,750",
+      "recalled_memory_count": 10
+    },
+    {
+      "question_id": "4fd1909e",
+      "question_type": "single-session-user",
+      "correct": true,
+      "model_answer": "You attended the Imagine Dragons concert at the Xfinity Center on June 15th.",
+      "ground_truth": "Xfinity Center",
+      "recalled_memory_count": 3
+    },
+    {
+      "question_id": "gpt4_31ff4165",
+      "question_type": "multi-session",
+      "correct": false,
+      "model_answer": "I don't know.",
+      "ground_truth": "4",
+      "recalled_memory_count": 10
+    },
+    {
+      "question_id": "gpt4_372c3eed_abs",
+      "question_type": "multi-session",
+      "correct": true,
+      "model_answer": "I don't know.",
+      "ground_truth": "The information provided is not enough. You mentioned 4 years in high school (2010-2014), 2 years at PCC (2014-2016), and 4 years at UCLA (2016-2020). But you didn't mention the number of years you spend getting the Master's degree",
+      "recalled_memory_count": 10
+    },
+    {
+      "question_id": "a346bb18",
+      "question_type": "multi-session",
+      "correct": true,
+      "model_answer": "You exceeded your target time by 12 minutes in the marathon. Your target time was 4 hours and 10 minutes, and you completed the marathon in 4 hours and 22 minutes.",
+      "ground_truth": "12",
+      "recalled_memory_count": 9
+    },
+    {
+      "question_id": "gpt4_8279ba02",
+      "question_type": "temporal-reasoning",
+      "correct": false,
+      "model_answer": "You mentioned buying a smoker on March 15, 2023. I don't know today's date, so I can't calculate how many days ago that was.",
+      "ground_truth": "10 days ago. 11 days (including the last day) is also acceptable.",
+      "recalled_memory_count": 5
+    },
+    {
+      "question_id": "001be529",
+      "question_type": "single-session-user",
+      "correct": true,
+      "model_answer": "You waited over a year for the decision on your asylum application.",
+      "ground_truth": "over a year",
+      "recalled_memory_count": 4
+    },
+    {
+      "question_id": "7401057b",
+      "question_type": "knowledge-update",
+      "correct": false,
+      "model_answer": "I don't know.",
+      "ground_truth": "Two",
+      "recalled_memory_count": 9
+    },
+    {
+      "question_id": "4baee567",
+      "question_type": "single-session-assistant",
+      "correct": true,
+      "model_answer": "The Kansas City Chiefs and the Jacksonville Jaguars played 12 games at Arrowhead Stadium in Kansas City, Missouri.",
+      "ground_truth": "The Chiefs played the Jaguars 12 times at Arrowhead Stadium.",
+      "recalled_memory_count": 2
+    },
+    {
+      "question_id": "993da5e2",
+      "question_type": "temporal-reasoning",
+      "correct": false,
+      "model_answer": "You had been using the new area rug for about a month when you rearranged your living room furniture.",
+      "ground_truth": "One week. Answers ranging from 7 days to 10 days are also acceptable.",
+      "recalled_memory_count": 8
+    },
+    {
+      "question_id": "32260d93",
+      "question_type": "single-session-preference",
+      "correct": false,
+      "model_answer": "I don't know.",
+      "ground_truth": "The user would prefer recommendations for stand-up comedy specials on Netflix, especially those that are known for their storytelling. They may not prefer recommendations for other genres or platforms.",
+      "recalled_memory_count": 5
+    },
+    {
+      "question_id": "726462e0",
+      "question_type": "single-session-user",
+      "correct": true,
+      "model_answer": "You received a 10% discount on your first purchase from the new clothing brand.",
+      "ground_truth": "10%",
+      "recalled_memory_count": 5
+    },
+    {
+      "question_id": "5025383b",
+      "question_type": "multi-session",
+      "correct": true,
+      "model_answer": "Your two hobbies that led you to join online communities are cooking and photography.",
+      "ground_truth": "photography and cooking",
+      "recalled_memory_count": 9
+    },
+    {
+      "question_id": "6f9b354f",
+      "question_type": "single-session-user",
+      "correct": true,
+      "model_answer": "You repainted your bedroom walls a lighter shade of gray.",
+      "ground_truth": "a lighter shade of gray",
+      "recalled_memory_count": 4
+    },
+    {
+      "question_id": "42ec0761",
+      "question_type": "knowledge-update",
+      "correct": true,
+      "model_answer": "Yes, you have a spare screwdriver that you picked up when you organized your computer desk a while back.",
+      "ground_truth": "Yes",
+      "recalled_memory_count": 8
+    },
+    {
+      "question_id": "69fee5aa",
+      "question_type": "knowledge-update",
+      "correct": false,
+      "model_answer": "You have a total of 37 pre-1920 American coins in your collection.",
+      "ground_truth": "38",
+      "recalled_memory_count": 8
+    },
+    {
+      "question_id": "91b15a6e",
+      "question_type": "multi-session",
+      "correct": true,
+      "model_answer": "For the vintage diamond necklace, you mentioned it is worth $5,000, so you would likely aim to sell it for at least that amount, depending on the market and buyer interest.\n\nFor the antique vanity, considering you originally bought it for $150 and have put in restoration work, you should be able to sell it for at least $150. However, depending on the extent of the restoration and market demand, you might be able to sell it for more.\n\nTherefore, the minimum amount you could get if you sold both items would be $5,150.",
+      "ground_truth": "$5,150",
+      "recalled_memory_count": 10
+    },
+    {
+      "question_id": "6a1eabeb",
+      "question_type": "knowledge-update",
+      "correct": true,
+      "model_answer": "Your personal best time in the charity 5K run was 25:50.",
+      "ground_truth": "25 minutes and 50 seconds (or 25:50)",
+      "recalled_memory_count": 10
+    },
+    {
+      "question_id": "gpt4_f2262a51",
+      "question_type": "multi-session",
+      "correct": true,
+      "model_answer": "You visited at least three different doctors: Dr. Patel, an ENT specialist for your chronic sinusitis; Dr. Smith, your primary care physician who diagnosed your UTI and prescribed antibiotics; and Dr. Lee, your dermatologist for a biopsy on a suspicious mole.",
+      "ground_truth": "I visited three different doctors: a primary care physician, an ENT specialist, and a dermatologist.",
+      "recalled_memory_count": 10
+    },
+    {
+      "question_id": "fca762bc",
+      "question_type": "single-session-assistant",
+      "correct": true,
+      "model_answer": "The language learning app that uses mnemonics to help learners memorize words and phrases is Memrise.",
+      "ground_truth": "Memrise",
+      "recalled_memory_count": 1
+    },
+    {
+      "question_id": "4d6b87c8",
+      "question_type": "knowledge-update",
+      "correct": true,
+      "model_answer": "Your to-watch list currently has 25 titles.",
+      "ground_truth": "25",
+      "recalled_memory_count": 9
+    },
+    {
+      "question_id": "078150f1",
+      "question_type": "multi-session",
+      "correct": true,
+      "model_answer": "You raised $250 in donations for the charity cycling event, which exceeded your initial goal of $200. Therefore, you raised $50 more than your initial goal.",
+      "ground_truth": "$50",
+      "recalled_memory_count": 10
+    },
+    {
+      "question_id": "4100d0a0",
+      "question_type": "single-session-user",
+      "correct": true,
+      "model_answer": "Your ethnicity is mixed, with Irish and Italian roots.",
+      "ground_truth": "A mix of Irish and Italian",
+      "recalled_memory_count": 4
+    },
+    {
+      "question_id": "gpt4_b4a80587",
+      "question_type": "temporal-reasoning",
+      "correct": true,
+      "model_answer": "The arrival of the new prime lens happened first. The user mentioned they got the 50mm f/1.8 prime lens a month ago and then used it on a coastal trip.",
+      "ground_truth": "The arrival of the new prime lens",
+      "recalled_memory_count": 9
+    },
+    {
+      "question_id": "7a8d0b71",
+      "question_type": "single-session-assistant",
+      "correct": true,
+      "model_answer": "The budget allocated for influencer marketing in the DHL Wellness Retreats campaign plan was $2,000.",
+      "ground_truth": "$2,000",
+      "recalled_memory_count": 3
+    },
+    {
+      "question_id": "eac54add",
+      "question_type": "temporal-reasoning",
+      "correct": false,
+      "model_answer": "I don't know.",
+      "ground_truth": "I signed a contract with my first client.",
+      "recalled_memory_count": 10
+    },
+    {
+      "question_id": "1e043500",
+      "question_type": "single-session-user",
+      "correct": true,
+      "model_answer": "The name of the playlist you created on Spotify is \"Summer Vibes.\"",
+      "ground_truth": "Summer Vibes",
+      "recalled_memory_count": 4
+    },
+    {
+      "question_id": "ba61f0b9",
+      "question_type": "knowledge-update",
+      "correct": false,
+      "model_answer": "Rachel's team consists of 5 women out of 10 people.",
+      "ground_truth": "6",
+      "recalled_memory_count": 9
+    },
+    {
+      "question_id": "caf03d32",
+      "question_type": "single-session-preference",
+      "correct": false,
+      "model_answer": "I don't know.",
+      "ground_truth": "The user would prefer responses that provide tips and advice specifically tailored to their slow cooker experiences, utilizing their recent success with beef stew and interest in making yogurt in the slow cooker. They might not prefer general slow cooker recipes or advice unrelated to their specific experiences and interests.",
+      "recalled_memory_count": 6
+    },
+    {
+      "question_id": "2ebe6c90",
+      "question_type": "temporal-reasoning",
+      "correct": false,
+      "model_answer": "I don't know.",
+      "ground_truth": "21 days. 22 days (including the last day) is also acceptable.",
+      "recalled_memory_count": 10
+    }
+  ]
+}
