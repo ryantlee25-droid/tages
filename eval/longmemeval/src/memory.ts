@@ -36,8 +36,9 @@ import type { LongMemEvalQuestion, Turn } from './types.js'
 import { SemanticDevStore } from './semantic-store.js'
 import { OpenAICosineStore } from './openai-store.js'
 import { VoyageCosineStore } from './voyage-store.js'
+import { NanoCosineStore } from './nano-store.js'
 
-export type Backend = 'tages-cli' | 'in-memory' | 'tages-semantic' | 'openai-cosine' | 'voyage-cosine'
+export type Backend = 'tages-cli' | 'in-memory' | 'tages-semantic' | 'openai-cosine' | 'voyage-cosine' | 'nano-cosine'
 
 export interface MemoryStore {
   backend: Backend
@@ -70,6 +71,7 @@ export function makeStore(backend: Backend): MemoryStore {
   if (backend === 'tages-semantic') return new SemanticDevStore()
   if (backend === 'openai-cosine') return new OpenAICosineStore()
   if (backend === 'voyage-cosine') return new VoyageCosineStore()
+  if (backend === 'nano-cosine') return new NanoCosineStore()
   throw new Error(`Unknown backend: ${backend}`)
 }
 
@@ -115,6 +117,10 @@ class TagesCliStore implements MemoryStore {
   backend: Backend = 'tages-cli'
   private project: string
   private liveKeys = new Set<string>()
+  // key -> full stored text, so recall can return complete memory bodies by key
+  // instead of parsing `tages recall`'s multi-line human output (whose value
+  // continuation lines are unindented and were being dropped, starving the reader).
+  private ingestedText = new Map<string, string>()
 
   constructor() {
     const p = process.env.TAGES_EVAL_PROJECT
@@ -128,17 +134,36 @@ class TagesCliStore implements MemoryStore {
 
   async ingest(q: LongMemEvalQuestion): Promise<void> {
     await this.clear()
+    // Granularity toggle: default SESSION-level (one memory per session, coherent
+    // Q/A context — apples-to-apples with the cosine bake-off backends). Set
+    // TAGES_INGEST_TURNS=1 for the old per-turn behavior (fragments Q from A).
+    const perTurn = process.env.TAGES_INGEST_TURNS === '1'
     for (let i = 0; i < q.haystack_sessions.length; i++) {
       const sessionId = q.haystack_session_ids[i] ?? `s${i}`
       const date = q.haystack_dates[i] ?? ''
       const turns = q.haystack_sessions[i]!
-      for (let j = 0; j < turns.length; j++) {
-        const text = turnToText(sessionId, date, turns[j]!)
-        const key = `longmemeval-${q.question_id}-s${i}-t${j}`
+      if (perTurn) {
+        for (let j = 0; j < turns.length; j++) {
+          const text = turnToText(sessionId, date, turns[j]!)
+          const key = `longmemeval-${q.question_id}-s${i}-t${j}`
+          this.rememberOne(key, text)
+          this.liveKeys.add(key)
+          this.ingestedText.set(key, text)
+        }
+      } else {
+        const body = turns.map((t) => `${t.role.toUpperCase()}: ${t.content}`).join('\n\n')
+        const text = `[session=${sessionId} date=${date}]\n${body}`
+        const key = `longmemeval-${q.question_id}-s${i}`
         this.rememberOne(key, text)
         this.liveKeys.add(key)
+        this.ingestedText.set(key, text)
       }
     }
+    // Tages embeds fire-and-forget after `remember` returns; recalling immediately
+    // races the embedding write (semantic search finds nothing). Wait for the
+    // writes to settle so retrieval reflects Tages' real quality, not ingest speed.
+    const settleMs = Number(process.env.TAGES_SETTLE_MS || '0')
+    if (settleMs > 0) await new Promise((r) => setTimeout(r, settleMs))
   }
 
   /**
@@ -174,7 +199,13 @@ class TagesCliStore implements MemoryStore {
       ['recall', query, '--project', this.project, '--limit', String(topK)],
       { encoding: 'utf8' },
     )
-    return parseRecallOutput(out)
+    // Parse the reliably single-line KEY from each result header, then return the
+    // full ingested text for that key. Retrieval quality (which turns Tages
+    // surfaces) is what's measured; the reader gets the complete memory body,
+    // matching how the cosine bake-off backends feed full retrieved text.
+    return parseRecallKeys(out)
+      .map((key) => this.ingestedText.get(key))
+      .filter((t): t is string => Boolean(t))
   }
 
   async clear(): Promise<void> {
@@ -186,6 +217,7 @@ class TagesCliStore implements MemoryStore {
       }
     }
     this.liveKeys.clear()
+    this.ingestedText.clear()
   }
 }
 
@@ -231,4 +263,27 @@ function parseRecallOutput(text: string): string[] {
   }
   if (currentValue.length > 0) values.push(currentValue.join(' ').trim())
   return values.filter(Boolean)
+}
+
+/**
+ * Parse the single-token KEY from each `tages recall` result header. Header lines
+ * are `  <type>   <key>` (two-space indent, padded type, then the key); the key
+ * has no spaces, so this is robust where multi-line value parsing was not (value
+ * continuation lines are unindented in the CLI output and were being dropped,
+ * starving the reader of everything but the `[session=...]` header). Output is
+ * captured non-TTY, so chalk emits no color codes to strip.
+ */
+function parseRecallKeys(text: string): string[] {
+  const keys: string[] = []
+  for (const line of text.split('\n')) {
+    if (line.startsWith('Found ')) continue
+    if (/^\s*similarity:/.test(line)) continue
+    // Header line: two-space indent + type + key, not a 15-space value line.
+    if (/^  \S+\s+\S+/.test(line) && !line.startsWith('               ')) {
+      const parts = line.trim().split(/\s+/)
+      const key = parts[parts.length - 1]
+      if (key) keys.push(key)
+    }
+  }
+  return keys
 }
