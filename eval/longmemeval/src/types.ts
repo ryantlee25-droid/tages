@@ -33,6 +33,15 @@ export interface RunResult {
   n: number
   overall_accuracy: number
   accuracy_by_type: Partial<Record<QuestionType, number>>
+  /**
+   * Task 6: retrieval-quality metric, independent of the synthetic reader's
+   * answer accuracy — the fraction of questions where at least one recalled
+   * memory's tagged session id was in the gold `answer_session_ids` set.
+   * Unlike `overall_accuracy`, this number reflects real product retrieval
+   * quality and should be cited as such in any results summary.
+   */
+  recall_at_k: number
+  recall_at_k_by_type: Partial<Record<QuestionType, number>>
   duration_seconds: number
   cost_usd_estimate: number
   failures: Array<{ question_id: string; reason: string }>
@@ -43,5 +52,11 @@ export interface RunResult {
     model_answer: string
     ground_truth: string
     recalled_memory_count: number
+    /** Task 3: the retrieved memory strings themselves (debugging aid, distinguishes retrieval-miss from generation-error). */
+    recalled_memories: string[]
+    /** Task 3: the oracle's gold evidence session ids for this question (copy of `answer_session_ids`). */
+    gold_session_ids: string[]
+    /** Task 6: whether any recalled memory's tagged session id was among `gold_session_ids`. */
+    recalled_gold_hit: boolean
   }>
 }
