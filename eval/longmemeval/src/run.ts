@@ -27,7 +27,10 @@ function parseArgs(raw: string[]): Args {
     n: 50,
     seed: 42,
     backend: 'in-memory',
-    topK: 10,
+    // Task 4: bumped from 10 to 30. Turn-level ingestion (memory.ts) multiplies
+    // row count per question ~5-20x versus session-level; a topK tuned for
+    // session-level retrieval under-retrieves at turn-level.
+    topK: 30,
     output: '',
     dryRun: false,
     help: false,
@@ -56,7 +59,8 @@ Options:
   --n <num>          Number of questions to sample (default 50)
   --seed <num>       PRNG seed for stratified sample (default 42)
   --backend <name>   Memory backend: 'tages-cli' | 'in-memory' (default 'in-memory')
-  --top-k <num>      Number of memories to retrieve per question (default 10)
+  --top-k <num>      Number of memories to retrieve per question (default 30;
+                     bumped from 10 for turn-level ingestion, see memory.ts)
   --output <path>    Where to write results JSON (required unless --dry-run)
   --dry-run          Sample and print first question + memory count, don't call API
   -h, --help         Show this message
@@ -71,6 +75,33 @@ Required env:
   OPENAI_API_KEY     OpenAI key with GPT-4o access (not required for --dry-run).
   TAGES_EVAL_PROJECT Project slug for the 'tages-cli' backend (ignored otherwise).
 `.trim()
+
+/**
+ * Task 6: parse the `[session=<id> ...]` tag that memory.ts's sessionToText/
+ * turnToText prepend to every stored memory. Returns null if the tag is
+ * missing or malformed rather than throwing — this is plain-text regex
+ * matching against LLM-adjacent free text, so defensive handling avoids
+ * false negatives skewing the recall@k metric.
+ */
+export function parseSessionId(memoryText: string): string | null {
+  const match = /\[session=([^\s\]]+)/.exec(memoryText)
+  return match ? match[1]! : null
+}
+
+/**
+ * Task 6: does at least one recalled memory's tagged session id appear in the
+ * gold `answer_session_ids` set? This is the recall@k metric — it measures
+ * whether the right evidence was retrieved, independent of whether the
+ * synthetic reader phrased an answer correctly.
+ */
+export function computeRecallGoldHit(memories: string[], goldSessionIds: string[]): boolean {
+  const goldSet = new Set(goldSessionIds)
+  for (const m of memories) {
+    const sid = parseSessionId(m)
+    if (sid && goldSet.has(sid)) return true
+  }
+  return false
+}
 
 async function main() {
   const args = parseArgs(process.argv.slice(2))
@@ -106,7 +137,7 @@ async function main() {
   const store = makeStore(args.backend)
   const start = Date.now()
   const totals: LlmCost = { prompt_tokens: 0, completion_tokens: 0 }
-  const details: RunResult['details'] = []
+  const details: NonNullable<RunResult['details']> = []
   const failures: RunResult['failures'] = []
 
   for (let i = 0; i < sample.length; i++) {
@@ -116,10 +147,18 @@ async function main() {
       await store.clear()
       await store.ingest(q)
       const memories = await store.recall(q.question, args.topK)
-      const { answer, cost: genCost } = await generateAnswer(q.question, memories)
-      const { correct, cost: judgeCost } = await judge(q.question, q.answer, answer)
+      const isAbstention = q.question_id.endsWith('_abs')
+      const { answer, cost: genCost } = await generateAnswer(q.question, memories, q.question_type)
+      const { correct, cost: judgeCost } = await judge(
+        q.question,
+        q.answer,
+        answer,
+        q.question_type,
+        isAbstention,
+      )
       totals.prompt_tokens += genCost.prompt_tokens + judgeCost.prompt_tokens
       totals.completion_tokens += genCost.completion_tokens + judgeCost.completion_tokens
+      const recalledGoldHit = computeRecallGoldHit(memories, q.answer_session_ids)
       details.push({
         question_id: q.question_id,
         question_type: q.question_type,
@@ -127,8 +166,13 @@ async function main() {
         model_answer: answer,
         ground_truth: q.answer,
         recalled_memory_count: memories.length,
+        recalled_memories: memories,
+        gold_session_ids: q.answer_session_ids,
+        recalled_gold_hit: recalledGoldHit,
       })
-      console.log(`${prefix} ${correct ? 'correct' : 'incorrect'} (${memories.length} memories)`)
+      console.log(
+        `${prefix} ${correct ? 'correct' : 'incorrect'} (${memories.length} memories, recall@k ${recalledGoldHit ? 'hit' : 'miss'})`,
+      )
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       failures.push({ question_id: q.question_id, reason })
@@ -141,9 +185,13 @@ async function main() {
   const abs = resolve(args.output)
   mkdirSync(dirname(abs), { recursive: true })
   writeFileSync(abs, `${JSON.stringify(result, null, 2)}\n`, 'utf8')
-  console.log(`\nOverall: ${(result.overall_accuracy * 100).toFixed(1)}% (${details.filter(d => d.correct).length}/${details.length})`)
+  console.log(`\nOverall accuracy (synthetic reader): ${(result.overall_accuracy * 100).toFixed(1)}% (${details.filter((d) => d.correct).length}/${details.length})`)
   for (const [type, acc] of Object.entries(result.accuracy_by_type)) {
     console.log(`  ${type.padEnd(30)} ${((acc as number) * 100).toFixed(1)}%`)
+  }
+  console.log(`Recall@k (retrieval quality): ${(result.recall_at_k * 100).toFixed(1)}%`)
+  for (const [type, r] of Object.entries(result.recall_at_k_by_type)) {
+    console.log(`  ${type.padEnd(30)} ${((r as number) * 100).toFixed(1)}%`)
   }
   console.log(`Duration: ${duration}s  Est. cost: $${result.cost_usd_estimate.toFixed(2)}`)
   console.log(`Results: ${abs}`)
@@ -160,7 +208,7 @@ function countByType(sample: Array<{ question_type: QuestionType }>) {
   return [...m.entries()].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count)
 }
 
-function buildResult(
+export function buildResult(
   args: Args,
   sample: Array<{ question_type: QuestionType }>,
   details: NonNullable<RunResult['details']>,
@@ -171,15 +219,23 @@ function buildResult(
   const correctCount = details.filter((d) => d.correct).length
   const overall = details.length === 0 ? 0 : correctCount / details.length
 
-  const byType = new Map<QuestionType, { correct: number; total: number }>()
+  const byType = new Map<QuestionType, { correct: number; total: number; recallHits: number }>()
   for (const d of details) {
-    const prev = byType.get(d.question_type) ?? { correct: 0, total: 0 }
+    const prev = byType.get(d.question_type) ?? { correct: 0, total: 0, recallHits: 0 }
     prev.total++
     if (d.correct) prev.correct++
+    if (d.recalled_gold_hit) prev.recallHits++
     byType.set(d.question_type, prev)
   }
   const accuracy_by_type: Partial<Record<QuestionType, number>> = {}
-  for (const [t, c] of byType) accuracy_by_type[t] = c.correct / c.total
+  const recall_at_k_by_type: Partial<Record<QuestionType, number>> = {}
+  for (const [t, c] of byType) {
+    accuracy_by_type[t] = c.correct / c.total
+    recall_at_k_by_type[t] = c.recallHits / c.total
+  }
+
+  const recallHitCount = details.filter((d) => d.recalled_gold_hit).length
+  const recall_at_k = details.length === 0 ? 0 : recallHitCount / details.length
 
   const ts = new Date().toISOString().replace(/[:.]/g, '-')
   return {
@@ -191,6 +247,8 @@ function buildResult(
     n: sample.length,
     overall_accuracy: overall,
     accuracy_by_type,
+    recall_at_k,
+    recall_at_k_by_type,
     duration_seconds: duration,
     cost_usd_estimate: estimateCostUsd(totals),
     failures,
@@ -198,7 +256,18 @@ function buildResult(
   }
 }
 
-main().catch((err) => {
-  console.error(err)
-  process.exit(1)
-})
+// Only run the CLI entrypoint when this file is executed directly (not when
+// imported by tests) — guards against `main()` firing (and potentially
+// calling `process.exit`) as a side effect of importing helpers for unit tests.
+const isMainModule = (() => {
+  const entry = process.argv[1]
+  if (!entry) return false
+  return import.meta.url === `file://${resolve(entry)}`
+})()
+
+if (isMainModule) {
+  main().catch((err) => {
+    console.error(err)
+    process.exit(1)
+  })
+}

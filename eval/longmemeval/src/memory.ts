@@ -1,13 +1,31 @@
 /**
  * Memory backend for the harness.
  *
- * v1 strategy: per-question, each haystack session becomes ONE memory with the
- * full session transcript (role-prefixed) as the value. Recall queries Tages
- * with the question text and returns up to top-k matching memory values.
+ * EVAL-ONLY: this file is a harness ingestion/retrieval strategy, not a change
+ * to the shipped `remember`/`recall` MCP tools or CLI behavior. It shells out
+ * to the same public `tages remember`/`tages recall` CLI a real user would use.
+ *
+ * v1 strategy (InMemoryStore, and TagesCliStore's original behavior): per
+ * question, each haystack session becomes ONE memory with the full session
+ * transcript (role-prefixed) as the value.
+ *
+ * Task 4 (EVAL-ONLY, RQ1 resolved): TagesCliStore now ingests at TURN/ROUND
+ * granularity instead of whole-session granularity — one memory per turn,
+ * keyed `longmemeval-${question_id}-s${i}-t${j}`. Each per-round memory's text
+ * still carries the `[session=<id> date=<date>]` tag so Task 6's recall@k
+ * metric can attribute a recalled round back to its gold session id. This is
+ * confirmed eval-harness-ingestion-strategy-only — it does not touch the
+ * `remember` tool's schema, the `MemoryType` enum, or `remember.ts`'s
+ * tier-limit enforcement (those stay exactly as they are for real product
+ * users). InMemoryStore is unchanged (still session-level) since it exists
+ * only as a no-Tages smoke-test floor.
  *
  * Two backends:
  *   - 'tages-cli': shell out to `tages remember` / `tages recall` against a real
  *     project. Requires TAGES_EVAL_PROJECT env var pointing at a sandbox project.
+ *     Run the eval project on an uncapped (Pro-tier or limit-raised) plan —
+ *     turn-level ingestion multiplies memory count per question ~5-20x versus
+ *     session-level and can hit the free-tier 10k-memory limit.
  *   - 'in-memory': no Tages at all — stores session text in a Map and recalls via
  *     lexical substring score. Used for smoke-testing the pipeline without
  *     touching a real Tages instance. Sets a floor on the "memory" effect —
@@ -28,6 +46,19 @@ export interface MemoryStore {
 function sessionToText(sessionId: string, date: string, turns: Turn[]): string {
   const body = turns.map((t) => `${t.role.toUpperCase()}: ${t.content}`).join('\n\n')
   return `[session=${sessionId} date=${date}]\n${body}`
+}
+
+/**
+ * Task 4: per-turn text, still carrying the `[session=<id> date=<date>]` tag
+ * so a recalled round can be attributed back to its gold session id.
+ */
+export function turnToText(sessionId: string, date: string, turn: Turn): string {
+  return `[session=${sessionId} date=${date}]\n${turn.role.toUpperCase()}: ${turn.content}`
+}
+
+/** Task 4: does this stderr text look like a free-tier/limit rejection from `tages remember`? */
+export function looksLikeTierLimitRejection(stderr: string): boolean {
+  return /\blimit\b/i.test(stderr)
 }
 
 export function makeStore(backend: Backend): MemoryStore {
@@ -92,18 +123,42 @@ class TagesCliStore implements MemoryStore {
   async ingest(q: LongMemEvalQuestion): Promise<void> {
     await this.clear()
     for (let i = 0; i < q.haystack_sessions.length; i++) {
-      const text = sessionToText(
-        q.haystack_session_ids[i] ?? `s${i}`,
-        q.haystack_dates[i] ?? '',
-        q.haystack_sessions[i]!,
-      )
-      const key = `longmemeval-${q.question_id}-s${i}`
+      const sessionId = q.haystack_session_ids[i] ?? `s${i}`
+      const date = q.haystack_dates[i] ?? ''
+      const turns = q.haystack_sessions[i]!
+      for (let j = 0; j < turns.length; j++) {
+        const text = turnToText(sessionId, date, turns[j]!)
+        const key = `longmemeval-${q.question_id}-s${i}-t${j}`
+        this.rememberOne(key, text)
+        this.liveKeys.add(key)
+      }
+    }
+  }
+
+  /**
+   * Task 4: fixes the silent-failure trap where `{ stdio: 'ignore' }` swallowed
+   * the free-tier 10k-memory-limit rejection message from `remember` — turns
+   * would silently fail to store past the cap with no error surfaced. stdout
+   * is still discarded (unused), but stderr is captured so a tier-limit
+   * rejection surfaces as a clear thrown error instead of a silent no-op.
+   */
+  private rememberOne(key: string, text: string): void {
+    try {
       execFileSync(
         'tages',
         ['remember', key, text, '--project', this.project, '--type', 'fact'],
-        { stdio: 'ignore' },
+        { stdio: ['ignore', 'ignore', 'pipe'] },
       )
-      this.liveKeys.add(key)
+    } catch (err) {
+      const stderr = (err as { stderr?: Buffer | string })?.stderr
+      const stderrText = stderr ? stderr.toString() : ''
+      if (looksLikeTierLimitRejection(stderrText)) {
+        throw new Error(
+          `tages remember rejected key "${key}" (possible tier/memory-limit rejection): ${stderrText.trim()}. ` +
+            'Run the eval project on an uncapped (Pro-tier or limit-raised) plan for turn-level ingestion.',
+        )
+      }
+      throw err
     }
   }
 

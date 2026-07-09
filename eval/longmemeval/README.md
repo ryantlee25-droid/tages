@@ -4,7 +4,13 @@ Reproducible evaluation of Tages's memory recall on the LongMemEval benchmark.
 
 ## Status
 
-**First calibration pending.** Target ≥80% overall accuracy on the oracle split per RetainDB methodology. Flip signal: <70% on a 50-question stratified subset.
+**First calibration pending re-run with the Phase 1 fixes below.** Target ≥80% overall accuracy on the oracle split per RetainDB methodology. Flip signal: <70% on a 50-question stratified subset.
+
+Report TWO numbers, not one, once a run completes:
+- `overall_accuracy` — the harness's synthetic GPT-4o reader's accuracy. Useful for regression-tracking the harness itself, but do NOT report a delta here as a Tages *product* improvement unless it's attributable to the retrieval-quality metric below.
+- `recall_at_k` — whether at least one recalled memory's tagged session id was in the question's gold `answer_session_ids`. This is the number that actually reflects product retrieval quality — cite this one when claiming a product win.
+
+Everything in this harness (ingestion strategy, prompts, judge, this doc) is EVAL-ONLY scaffolding around the `tages remember`/`tages recall` CLI — it changes what this benchmark measures, not what real Tages users (via the MCP `recall` tool or CLI) experience.
 
 ## Dataset
 
@@ -20,14 +26,17 @@ Reproducible evaluation of Tages's memory recall on the LongMemEval benchmark.
 
 **Question types (500 total):** temporal-reasoning (133), multi-session (133), knowledge-update (78), single-session-user (70), single-session-assistant (56), single-session-preference (30).
 
-## Methodology (RetainDB pattern)
+## Methodology
 
-Per LongMemEval paper + RetainDB appendix:
+**What this section used to claim but never implemented:** earlier drafts of this doc described ingestion as writing structured `{session_id, turn_index, date}` metadata per turn and recall as using "a 3-turn context window heuristic." Neither ever existed in code — `memory.ts` had no turn-level ingestion at all (whole sessions only) and `recall()` was, and still is, a flat top-k call with no windowing. Turn-level *ingestion* (not turn-level metadata, and not a context-window heuristic) landed as of this revision; see below for what's actually implemented today.
 
-1. **Memory ingestion (per question):** Create a fresh memory space. Iterate each turn of each haystack session in chronological order. Write memories via `tages remember` with metadata `{session_id, turn_index, date}`.
-2. **Recall:** Given `question`, call Tages recall with a 3-turn context window heuristic. Take top-k=10 memories.
-3. **Answer generation:** Prompt GPT-4o at `temperature=0` with `(question, recalled memories)` → answer text.
-4. **Judge:** GPT-4o at `temperature=0` compares `answer` vs ground truth → `correct | incorrect`.
+What's actually implemented (`src/memory.ts`, `src/answer.ts`, `src/prompts.ts`, `src/run.ts`):
+
+1. **Memory ingestion (per question, `TagesCliStore.ingest`):** Create a fresh memory space (`clear()` first). Iterate each turn of each haystack session in chronological order and write one memory per turn via `tages remember`, keyed `longmemeval-<question_id>-s<i>-t<j>`. Each memory's text carries a `[session=<id> date=<date>]` tag (not structured metadata fields — a plain-text prefix) so retrieval-quality scoring can attribute a recalled turn back to its source session.
+2. **Recall:** Given `question`, call `tages recall` and take the top `--top-k` memories (default 30 — bumped from the original 10 now that ingestion is turn-level and produces far more rows per question than session-level did). There is no context-window heuristic of any kind; this is a flat top-k call.
+3. **Answer generation:** Prompt GPT-4o at `temperature=0` with a type-aware system prompt (date-arithmetic and numeric-aggregation instructions; a distinct preference-response mode for `single-session-preference`) plus a Chain-of-Note "write relevance notes, then answer" instruction, given `(question, recalled memories)` → answer text.
+4. **Judge:** GPT-4o at `temperature=0` compares `answer` vs ground truth, using a per-question-type prompt: rubric-satisfaction judging for `single-session-preference` (the oracle's `answer` field is a rubric, not a literal answer, for this type), correct-decline judging for abstention questions (`question_id` ending `_abs`), one-day-tolerant judging for `temporal-reasoning`, and factual-equality judging for every other type → `correct | incorrect`.
+5. **Retrieval-quality metric (`recall_at_k`):** independent of the judge above — for each question, checks whether any recalled memory's `[session=<id> ...]` tag is in the question's gold `answer_session_ids`. Reported separately from `overall_accuracy` because it measures whether the right evidence was retrieved, not whether GPT-4o phrased an answer correctly.
 
 See `src/prompts.ts` for exact prompts.
 
@@ -82,14 +91,25 @@ Results JSON:
     "single-session-assistant": 0.77,
     "single-session-preference": 0.72
   },
+  "recall_at_k": 0.85,
+  "recall_at_k_by_type": {
+    "temporal-reasoning": 0.80,
+    "multi-session": 0.88,
+    "knowledge-update": 0.90,
+    "single-session-user": 0.86,
+    "single-session-assistant": 0.83,
+    "single-session-preference": 0.79
+  },
   "duration_seconds": 612,
   "cost_usd_estimate": 1.92,
   "failures": [{ "question_id": "gpt4_2655b836", "reason": "..." }]
 }
 ```
 
+`overall_accuracy`/`accuracy_by_type` score the synthetic GPT-4o reader (harness-only). `recall_at_k`/`recall_at_k_by_type` score whether the right evidence was retrieved (the number that reflects real Tages retrieval quality) — see Status above.
+
 ## Roadmap
 
-- **v1 (this file):** simple ingest → recall → answer → judge.
-- **v2:** turn-by-turn extraction (each user/assistant turn becomes a distinct memory with `has_answer` metadata), ingest-time LLM summarisation into the 6 canonical memory types.
+- **v1 (this file):** ingest → recall → answer → judge, plus (this revision) per-type judging, a type-aware answer prompt, Chain-of-Note reading, turn-level ingestion, and the recall@k retrieval-quality metric. All still EVAL-ONLY harness scaffolding.
+- **v2 (not yet implemented):** structured per-turn metadata (`has_answer` flags, `turn_index` as a queryable field rather than a text tag), ingest-time LLM summarisation into the 6 canonical memory types, and any recall-side context-window heuristic.
 - **v3:** harness publishable externally — anyone with `OPENAI_API_KEY` + a Tages project should be able to reproduce. Entry in `docs/benchmark-partnerships.md`.
