@@ -100,6 +100,82 @@ describe('redactSensitiveData — AWS secret key precision (F2)', () => {
   })
 })
 
+// B1 — the F2 marker gate only fired on an `=`/`:` separator, re-opening a raw
+// leak for AWS secrets set the DOCUMENTED way (space- or flag-separated). These
+// six cases lock BOTH directions: the three real space/flag/env secret forms
+// must redact, and the three ordinary 40-char strings must still survive.
+describe('redactSensitiveData — AWS secret space/flag separator (B1)', () => {
+  // 40-char AWS example secret (contains `/`, as real ones do).
+  const secret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
+
+  it('redacts a space-separated `aws configure set aws_secret_access_key <40char>` (true positive)', () => {
+    const fixture = `aws configure set aws_secret_access_key ${secret}`
+    const { redacted, count } = redactSensitiveData(fixture)
+    expect(redacted).not.toContain(secret)
+    expect(redacted).toContain('[REDACTED:')
+    expect(count).toBeGreaterThanOrEqual(1)
+  })
+
+  it('redacts a `--secret-access-key <40char>` flag form (true positive)', () => {
+    const fixture = `--secret-access-key ${secret}`
+    const { redacted, count } = redactSensitiveData(fixture)
+    expect(redacted).not.toContain(secret)
+    expect(redacted).toContain('[REDACTED:')
+    expect(count).toBeGreaterThanOrEqual(1)
+  })
+
+  it('still redacts the `AWS_SECRET_ACCESS_KEY=<40char>` env form (true positive)', () => {
+    const fixture = `AWS_SECRET_ACCESS_KEY=${secret}`
+    const { redacted, count } = redactSensitiveData(fixture)
+    expect(redacted).not.toContain(secret)
+    expect(redacted).toContain('[REDACTED:')
+    expect(count).toBeGreaterThanOrEqual(1)
+  })
+
+  it('does NOT redact a deep file path — no aws/secret marker (false positive guard)', () => {
+    const p = '/home/user/projects/myapp/src/components/widgets/very/long/path'
+    const { redacted, count } = redactSensitiveData(p)
+    expect(redacted).toBe(p)
+    expect(count).toBe(0)
+  })
+
+  it('does NOT redact a 40-hex git SHA (false positive guard)', () => {
+    const sha = 'da39a3ee5e6b4b0d3255bfef95601890afd80709'
+    const { redacted, count } = redactSensitiveData(`fix: land ${sha}`)
+    expect(redacted).toContain(sha)
+    expect(count).toBe(0)
+  })
+
+  it('does NOT redact a bare base64 blob with no aws/secret marker (false positive guard)', () => {
+    const blob = 'TWFuIGlzIGRpc3Rpbmd1aXNoZWQsIG5vdCBvbmx5IGJ5IGhpcyByZWFzb24='
+    const { redacted, count } = redactSensitiveData(blob)
+    expect(redacted).toBe(blob)
+    expect(count).toBe(0)
+  })
+})
+
+// W1 — the Phone pattern ran BEFORE Credit card and consumed the first 10 of a
+// 16-digit PAN, leaving the 6-digit tail leaking raw
+// (`{ccn:4111111111111111}` -> `[REDACTED:Phone number]111111`). Card/SSN now
+// run first so the full run is consumed before Phone can bite a substring.
+describe('redactSensitiveData — credit card vs phone ordering (W1)', () => {
+  it('redacts the full 16-digit PAN leaving NO PAN digit substring in the output', () => {
+    const pan = '4111111111111111'
+    const { redacted, count } = redactSensitiveData(`{ccn:${pan}}`)
+    expect(redacted).not.toContain(pan)
+    // The core of W1: no trailing/leading digit substring of the PAN survives.
+    expect(redacted).not.toMatch(/\d/)
+    expect(count).toBeGreaterThanOrEqual(1)
+  })
+
+  it('still redacts a genuine phone number as a phone', () => {
+    const { redacted, count } = redactSensitiveData('call me at 555-123-4567')
+    expect(redacted).not.toContain('555-123-4567')
+    expect(redacted).toContain('[REDACTED:Phone number]')
+    expect(count).toBeGreaterThanOrEqual(1)
+  })
+})
+
 // F5 — common token shapes that previously passed through raw.
 describe('redactSensitiveData — token shapes (F5)', () => {
   it('redacts a bare JWT', () => {
