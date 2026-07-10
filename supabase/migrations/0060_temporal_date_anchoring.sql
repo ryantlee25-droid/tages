@@ -43,6 +43,13 @@ create index if not exists memories_referenced_date_idx
 create index if not exists memories_relative_date_idx
   on memories (project_id, relative_date) where relative_date is not null;
 
+-- pgvector's `vector` type lives in the `extensions` schema; the migration
+-- session's search_path does not include it by default, so the DROP/CREATE
+-- FUNCTION statements below (which reference vector(1536) in their signatures)
+-- must widen search_path to resolve it. This also matches the hardened
+-- search_path that migration 0042 applied to every function.
+set search_path = public, extensions;
+
 -- ------------------------------------------------------------
 -- hybrid_recall — live definition from 0012_fix_hybrid_thresholds.sql,
 -- adding m.referenced_date / m.relative_date to every leg of the union and
@@ -117,7 +124,7 @@ begin
     order by sim desc
     limit p_limit;
 end;
-$$ language plpgsql security definer stable;
+$$ language plpgsql security definer stable set search_path = public, extensions;
 
 -- ------------------------------------------------------------
 -- semantic_recall — live definition from 0014_fix_rpc_return_types.sql,
@@ -174,7 +181,7 @@ begin
     order by m.embedding <=> p_embedding
     limit p_limit;
 end;
-$$ language plpgsql security definer stable;
+$$ language plpgsql security definer stable set search_path = public, extensions;
 
 -- ============================================================
 -- Manual smoke-test steps (no automated SQL harness in this repo — verified
