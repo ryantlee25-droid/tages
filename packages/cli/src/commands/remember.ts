@@ -3,6 +3,7 @@ import type { Memory, MemoryType } from '@tages/shared'
 import { loadProjectConfig } from '../config/project.js'
 import { randomUUID } from 'crypto'
 import { openCliSync } from '../sync/cli-sync.js'
+import { extractDatesFromMemory } from '../lib/date-extraction.js'
 
 interface RememberOptions {
   type: string
@@ -19,6 +20,13 @@ export async function rememberCommand(key: string, value: string, options: Remem
   }
 
   const now = new Date().toISOString()
+
+  // Temporal anchoring (Task C / migration 0060): extract absolute/relative
+  // dates referenced in the memory text, resolved against the write time.
+  // Runs inline — regex-based extraction is local/cheap with no network
+  // call, so it must be set before the memory is constructed/upserted.
+  const extractedDates = extractDatesFromMemory(key, value, new Date(now))
+
   const memory: Memory = {
     id: randomUUID(),
     projectId: config.projectId,
@@ -30,6 +38,8 @@ export async function rememberCommand(key: string, value: string, options: Remem
     tags: options.tags || [],
     status: 'live',
     confidence: 1.0,
+    referencedDate: extractedDates.referencedDate,
+    relativeDate: extractedDates.relativeDate,
     createdAt: now,
     updatedAt: now,
   }

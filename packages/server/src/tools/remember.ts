@@ -7,6 +7,7 @@ import { getEncryptionKey, encryptValue } from '../crypto/encryption'
 import { computeFieldDiff } from '../diff/field-diff'
 import { tokenize } from '../search/tokenizer'
 import { generateEmbedding } from '../embeddings'
+import { extractDatesFromMemory } from '../temporal/date-extraction'
 
 export async function handleRemember(
   args: {
@@ -110,6 +111,15 @@ export async function handleRemember(
 
   // Capture plaintext for indexing before potential encryption
   const plaintextForIndex = memory.value
+
+  // Temporal anchoring (Task C / migration 0060): extract absolute/relative
+  // dates referenced in the memory text, resolved against the write time.
+  // Runs inline (NOT fire-and-forget like embedding generation below) —
+  // regex-based extraction is local/cheap with no network call, so there's
+  // no latency reason to defer it, and it must be set before the upsert.
+  const extractedDates = extractDatesFromMemory(memory.key, plaintextForIndex, new Date(now))
+  memory.referencedDate = extractedDates.referencedDate
+  memory.relativeDate = extractedDates.relativeDate
 
   // Encrypt value at rest if encryption key is configured
   const encKey = getEncryptionKey()

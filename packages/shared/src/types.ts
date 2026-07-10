@@ -55,6 +55,15 @@ export interface Memory {
   examples?: MemoryExample[]
   executionFlow?: ExecutionFlow
   verifiedAt?: string
+  // Temporal anchoring (migration 0060) — up to two additional dates beyond
+  // `createdAt` (the observation date). `referencedDate` is an absolute date
+  // explicitly mentioned in the memory's text (e.g. "shipped July 9, 2026");
+  // `relativeDate` is a relative expression ("3 days ago", "last Tuesday")
+  // resolved to an absolute timestamp against `createdAt`. Both optional and
+  // populated at write time by extractDates(); recall uses the fallback chain
+  // referencedDate ?? relativeDate ?? createdAt for temporal-query ordering.
+  referencedDate?: string
+  relativeDate?: string
   createdAt: string
   updatedAt: string
   encrypted?: boolean
