@@ -146,6 +146,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-07-10
+- **fix(cli): one-shot `tages remember` now generates + persists a durable embedding.** The CLI write path never embedded (only the long-lived MCP server did via fire-and-forget), so CLI-stored memories were invisible to semantic search (trigram-only). Also fixed: embedding was dropped on re-remember of an existing key (id vs project_id+key mismatch), and dropped in sync because rowToMemory never reconstructed it.
+
+
 ### 2026-07-09 — Long-input embedding fix + 3-date temporal anchoring (Tier-1 retrieval quality)
 
 - **Embedding silent-drop fix (Tasks A+B)**: memories over ~8192 tokens got NO embedding at all — OpenAI's 400 was swallowed, so the memory was invisible to semantic search with no error surfaced. `generateEmbedding()` (new `chunking.ts` in both `packages/cli` and `packages/server`) now token-aware chunks long input and mean-pools the resulting vectors; HTTP error bodies are logged instead of discarded; 429s are retried with a fresh per-attempt timeout and total backoff capped at 2s so the recall read path can't hang.

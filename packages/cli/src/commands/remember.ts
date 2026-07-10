@@ -4,6 +4,7 @@ import { loadProjectConfig } from '../config/project.js'
 import { randomUUID } from 'crypto'
 import { openCliSync } from '../sync/cli-sync.js'
 import { extractDatesFromMemory } from '../lib/date-extraction.js'
+import { generateEmbedding } from '../lib/embedding.js'
 
 interface RememberOptions {
   type: string
@@ -46,8 +47,42 @@ export async function rememberCommand(key: string, value: string, options: Remem
 
   const { cache, flush, close } = await openCliSync(config)
   try {
-    // Primary write: SQLite first (dirty=1 marks it for sync)
-    cache.upsertMemory(memory, true)
+    // Generate a DURABLE embedding synchronously (await) before this one-shot
+    // process exits. The long-lived MCP server can fire-and-forget embedding
+    // generation (scheduleEmbeddingSync in packages/server/src/tools/remember.ts),
+    // but the CLI process would exit before any deferred embedding resolved —
+    // leaving embedding=null and the memory invisible to semantic recall.
+    // Same opt-in gate as CLI recall (recall.ts:79): generateEmbedding returns
+    // null when neither Ollama nor the opt-in OpenAI path (TAGES_OPENAI_EMBED)
+    // is available, so this adds no latency/cost when embeddings are disabled.
+    // Embed the value only, mirroring the server's plaintextForIndex
+    // (packages/server/src/tools/remember.ts:113 — the key is used for the token
+    // index, not the embedding), so CLI- and server-written vectors share a space.
+    // Guard the embedding call: generateEmbedding may throw (network error,
+    // Ollama down mid-request, provider 5xx). A throw here must NEVER lose the
+    // memory — fall back to the plain upsert path so the fact is still stored
+    // (trigram-recallable now, embedding backfilled later out-of-band).
+    let embedding: number[] | null = null
+    try {
+      embedding = await generateEmbedding(value)
+    } catch (err) {
+      console.error(
+        chalk.yellow('Embedding generation failed; storing without embedding.'),
+        err instanceof Error ? err.message : String(err),
+      )
+      embedding = null
+    }
+
+    // Primary write: SQLite first (dirty=1 marks it for sync).
+    if (embedding) {
+      // Store embedding alongside the row and mark it dirty so flush() carries
+      // it to Supabase: getDirty()/rowToMemory reconstructs memory.embedding
+      // from the SQLite TEXT column, and memoryToDbRow serializes it to pgvector.
+      cache.upsertMemoryWithEmbedding(memory, embedding, true)
+    } else {
+      // Embeddings disabled/unavailable — trigram-only fallback, no regression.
+      cache.upsertMemory(memory, true)
+    }
 
     // Best-effort cloud sync — never fatal
     await flush()
