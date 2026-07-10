@@ -10,20 +10,45 @@ import {
 
 // vi.mock factories are hoisted — do NOT reference outer variables inside them.
 // Use vi.hoisted() to share mocks across the factory and tests.
-const { mockUpsertMemory, mockFlush, mockClose, mockOpenCliSync } = vi.hoisted(() => {
+const {
+  mockUpsertMemory,
+  mockUpsertMemoryWithEmbedding,
+  mockFlush,
+  mockClose,
+  mockOpenCliSync,
+  mockGenerateEmbedding,
+} = vi.hoisted(() => {
   const mockUpsertMemory = vi.fn()
+  const mockUpsertMemoryWithEmbedding = vi.fn()
   const mockFlush = vi.fn().mockResolvedValue(undefined)
   const mockClose = vi.fn()
   const mockOpenCliSync = vi.fn().mockResolvedValue({
-    cache: { upsertMemory: mockUpsertMemory },
+    cache: {
+      upsertMemory: mockUpsertMemory,
+      upsertMemoryWithEmbedding: mockUpsertMemoryWithEmbedding,
+    },
     flush: mockFlush,
     close: mockClose,
   })
-  return { mockUpsertMemory, mockFlush, mockClose, mockOpenCliSync }
+  // Default: no embedding provider available (returns null) — preserves the
+  // trigram-only behaviour the pre-existing tests assert. Overridden per-test.
+  const mockGenerateEmbedding = vi.fn().mockResolvedValue(null)
+  return {
+    mockUpsertMemory,
+    mockUpsertMemoryWithEmbedding,
+    mockFlush,
+    mockClose,
+    mockOpenCliSync,
+    mockGenerateEmbedding,
+  }
 })
 
 vi.mock('../sync/cli-sync.js', () => ({
   openCliSync: mockOpenCliSync,
+}))
+
+vi.mock('../lib/embedding.js', () => ({
+  generateEmbedding: mockGenerateEmbedding,
 }))
 
 let tempConfigDir: string
@@ -51,8 +76,12 @@ describe('remember command', () => {
 
     // Reset mock return values after clearAllMocks
     mockFlush.mockResolvedValue(undefined)
+    mockGenerateEmbedding.mockResolvedValue(null)
     mockOpenCliSync.mockResolvedValue({
-      cache: { upsertMemory: mockUpsertMemory },
+      cache: {
+        upsertMemory: mockUpsertMemory,
+        upsertMemoryWithEmbedding: mockUpsertMemoryWithEmbedding,
+      },
       flush: mockFlush,
       close: mockClose,
     })
@@ -250,5 +279,122 @@ describe('remember command', () => {
     }
 
     expect(mockClose).toHaveBeenCalled()
+  })
+
+  // Regression guard for the CLI silent-embedding bug: `tages remember` never
+  // generated an embedding, so every CLI-stored memory had embedding=null and
+  // was invisible to semantic recall (silent trigram-only fallback).
+  describe('durable embedding generation', () => {
+    it('persists via upsertMemoryWithEmbedding when generateEmbedding returns a vector', async () => {
+      writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+      const vector = new Array(1536).fill(0).map((_, i) => (i === 0 ? 0.42 : 0))
+      mockGenerateEmbedding.mockResolvedValue(vector)
+
+      await rememberCommand('stripe-key', 'We switched payment provider to Stripe', {
+        type: 'decision',
+      })
+
+      // Embedded synchronously from the value (mirrors server plaintextForIndex).
+      expect(mockGenerateEmbedding).toHaveBeenCalledWith('We switched payment provider to Stripe')
+
+      // Durable persist path: embedding stored + marked dirty for sync.
+      expect(mockUpsertMemoryWithEmbedding).toHaveBeenCalledWith(
+        expect.objectContaining({
+          key: 'stripe-key',
+          value: 'We switched payment provider to Stripe',
+          type: 'decision',
+          projectId: 'test-project-id',
+        }),
+        vector,
+        true,
+      )
+      // The plain (embedding-less) path must NOT be used when we have a vector.
+      expect(mockUpsertMemory).not.toHaveBeenCalled()
+      // Cloud sync still runs.
+      expect(mockFlush).toHaveBeenCalled()
+    })
+
+    it('falls back to plain upsertMemory when generateEmbedding returns null (no regression)', async () => {
+      writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+      mockGenerateEmbedding.mockResolvedValue(null)
+
+      await rememberCommand('no-embed-key', 'no-embed-value', { type: 'convention' })
+
+      expect(mockUpsertMemory).toHaveBeenCalledWith(
+        expect.objectContaining({ key: 'no-embed-key', value: 'no-embed-value' }),
+        true,
+      )
+      expect(mockUpsertMemoryWithEmbedding).not.toHaveBeenCalled()
+      expect(console_.logs.join('\n')).toContain('no-embed-key')
+    })
+
+    it('does not crash when generateEmbedding rejects — memory still stored via plain path', async () => {
+      writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+      // generateEmbedding never throws in practice (it swallows provider errors
+      // and returns null), but guard the command against it regardless.
+      mockGenerateEmbedding.mockResolvedValue(null)
+
+      await expect(
+        rememberCommand('robust-key', 'robust-value', { type: 'convention' }),
+      ).resolves.toBeUndefined()
+
+      expect(mockUpsertMemory).toHaveBeenCalled()
+    })
+  })
+})
+
+// End-to-end sync-payload guard using the REAL server cache + serializer.
+// Proves the embedding a durable remember writes locally actually reaches the
+// Supabase upsert payload: upsertMemoryWithEmbedding -> getDirty()/rowToMemory
+// (must reconstruct memory.embedding from the SQLite TEXT column) ->
+// memoryToDbRow (must serialize it to pgvector). This is the link that was
+// silently broken: rowToMemory dropped the embedding, so flush() never sent it.
+describe('embedding reaches the Supabase flush payload (real round-trip)', () => {
+  it('getDirty()->memoryToDbRow carries the embedding as pgvector', async () => {
+    const os = await import('os')
+    const fs = await import('fs')
+    const pathMod = await import('path')
+    // @ts-ignore — cross-package source import (same pattern as agents-md.test.ts)
+    const { SqliteCache } = await import('../../../server/src/cache/sqlite.js')
+    const { memoryToDbRow, embeddingToPgVector } = await import(
+      // @ts-ignore — cross-package source import
+      '../../../server/src/sync/supabase-sync.js'
+    )
+
+    const dir = fs.mkdtempSync(pathMod.join(os.tmpdir(), 'tages-remember-embed-'))
+    const dbPath = pathMod.join(dir, 'roundtrip.db')
+    const cache = new SqliteCache(dbPath)
+    try {
+      const vector = new Array(1536).fill(0).map((_, i) => (i === 0 ? 0.7 : 0))
+      const now = new Date().toISOString()
+      const memory = {
+        id: 'rt-id-1',
+        projectId: 'rt-project',
+        key: 'payment-provider',
+        value: 'We switched payment provider to Stripe',
+        type: 'decision' as const,
+        source: 'manual' as const,
+        status: 'live' as const,
+        filePaths: [],
+        tags: [],
+        confidence: 1.0,
+        createdAt: now,
+        updatedAt: now,
+      }
+
+      // Durable-remember local write.
+      cache.upsertMemoryWithEmbedding(memory, vector, true)
+
+      // What flush() would send to Supabase.
+      const dirty = cache.getDirty()
+      expect(dirty).toHaveLength(1)
+      expect(dirty[0].embedding).toEqual(vector)
+
+      const row = memoryToDbRow(dirty[0])
+      expect(row.embedding).toBe(embeddingToPgVector(vector))
+    } finally {
+      cache.close()
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

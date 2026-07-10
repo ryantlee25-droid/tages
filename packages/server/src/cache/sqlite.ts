@@ -982,6 +982,7 @@ interface SqliteMemoryRow {
   encrypted: number
   referenced_date: string | null
   relative_date: string | null
+  embedding: string | null
 }
 
 function rowToMemory(row: SqliteMemoryRow): Memory {
@@ -1008,6 +1009,13 @@ function rowToMemory(row: SqliteMemoryRow): Memory {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     encrypted: row.encrypted === 1,
+    // Reconstruct the embedding from the SQLite TEXT column (JSON.stringify'd
+    // number[]) so getDirty()->flush()->memoryToDbRow can sync it to Supabase.
+    // Without this, a locally-stored embedding never reaches the cloud on a
+    // dirty flush (the CLI one-shot remember path relies on this). No-op for
+    // rows without an embedding. Server writes reach embeddings out-of-band via
+    // remoteUpdateEmbedding on non-dirty rows, so this doesn't change that flow.
+    embedding: row.embedding ? (JSON.parse(row.embedding) as number[]) : undefined,
   }
 }
 
