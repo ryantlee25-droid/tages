@@ -58,7 +58,20 @@ export async function rememberCommand(key: string, value: string, options: Remem
     // Embed the value only, mirroring the server's plaintextForIndex
     // (packages/server/src/tools/remember.ts:113 — the key is used for the token
     // index, not the embedding), so CLI- and server-written vectors share a space.
-    const embedding = await generateEmbedding(value)
+    // Guard the embedding call: generateEmbedding may throw (network error,
+    // Ollama down mid-request, provider 5xx). A throw here must NEVER lose the
+    // memory — fall back to the plain upsert path so the fact is still stored
+    // (trigram-recallable now, embedding backfilled later out-of-band).
+    let embedding: number[] | null = null
+    try {
+      embedding = await generateEmbedding(value)
+    } catch (err) {
+      console.error(
+        chalk.yellow('Embedding generation failed; storing without embedding.'),
+        err instanceof Error ? err.message : String(err),
+      )
+      embedding = null
+    }
 
     // Primary write: SQLite first (dirty=1 marks it for sync).
     if (embedding) {

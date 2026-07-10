@@ -211,6 +211,40 @@ describe('SqliteCache', () => {
     })
   })
 
+  describe('upsertMemoryWithEmbedding on an EXISTING key (B1 regression)', () => {
+    // Bug: upsertMemory is INSERT ... ON CONFLICT (project_id, key) DO UPDATE,
+    // which KEEPS the existing row id. The CLI always builds a fresh randomUUID(),
+    // so keying the embedding UPDATE on `WHERE id = ?` matched ZERO rows on a
+    // re-remember of an existing key — the embedding was silently dropped and the
+    // memory stayed invisible to semantic recall. The UPDATE must key on
+    // (project_id, key) instead.
+    it('stores the embedding when re-remembering an existing key with a NEW id', () => {
+      // First write with id1 (no embedding yet), then re-remember same key with a
+      // different id2 + an embedding — as the CLI does on every remember.
+      const first = makeMemory({ id: 'id1', key: 'reup', value: 'v1' })
+      cache.upsertMemory(first, false)
+
+      const second = makeMemory({ id: 'id2', key: 'reup', value: 'v2' })
+      expect(second.id).not.toBe(first.id)
+      cache.upsertMemoryWithEmbedding(second, [1, 0, 0, 0], true)
+
+      // Row id is preserved from the original insert...
+      const stored = cache.getByKey(TEST_PROJECT, 'reup')
+      expect(stored!.id).toBe('id1')
+      expect(stored!.value).toBe('v2')
+
+      // ...and the embedding is present despite the id mismatch (visible to search).
+      const results = cache.semanticQuery(TEST_PROJECT, [1, 0, 0, 0], undefined, 5)
+      expect(results.some((m) => m.key === 'reup')).toBe(true)
+
+      // ...and it reaches the sync payload: getDirty() carries the embedding.
+      const dirty = cache.getDirty()
+      const dirtyRow = dirty.find((m) => m.key === 'reup')
+      expect(dirtyRow).toBeDefined()
+      expect(dirtyRow!.embedding).toEqual([1, 0, 0, 0])
+    })
+  })
+
   describe('setEmbedding (narrow embedding-only update)', () => {
     it('sets only the embedding, leaving value/dirty untouched', () => {
       const mem = makeMemory({ key: 'narrow', value: 'original value' })

@@ -263,9 +263,14 @@ export class SqliteCache {
 
   upsertMemoryWithEmbedding(memory: Memory, embedding: number[], dirty = true): void {
     this.upsertMemory(memory, dirty)
+    // Key the embedding UPDATE on (project_id, key), NOT memory.id: upsertMemory
+    // is INSERT ... ON CONFLICT (project_id, key) DO UPDATE, which KEEPS the
+    // existing row's id on a re-remember of an existing key. The CLI always
+    // builds a fresh randomUUID(), so `WHERE id = ?` would match zero rows on an
+    // update and silently drop the embedding (mirror setEmbedding at :285).
     this.db.prepare(
-      'UPDATE memories SET embedding = ? WHERE id = ?'
-    ).run(JSON.stringify(embedding), memory.id)
+      'UPDATE memories SET embedding = ? WHERE project_id = ? AND key = ?'
+    ).run(JSON.stringify(embedding), memory.projectId, memory.key)
   }
 
   /**
@@ -374,7 +379,17 @@ export class SqliteCache {
     const rows = this.db.prepare(
       'SELECT * FROM memories WHERE dirty = 1'
     ).all() as SqliteMemoryRow[]
-    return rows.map(rowToMemory)
+    // Reconstruct the embedding from the SQLite TEXT column ONLY on this sync
+    // path: getDirty()->flush()->memoryToDbRow serializes it to pgvector so a
+    // locally-stored embedding reaches Supabase. The shared rowToMemory omits it
+    // (see note there) to avoid parsing 1536 floats per row on hot read paths.
+    return rows.map(row => {
+      const memory = rowToMemory(row)
+      if (row.embedding) {
+        memory.embedding = JSON.parse(row.embedding) as number[]
+      }
+      return memory
+    })
   }
 
   markSynced(ids: string[]): void {
@@ -1009,13 +1024,13 @@ function rowToMemory(row: SqliteMemoryRow): Memory {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     encrypted: row.encrypted === 1,
-    // Reconstruct the embedding from the SQLite TEXT column (JSON.stringify'd
-    // number[]) so getDirty()->flush()->memoryToDbRow can sync it to Supabase.
-    // Without this, a locally-stored embedding never reaches the cloud on a
-    // dirty flush (the CLI one-shot remember path relies on this). No-op for
-    // rows without an embedding. Server writes reach embeddings out-of-band via
-    // remoteUpdateEmbedding on non-dirty rows, so this doesn't change that flow.
-    embedding: row.embedding ? (JSON.parse(row.embedding) as number[]) : undefined,
+    // NOTE: embedding is intentionally NOT reconstructed here. This shared mapper
+    // backs 20+ read call sites (getByKey/getByType/getRecent/getAll/search/...),
+    // almost none of which read .embedding — parsing a 1536-float array per row
+    // would be pure waste on large projects. The only consumer that needs the
+    // embedding off this path is the dirty/sync flow, which reconstructs it
+    // explicitly in getDirty() below. semanticQuery/hybrid search parse row.embedding
+    // directly and never rely on this field.
   }
 }
 

@@ -330,15 +330,25 @@ describe('remember command', () => {
 
     it('does not crash when generateEmbedding rejects — memory still stored via plain path', async () => {
       writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
-      // generateEmbedding never throws in practice (it swallows provider errors
-      // and returns null), but guard the command against it regardless.
-      mockGenerateEmbedding.mockResolvedValue(null)
+      // A real throw (network error, Ollama down mid-request, provider 5xx): the
+      // command must NOT crash and must fall back to the plain upsert path so the
+      // memory is never lost. mockRejectedValue (not mockResolvedValue(null)) is
+      // what actually exercises the try/catch guard.
+      mockGenerateEmbedding.mockRejectedValue(new Error('embedding provider down'))
 
       await expect(
         rememberCommand('robust-key', 'robust-value', { type: 'convention' }),
       ).resolves.toBeUndefined()
 
-      expect(mockUpsertMemory).toHaveBeenCalled()
+      // Fell back to the plain (embedding-less) store — memory preserved.
+      expect(mockUpsertMemory).toHaveBeenCalledWith(
+        expect.objectContaining({ key: 'robust-key', value: 'robust-value' }),
+        true,
+      )
+      // The embedding path must NOT have been used when generation threw.
+      expect(mockUpsertMemoryWithEmbedding).not.toHaveBeenCalled()
+      // Memory still confirmed stored to the user.
+      expect(console_.logs.join('\n')).toContain('robust-key')
     })
   })
 })
