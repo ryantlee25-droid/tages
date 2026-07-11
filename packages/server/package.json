@@ -19,6 +19,7 @@
     "backfill:embeddings": "tsx scripts/backfill-embeddings.ts"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@supabase/supabase-js": "^2.49.0",
     "@tages/shared": "workspace:*",

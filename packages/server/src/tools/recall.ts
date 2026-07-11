@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Memory, MemoryType } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
@@ -7,6 +8,17 @@ import type { ScoredMemory } from '../search/ranker'
 import { computeDecayScore, shouldArchive } from '../decay/scoring'
 import { getEncryptionKey, decryptValue } from '../crypto/encryption'
 import { budgetedResults } from '../search/token-budget'
+import { rerankMemories } from '../search/reranker'
+import { fetchTemporalCandidates, fuseTemporalChannel } from '../search/temporal-channel'
+
+// PLAN.md Task 6: candidate pool widened before rerank/fusion narrow it back
+// down to args.limit. Overridable for tuning/testing, mirroring the CLI's
+// TAGES_RECALL_CANDIDATE_POOL pattern (packages/cli/src/commands/recall.ts).
+const RECALL_CANDIDATE_POOL = Number(process.env.TAGES_RECALL_CANDIDATE_POOL) || 50
+
+// PLAN.md Task 2/6: only the top-N candidates are sent through the
+// cross-encoder/judge rerank pass — matches the CLI's Task 2 window.
+const RERANK_TOP_K = 20
 
 function decryptMemories(memories: Memory[]): Memory[] {
   const encKey = getEncryptionKey()
@@ -24,10 +36,19 @@ function decryptMemories(memories: Memory[]): Memory[] {
 }
 
 export async function handleRecall(
-  args: { query: string; type?: string; limit?: number; maxTokens?: number },
+  args: { query: string; type?: string; limit?: number; maxTokens?: number; assembledContext?: boolean },
   projectId: string,
   cache: SqliteCache,
   sync: SupabaseSync | null,
+  // PLAN.md Task 7: optional raw Supabase client for the temporal date-range
+  // channel. `SupabaseSync` (the only Supabase handle previously threaded
+  // through this function) keeps its client private and is out of this
+  // task's file ownership, so the temporal channel is wired as a trailing
+  // optional argument instead. The current `index.ts` call site doesn't pass
+  // one yet, so the channel contributes zero candidates (fetchTemporalCandidates
+  // is skipped entirely) until that follow-up wiring lands — see
+  // search/temporal-channel.ts's module doc for the full rationale.
+  supabaseClient?: SupabaseClient,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const limit = args.limit || 5
 
@@ -70,20 +91,55 @@ export async function handleRecall(
     if (args.maxTokens !== undefined) {
       sliced = budgetedResults(sliced, args.maxTokens, formatMemory)
     }
-    return formatResults(sliced, args.query, 'local (ranked)')
+    return args.assembledContext
+      ? formatAssembledContext(sliced, args.query)
+      : formatResults(sliced, args.query, 'local (ranked)')
   }
 
   // If local cache is empty, try remote
   if (sync) {
     if (embedding) {
-      const results = await sync.remoteHybridRecall(args.query, embedding, args.type, limit)
-      if (results && results.length > 0) {
-        const reordered = reorderByTemporalProximity(results, args.query)
-        let trimmed = decryptMemories(reordered)
+      // PLAN.md Task 6: widen the candidate pool passed to remoteHybridRecall
+      // so rerank has more than `limit` rows to work with; narrowed back down
+      // to `limit` only after rerank + temporal reordering below.
+      const poolLimit = Math.max(limit, RECALL_CANDIDATE_POOL)
+      const hybridResults = await sync.remoteHybridRecall(args.query, embedding, args.type, poolLimit)
+      if (hybridResults && hybridResults.length > 0) {
+        // PLAN.md Task 7: temporal date-range channel — a third candidate
+        // source, fused alongside remoteHybridRecall's already-fused
+        // trigram+semantic list. No-op (empty array, zero queries) for
+        // non-temporal queries or when no supabaseClient was threaded
+        // through — see this function's supabaseClient param doc and
+        // search/temporal-channel.ts's module doc.
+        const temporalCandidates = supabaseClient
+          ? await fetchTemporalCandidates(supabaseClient, projectId, args.query, poolLimit)
+          : []
+        const fused = fuseTemporalChannel(hybridResults, temporalCandidates)
+
+        // PLAN.md Task 6: cross-encoder rerank pass, inserted BEFORE
+        // reorderByTemporalProximity so temporal anchoring stays the final
+        // ordering authority (Tier-1 design intent: rerank informs
+        // relevance, temporal proximity has final say over order).
+        //
+        // PRE-EXISTING LIMITATION (not introduced by this task, flagged per
+        // PLAN.md Task 6's own pre-mortem): this whole remote-hybrid branch
+        // only runs when handleRecall's warm-local-SQLite branch above
+        // (`scoredResults.length > 0`) does NOT return early. Most real
+        // MCP-tool calls against a populated local cache never reach this
+        // rerank at all — only users hitting the remote-hybrid fallback path
+        // see Task 6/7's effect. This is a known, documented scope boundary,
+        // not a bug to fix here.
+        const reranked = await rerankMemories(fused, args.query, RERANK_TOP_K)
+        const reordered = reorderByTemporalProximity(reranked, args.query)
+        const limited = reordered.slice(0, limit)
+
+        let trimmed = decryptMemories(limited)
         if (args.maxTokens !== undefined) {
           trimmed = budgetedResults(trimmed, args.maxTokens, formatMemory)
         }
-        return formatResults(trimmed, args.query, 'remote (hybrid)')
+        return args.assembledContext
+          ? formatAssembledContext(trimmed, args.query)
+          : formatResults(trimmed, args.query, 'remote (hybrid)')
       }
     }
 
@@ -93,7 +149,9 @@ export async function handleRecall(
       if (args.maxTokens !== undefined) {
         trimmed = budgetedResults(trimmed, args.maxTokens, formatMemory)
       }
-      return formatResults(trimmed, args.query, 'remote (trigram)')
+      return args.assembledContext
+        ? formatAssembledContext(trimmed, args.query)
+        : formatResults(trimmed, args.query, 'remote (trigram)')
     }
   }
 
@@ -106,7 +164,9 @@ export async function handleRecall(
   if (args.maxTokens !== undefined) {
     sliced = budgetedResults(sliced, args.maxTokens, formatMemory)
   }
-  return formatResults(sliced, args.query, 'local (text match)')
+  return args.assembledContext
+    ? formatAssembledContext(sliced, args.query)
+    : formatResults(sliced, args.query, 'local (text match)')
 }
 
 // Format the calling agent's citation date from a memory's ISO timestamp.
@@ -164,6 +224,59 @@ function formatPassage(m: Memory, index: number): string {
 // most a couple of characters and does not materially affect budgeting.
 function formatMemory(m: Memory): string {
   return formatPassage(m, 1)
+}
+
+// PLAN.md Task 4 (server half): opt-in "assembled context" output — one
+// deduped, chronologically-ordered block instead of numbered passages.
+// Mirrors the CLI's `--assembled-context` flag
+// (packages/cli/src/commands/recall.ts) at a formatting level only; the two
+// are independently wired per SPLIT.md's file-ownership split and share no
+// code (per-package duplication convention). Reuses formatMemoryBody
+// (already shared with formatPassage) and formatCiteDate — no new
+// token-budget helper needed here since every call site already runs its
+// memories through budgetedResults (search/token-budget.ts) before invoking
+// either this function or formatResults.
+//
+// Grouping: two tiers only ("top-tier fused/reranked" vs. "fallback that
+// survived the candidate pool but got cut") per Task 4's own pre-mortem
+// mitigation — this collapses to a single tier in practice, since by the
+// time this function is called every call site has already sliced down to
+// its final selected set (args.limit or a maxTokens budget); there is no
+// separate "cut" set still in scope to form a second tier. Documented
+// simplest-shippable default, not an oversight.
+function formatAssembledContext(
+  memories: Memory[],
+  query: string,
+): { content: Array<{ type: 'text'; text: string }> } {
+  if (memories.length === 0) {
+    return {
+      content: [{ type: 'text', text: `No memories found matching "${query}".` }],
+    }
+  }
+
+  const resolveDate = (m: Memory): string | undefined => m.referencedDate ?? m.relativeDate ?? m.createdAt
+
+  const sorted = [...memories].sort((a, b) => {
+    const ta = new Date(resolveDate(a) ?? '').getTime()
+    const tb = new Date(resolveDate(b) ?? '').getTime()
+    const va = Number.isNaN(ta) ? Infinity : ta
+    const vb = Number.isNaN(tb) ? Infinity : tb
+    return va - vb // chronological, oldest first
+  })
+
+  const entries = sorted.map((m) => {
+    const header = `[${formatCiteDate(resolveDate(m))}] [${m.type}] ${m.key}`
+    return [header, ...formatMemoryBody(m)].join('\n')
+  })
+
+  const preamble = `Assembled context for "${query}" — ${memories.length} memories, chronologically ordered.`
+
+  return {
+    content: [{
+      type: 'text',
+      text: `${preamble}\n\n${entries.join('\n\n')}`,
+    }],
+  }
 }
 
 function formatResults(
