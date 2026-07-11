@@ -236,7 +236,7 @@ function scheduleEmbeddingSync(
       if (!result) return
       cache.upsertChunks(memory.id, projectId, result.chunks)
       if (sync) {
-        const ok = await sync.remoteUpsertChunks(memory.id, projectId, result.chunks)
+        const ok = await sync.remoteUpsertChunks(projectId, memory.key, result.chunks)
         if (ok) cache.markChunksSynced(memory.id)
       }
     })

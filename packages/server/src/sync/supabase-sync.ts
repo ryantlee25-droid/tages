@@ -218,8 +218,12 @@ export class SupabaseSync {
   private async _flushDirtyChunks(): Promise<void> {
     const groups = this.cache.getDirtyChunkGroups()
     for (const { memoryId, projectId } of groups) {
+      // Resolve the local row's (project_id, key) — remoteUpsertChunks is
+      // keyed on the business key, not the (divergent) local id.
+      const local = this.cache.getKeyById(memoryId)
+      if (!local) continue
       const chunks = this.cache.getChunksForMemory(memoryId)
-      const ok = await this.remoteUpsertChunks(memoryId, projectId, chunks)
+      const ok = await this.remoteUpsertChunks(projectId, local.key, chunks)
       if (ok) this.cache.markChunksSynced(memoryId)
     }
   }
@@ -325,15 +329,40 @@ export class SupabaseSync {
    * way.
    */
   async remoteUpsertChunks(
-    memoryId: string,
     projectId: string,
+    key: string,
     chunks: Array<{ text: string; embedding: number[] }>,
   ): Promise<boolean> {
     try {
+      // Keyed on (project_id, key), NOT a memory id: remote memory upserts
+      // strip the local id (Supabase keeps/assigns its own), so a locally
+      // generated uuid routinely differs from the remote row's real id for
+      // every CLI-written memory. Keying the delete/insert on a local id
+      // silently no-ops (delete matches nothing, parent check finds
+      // nothing), stranding all chunks locally: caught live on the dev
+      // eval, 42 local chunk rows / 0 remote. Same id-divergence class as
+      // PR #70's embedding-update bug; same fix (resolve via project+key).
+      // This resolution doubles as the concurrent-parent-delete race guard.
+      const { data: parent, error: parentError } = await this.supabase
+        .from('memories')
+        .select('id')
+        .eq('project_id', projectId)
+        .eq('key', key)
+        .maybeSingle()
+      if (parentError) {
+        console.error('[tages] Remote chunk parent resolve failed:', parentError.message)
+        return false
+      }
+      if (!parent) {
+        console.error(`[tages] Remote chunk sync skipped: parent memory "${key}" not on remote yet (or deleted)`)
+        return false
+      }
+      const remoteMemoryId = (parent as { id: string }).id
+
       const { error: deleteError } = await this.supabase
         .from('memory_chunks')
         .delete()
-        .eq('memory_id', memoryId)
+        .eq('memory_id', remoteMemoryId)
       if (deleteError) {
         console.error('[tages] Remote chunk delete failed:', deleteError.message)
         return false
@@ -341,22 +370,8 @@ export class SupabaseSync {
 
       if (chunks.length === 0) return true
 
-      const { data: parent, error: parentError } = await this.supabase
-        .from('memories')
-        .select('id')
-        .eq('id', memoryId)
-        .maybeSingle()
-      if (parentError) {
-        console.error('[tages] Remote chunk parent check failed:', parentError.message)
-        return false
-      }
-      if (!parent) {
-        console.error(`[tages] Remote chunk insert skipped: parent memory ${memoryId} not found (deleted concurrently, or id mismatch)`)
-        return false
-      }
-
       const rows = chunks.map((chunk, index) => ({
-        memory_id: memoryId,
+        memory_id: remoteMemoryId,
         project_id: projectId,
         chunk_index: index,
         chunk_text: chunk.text,

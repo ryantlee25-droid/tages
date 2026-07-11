@@ -131,7 +131,7 @@ export async function backfillChunkEmbeddings(
   for (;;) {
     const { data, error } = await supabase
       .from('memories')
-      .select('id, value, encrypted')
+      .select('id, key, value, encrypted')
       .eq('project_id', projectId)
       .order('id', { ascending: true })
       .range(offset, offset + batchSize - 1)
@@ -170,7 +170,7 @@ export async function backfillChunkEmbeddings(
           continue
         }
 
-        const ok = await sync.remoteUpsertChunks(row.id, projectId, chunkResult.chunks)
+        const ok = await sync.remoteUpsertChunks(projectId, row.key, chunkResult.chunks)
         if (ok) {
           result.updated++
         } else {

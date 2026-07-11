@@ -367,6 +367,20 @@ export class SqliteCache {
   }
 
   /**
+   * (project_id, key) for a locally-cached memory id. Chunk sync uses this
+   * to resolve the row's AUTHORITATIVE remote id at flush time: remote
+   * memory upserts strip the local id (Supabase keeps/assigns its own), so
+   * a local id routinely differs from the remote row's id — the same
+   * id-divergence class PR #70 fixed for embedding updates.
+   */
+  getKeyById(id: string): { projectId: string; key: string } | null {
+    const row = this.db.prepare('SELECT project_id, key FROM memories WHERE id = ?').get(id) as
+      | { project_id: string; key: string }
+      | undefined
+    return row ? { projectId: row.project_id, key: row.key } : null
+  }
+
+  /**
    * Semantic search using local cosine similarity on cached embeddings.
    * No network call needed — runs entirely from SQLite.
    */

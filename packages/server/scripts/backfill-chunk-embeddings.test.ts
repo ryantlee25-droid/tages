@@ -25,6 +25,7 @@ const mockGenerateChunkEmbeddings = vi.mocked(generateChunkEmbeddings)
 
 interface FakeMemoryRow {
   id: string
+  key?: string
   value: string
   encrypted: boolean
 }
@@ -49,8 +50,14 @@ function makeSupabaseMock(memories: FakeMemoryRow[], chunkCounts: Record<string,
         return Promise.resolve({ data: memories.slice(start, end + 1), error: null })
       }),
       maybeSingle: vi.fn(() => {
+        // remoteUpsertChunks resolves the parent by (project_id, key)
+        const keyFilter = filters.find(([c]) => c === 'key')
         const idFilter = filters.find(([c]) => c === 'id')
-        const found = idFilter ? memories.find((m) => m.id === idFilter[1]) : undefined
+        const found = keyFilter
+          ? memories.find((m) => (m.key ?? m.id) === keyFilter[1])
+          : idFilter
+            ? memories.find((m) => m.id === idFilter[1])
+            : undefined
         return Promise.resolve({ data: found ? { id: found.id } : null, error: null })
       }),
     }
@@ -109,9 +116,9 @@ describe('backfillChunkEmbeddings', () => {
 
   it('dry run reports the count of long, not-yet-chunked memories and writes nothing', async () => {
     const { supabase, chunkInserts } = makeSupabaseMock([
-      { id: 'long-a', value: LONG_VALUE, encrypted: false },
-      { id: 'long-b', value: LONG_VALUE, encrypted: false },
-      { id: 'short-a', value: SHORT_VALUE, encrypted: false },
+      { id: 'long-a', key: 'long-a', value: LONG_VALUE, encrypted: false },
+      { id: 'long-b', key: 'long-b', value: LONG_VALUE, encrypted: false },
+      { id: 'short-a', key: 'short-a', value: SHORT_VALUE, encrypted: false },
     ])
 
     const result = await backfillChunkEmbeddings(supabase, 'proj-1', { dryRun: true })
@@ -125,7 +132,7 @@ describe('backfillChunkEmbeddings', () => {
 
   it('dry run excludes long memories that already have chunk rows', async () => {
     const { supabase } = makeSupabaseMock(
-      [{ id: 'long-a', value: LONG_VALUE, encrypted: false }],
+      [{ id: 'long-a', key: 'long-a', value: LONG_VALUE, encrypted: false }],
       { 'long-a': 3 },
     )
 
@@ -136,7 +143,7 @@ describe('backfillChunkEmbeddings', () => {
 
   it('generates and writes chunk rows for long candidate memories', async () => {
     const { supabase, chunkInserts, chunkDeletes } = makeSupabaseMock([
-      { id: 'long-a', value: LONG_VALUE, encrypted: false },
+      { id: 'long-a', key: 'long-a', value: LONG_VALUE, encrypted: false },
     ])
     mockGenerateChunkEmbeddings.mockResolvedValue({
       pooled: new Array(1536).fill(0.1),
@@ -158,7 +165,7 @@ describe('backfillChunkEmbeddings', () => {
 
   it('skips a memory that already has chunk rows (idempotent)', async () => {
     const { supabase, chunkInserts } = makeSupabaseMock(
-      [{ id: 'long-a', value: LONG_VALUE, encrypted: false }],
+      [{ id: 'long-a', key: 'long-a', value: LONG_VALUE, encrypted: false }],
       { 'long-a': 2 },
     )
 
@@ -174,7 +181,7 @@ describe('backfillChunkEmbeddings', () => {
   it('leaves short memories (at/under the chunking threshold) completely untouched', async () => {
     const atThreshold = 'x'.repeat(CHUNK_TARGET_CHARS)
     const { supabase, chunkInserts } = makeSupabaseMock([
-      { id: 'short-a', value: SHORT_VALUE, encrypted: false },
+      { id: 'short-a', key: 'short-a', value: SHORT_VALUE, encrypted: false },
       { id: 'at-threshold', value: atThreshold, encrypted: false },
     ])
 
@@ -189,7 +196,7 @@ describe('backfillChunkEmbeddings', () => {
 
   it('marks a row failed (not crashing the batch) when chunk embedding generation is unavailable', async () => {
     const { supabase, chunkInserts } = makeSupabaseMock([
-      { id: 'long-a', value: LONG_VALUE, encrypted: false },
+      { id: 'long-a', key: 'long-a', value: LONG_VALUE, encrypted: false },
     ])
     mockGenerateChunkEmbeddings.mockResolvedValue(null)
 
