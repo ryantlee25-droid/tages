@@ -116,7 +116,7 @@ export function isTemporalQuery(query: string): boolean {
 }
 
 /** Resolve an explicit date named in `query` (if any) against `anchor`. */
-function extractTargetDate(query: string, anchor: Date): Date | undefined {
+export function extractTargetDate(query: string, anchor: Date): Date | undefined {
   const { referencedDate, relativeDate } = extractDates(query, anchor)
   const iso = referencedDate ?? relativeDate
   if (!iso) return undefined
