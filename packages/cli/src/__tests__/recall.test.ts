@@ -330,4 +330,117 @@ describe('recall command', () => {
     delete process.env.OPENAI_API_KEY
     delete process.env.TAGES_OPENAI_EMBED
   })
+
+  it('drops a near-duplicate content result while keeping distinct results (Task 4 content dedup)', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+
+    // Simulate Ollama being available so the semantic path runs.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
+    })
+
+    const longValue =
+      'This is a long session chunk describing how the auth middleware validates JWT tokens on every incoming request before handing off to the route handler.'
+    // Near-duplicate: same long value plus a short trailing addendum, ranked lower (lower similarity).
+    const nearDuplicateValue = `${longValue} (continued in next chunk)`
+
+    const trigramPromise = Promise.resolve({
+      data: [{ id: 'distinct-id', key: 'distinct-key', value: 'A totally unrelated short note about deploy cadence.', type: 'convention', similarity: 0.4 }],
+      error: null,
+    })
+    const semanticPromise = Promise.resolve({
+      data: [
+        { id: 'high-rank-id', key: 'high-rank-key', value: longValue, type: 'lesson', similarity: 0.9 },
+        { id: 'near-dup-id', key: 'near-dup-key', value: nearDuplicateValue, type: 'lesson', similarity: 0.7 },
+      ],
+      error: null,
+    })
+
+    let callCount = 0
+    mockRpc.mockImplementation(() => {
+      callCount++
+      if (callCount === 1) return trigramPromise
+      return semanticPromise
+    })
+
+    await recallCommand('auth middleware', {})
+
+    const output = console_.logs.join('\n')
+    // Higher-ranked occurrence kept.
+    expect(output).toContain('high-rank-key')
+    // Lower-ranked near-duplicate dropped.
+    expect(output).not.toContain('near-dup-key')
+    // Distinct result kept.
+    expect(output).toContain('distinct-key')
+  })
+
+  it('keeps distinct short results that happen to share some words (no over-pruning)', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
+    })
+
+    const trigramPromise = Promise.resolve({ data: [], error: null })
+    const semanticPromise = Promise.resolve({
+      data: [
+        { id: 'a', key: 'key-a', value: 'Use JWT tokens for auth.', type: 'convention', similarity: 0.9 },
+        { id: 'b', key: 'key-b', value: 'Use trace headers for logging.', type: 'convention', similarity: 0.8 },
+      ],
+      error: null,
+    })
+
+    let callCount = 0
+    mockRpc.mockImplementation(() => {
+      callCount++
+      if (callCount === 1) return trigramPromise
+      return semanticPromise
+    })
+
+    await recallCommand('conventions', {})
+
+    const output = console_.logs.join('\n')
+    expect(output).toContain('key-a')
+    expect(output).toContain('key-b')
+  })
+
+  it('uses TAGES_RECALL_THRESHOLD env override for the semantic_recall p_threshold when set', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    process.env.TAGES_RECALL_THRESHOLD = '0.25'
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
+    })
+
+    mockRpc.mockResolvedValue({ data: [], error: null })
+
+    await recallCommand('test', {})
+
+    expect(mockRpc).toHaveBeenCalledWith('semantic_recall', expect.objectContaining({
+      p_threshold: 0.25,
+    }))
+
+    delete process.env.TAGES_RECALL_THRESHOLD
+  })
+
+  it('defaults the semantic_recall p_threshold to 0.3 when TAGES_RECALL_THRESHOLD is unset', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    delete process.env.TAGES_RECALL_THRESHOLD
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
+    })
+
+    mockRpc.mockResolvedValue({ data: [], error: null })
+
+    await recallCommand('test', {})
+
+    expect(mockRpc).toHaveBeenCalledWith('semantic_recall', expect.objectContaining({
+      p_threshold: 0.3,
+    }))
+  })
 })

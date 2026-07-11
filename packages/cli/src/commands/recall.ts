@@ -14,6 +14,48 @@ interface RecallOptions {
   all?: boolean
 }
 
+// Vector similarity threshold for semantic_recall, tunable without a code
+// change via TAGES_RECALL_THRESHOLD (see PLAN.md Task 4). Default stays 0.3
+// unless a calibration rerun shows a clear win at a different value.
+function getRecallThreshold(): number {
+  const raw = process.env.TAGES_RECALL_THRESHOLD
+  if (raw === undefined || raw === '') return 0.3
+  const parsed = parseFloat(raw)
+  return Number.isFinite(parsed) ? parsed : 0.3
+}
+
+// Conservative near-duplicate content check: only treats two values as
+// duplicates when the shorter one is (close to) fully contained in the
+// longer one and is long enough that a coincidental substring match is
+// unlikely. Deliberately narrow — evidence for this being a real problem
+// at session-level ingestion granularity is low, so it should rarely fire.
+function isNearDuplicateContent(a: string, b: string): boolean {
+  const normA = a.trim().toLowerCase().replace(/\s+/g, ' ')
+  const normB = b.trim().toLowerCase().replace(/\s+/g, ' ')
+  if (!normA || !normB) return false
+  if (normA === normB) return true
+  const [shorter, longer] = normA.length <= normB.length ? [normA, normB] : [normB, normA]
+  if (shorter.length < 40) return false
+  return longer.includes(shorter)
+}
+
+// Drops later (lower-ranked) rows whose value is a near-duplicate of an
+// earlier (higher-ranked) row's value. Expects `rows` to already be sorted
+// by rank/relevance so "earlier" means "higher-ranked".
+function dedupeNearDuplicateContent(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  const kept: Record<string, unknown>[] = []
+  for (const row of rows) {
+    const value = row.value
+    const isDuplicate =
+      typeof value === 'string' &&
+      kept.some((k) => typeof k.value === 'string' && isNearDuplicateContent(value, k.value as string))
+    if (!isDuplicate) {
+      kept.push(row)
+    }
+  }
+  return kept
+}
+
 export async function recallCommand(query: string | undefined, options: RecallOptions) {
   const config = loadProjectConfig(options.project)
   if (!config) {
@@ -85,7 +127,7 @@ export async function recallCommand(query: string | undefined, options: RecallOp
           p_embedding: embeddingStr,
           p_type: options.type || null,
           p_limit: limit,
-          p_threshold: 0.3,
+          p_threshold: getRecallThreshold(),
         })
         searchMethod = 'hybrid (trigram + semantic)'
       }
@@ -118,13 +160,17 @@ export async function recallCommand(query: string | undefined, options: RecallOp
 
       // Sort by similarity desc, take top N
       merged.sort((a, b) => ((b.similarity as number) || 0) - ((a.similarity as number) || 0))
+      // Drop near-duplicate content (e.g. two overlapping long-session chunks
+      // that both cleared threshold), keeping the higher-ranked occurrence.
+      // Runs after the by-id dedup/sort above and before temporal reordering.
+      const contentDeduped = dedupeNearDuplicateContent(merged)
       // Temporal anchoring (migration 0060): when the query is asking about
       // timing rather than content, reorder by date proximity/recency on top
       // of the similarity ordering above. Only semantic_recall rows carry
       // referenced_date/relative_date (recall_memories/trigram rows fall back
       // to created_at, which every row has) — see 0060's migration header for
       // why only hybrid_recall/semantic_recall were updated.
-      const temporallySorted = sortByTemporalProximity(merged, query!)
+      const temporallySorted = sortByTemporalProximity(contentDeduped, query!)
       data = temporallySorted.slice(0, limit)
 
       if (semanticResult.data === null) searchMethod = 'trigram'
