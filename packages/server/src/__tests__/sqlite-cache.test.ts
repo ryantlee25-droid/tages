@@ -408,4 +408,39 @@ describe('SqliteCache', () => {
       expect(stored[1].embedding).toEqual(chunks[1].embedding)
     })
   })
+
+  /**
+   * Tests for getKeyById (Task 9 Phase 2): resolves (project_id, key) for a
+   * locally-cached memory id. This is the lookup `SupabaseSync._flushDirtyChunks`
+   * uses to resolve the AUTHORITATIVE remote id at flush time, since remote
+   * memory upserts strip the local id and a local id routinely diverges from
+   * the remote row's real id (same id-divergence class PR #70 fixed for
+   * embedding updates).
+   */
+  describe('getKeyById', () => {
+    it('returns the (project_id, key) pair for an existing memory id', () => {
+      const mem = makeMemory({ key: 'lookup-key' })
+      cache.upsertMemory(mem)
+
+      const result = cache.getKeyById(mem.id)
+
+      expect(result).toEqual({ projectId: TEST_PROJECT, key: 'lookup-key' })
+    })
+
+    it('returns null for an id that does not exist (never throws)', () => {
+      const result = cache.getKeyById('no-such-memory-id')
+
+      expect(result).toBeNull()
+    })
+
+    it('returns null for a memory that has been forget-deleted (row removed)', () => {
+      const mem = makeMemory({ key: 'to-be-deleted' })
+      cache.upsertMemory(mem)
+      cache.deleteByKey(TEST_PROJECT, 'to-be-deleted')
+
+      const result = cache.getKeyById(mem.id)
+
+      expect(result).toBeNull()
+    })
+  })
 })
