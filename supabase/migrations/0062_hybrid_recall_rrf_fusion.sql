@@ -164,12 +164,14 @@ begin
       from trigram_results t
       full outer join vector_results v on t.id = v.id
     )
-    select id, project_id, key, value, type, source,
-      file_paths, tags, confidence, created_at,
-      referenced_date, relative_date,
-      rrf_score as similarity, match_type
-    from fused
-    order by rrf_score desc
+    -- Every output column must be table-qualified here: plpgsql's RETURNS
+    -- TABLE out-params shadow same-named columns and raise 42702 otherwise.
+    select f.id, f.project_id, f.key, f.value, f.type, f.source,
+      f.file_paths, f.tags, f.confidence, f.created_at,
+      f.referenced_date, f.relative_date,
+      f.rrf_score as similarity, f.match_type
+    from fused f
+    order by f.rrf_score desc
     limit p_limit;
 end;
 $$ language plpgsql security definer stable set search_path = public, extensions;

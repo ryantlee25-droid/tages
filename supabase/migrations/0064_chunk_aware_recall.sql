@@ -104,10 +104,13 @@ begin
       -- One row per memory: its best-matching chunk. DISTINCT ON's
       -- leading ORDER BY column must be memory_id — the cross-memory
       -- ORDER BY sim DESC happens in the outer query below, not here.
-      select distinct on (memory_id)
-        memory_id, chunk_index, chunk_text, sim
-      from matched_chunks
-      order by memory_id, sim desc
+      -- Columns table-qualified: plpgsql's RETURNS TABLE out-params
+      -- (chunk_index, chunk_text) shadow same-named columns and raise
+      -- 42702 if referenced unqualified.
+      select distinct on (mc.memory_id)
+        mc.memory_id, mc.chunk_index, mc.chunk_text, mc.sim
+      from matched_chunks mc
+      order by mc.memory_id, mc.sim desc
     )
     select
       m.id, m.project_id, m.key, m.value, m.type, m.source,
