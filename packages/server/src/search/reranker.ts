@@ -30,47 +30,78 @@ export interface Reranker {
 }
 
 const MODEL_ID = 'Xenova/ms-marco-MiniLM-L-6-v2'
+// Cold-start cap: first use downloads the ONNX weights (~90MB). Without a
+// bound, a slow/stalled Hub fetch would hang recall — fail-open only catches
+// throws, not hangs (White W1). On timeout we reject → rerank()'s try/catch
+// converts it to the input-order fallback.
+const MODEL_LOAD_TIMEOUT_MS = 30_000
 
-// Minimal shape of the transformers.js text-classification pipeline callable
-// this module depends on. Not verified against the installed package's exact
-// runtime signature in this pass (per PLAN.md's own "not hand-tested in this
-// planning pass" pattern for new-dependency integration points) — the E2E
-// real-product probe (PLAN.md Task 6 E2E Validation) is what actually
-// exercises this against the real package; unit tests mock this type's shape
-// entirely and never load the real model (see reranker.test.ts).
-type ClassifyFn = (
-  query: string,
-  texts: string[],
-) => Promise<Array<{ label: string; score: number }> | { label: string; score: number }>
+// ms-marco-MiniLM-L-6-v2 is a *regression* cross-encoder (one raw relevance
+// logit per query/passage pair), NOT a classifier. It must be run via the
+// tokenizer + sequence-classification model and its raw `logits`, NOT the
+// `text-classification` pipeline — that pipeline's sigmoid/softmax saturates
+// every pair to score 1.0, silently reducing rerank to a no-op (confirmed
+// empirically 2026-07-10 against the installed package). Kept byte-identical
+// to the CLI copy (packages/cli/src/lib/reranker.ts) per the per-package
+// duplication convention.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Tokenizer = (text: string, opts?: Record<string, unknown>) => any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ClassifierModel = (inputs: any) => Promise<{ logits: { data: ArrayLike<number> } }>
 
-let pipelinePromise: Promise<ClassifyFn> | null = null
+let modelPromise: Promise<{ tokenizer: Tokenizer; model: ClassifierModel }> | null = null
 
-async function loadPipeline(): Promise<ClassifyFn> {
-  if (!pipelinePromise) {
-    pipelinePromise = (async () => {
+async function loadModel(): Promise<{ tokenizer: Tokenizer; model: ClassifierModel }> {
+  if (!modelPromise) {
+    modelPromise = (async () => {
       // Dynamic import keeps this heavy optional dependency out of the
       // module graph for callers that never rerank (the fail-open paths
-      // below never pay the load cost, and this call is what
-      // reranker.test.ts mocks via vi.mock('@huggingface/transformers')).
-      const mod = await import('@huggingface/transformers')
-      const p = await mod.pipeline('text-classification', MODEL_ID)
-      return p as unknown as ClassifyFn
+      // below never pay the load cost, and this is what reranker.test.ts
+      // mocks via vi.mock('@huggingface/transformers')).
+      const { AutoTokenizer, AutoModelForSequenceClassification } = await import('@huggingface/transformers')
+      const [tokenizer, model] = await Promise.all([
+        AutoTokenizer.from_pretrained(MODEL_ID),
+        AutoModelForSequenceClassification.from_pretrained(MODEL_ID, { dtype: 'fp32' }),
+      ])
+      return { tokenizer: tokenizer as unknown as Tokenizer, model: model as unknown as ClassifierModel }
     })()
+    modelPromise.catch(() => {
+      modelPromise = null
+    })
   }
-  return pipelinePromise
+  return modelPromise
+}
+
+async function loadModelWithTimeout(): Promise<{ tokenizer: Tokenizer; model: ClassifierModel }> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('local reranker model load timed out')), MODEL_LOAD_TIMEOUT_MS)
+  })
+  try {
+    return await Promise.race([loadModel(), timeout])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/** Test-only: clears the module-level model cache between test cases. */
+export function __resetModelCacheForTests(): void {
+  modelPromise = null
 }
 
 export class LocalCrossEncoderReranker implements Reranker {
   async rerank(query: string, candidates: RerankCandidate[], topK: number): Promise<string[]> {
     if (candidates.length === 0) return []
-    const classify = await loadPipeline()
+    const { tokenizer, model } = await loadModelWithTimeout()
     const window = candidates.slice(0, topK)
     const scored = await Promise.all(
       window.map(async (c) => {
-        const result = await classify(query, [c.text])
-        const row = Array.isArray(result) ? result[0] : result
-        const score = typeof row?.score === 'number' ? row.score : 0
-        return { id: c.id, score }
+        // Cross-encoder pair scoring: query + passage as a sentence pair,
+        // read the single raw relevance logit (higher = more relevant).
+        const inputs = tokenizer(query, { text_pair: c.text, padding: true, truncation: true })
+        const { logits } = await model(inputs)
+        const score = Number(logits.data[0])
+        return { id: c.id, score: Number.isFinite(score) ? score : -Infinity }
       }),
     )
     scored.sort((a, b) => b.score - a.score)

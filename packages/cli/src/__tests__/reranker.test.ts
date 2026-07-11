@@ -1,13 +1,31 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
-// CRITICAL: mock the transformers pipeline so tests never download or run
+// CRITICAL: mock the transformers primitives so tests never download or run
 // the real ONNX model (see PLAN.md Task 2's explicit test requirement).
-const mockClassify = vi.fn()
-const mockPipeline = vi.fn().mockResolvedValue(mockClassify)
+// The mock deliberately mirrors the REAL cross-encoder shape the production
+// code depends on — tokenizer(query, {text_pair}) → inputs, model(inputs) →
+// {logits:{data:[logit]}} — and returns DISTINCT logits per candidate so the
+// reorder assertions actually exercise scoring. This is the regression guard
+// for the silent-no-op bug (the old text-classification pipeline returned a
+// constant score, so rerank did nothing while tests stayed green).
+const mockModel = vi.fn()
+const mockTokenizer = vi.fn((_query: string, opts?: { text_pair?: string }) => ({
+  text_pair: opts?.text_pair,
+}))
+const mockModelFromPretrained = vi.fn(async (..._a: unknown[]) => mockModel)
+const mockTokenizerFromPretrained = vi.fn(async (..._a: unknown[]) => mockTokenizer)
 
 vi.mock('@huggingface/transformers', () => ({
-  pipeline: mockPipeline,
+  AutoTokenizer: { from_pretrained: (...a: unknown[]) => mockTokenizerFromPretrained(...a) },
+  AutoModelForSequenceClassification: { from_pretrained: (...a: unknown[]) => mockModelFromPretrained(...a) },
 }))
+
+/** Score a candidate by its text via the mocked model's logit output. */
+function scoreByText(scores: Record<string, number>) {
+  mockModel.mockImplementation(async (inputs: { text_pair?: string }) => ({
+    logits: { data: [scores[inputs.text_pair ?? ''] ?? 0] },
+  }))
+}
 
 import {
   LocalCrossEncoderReranker,
@@ -20,20 +38,16 @@ import {
 describe('LocalCrossEncoderReranker', () => {
   beforeEach(() => {
     __resetLocalPipelineCacheForTests()
-    mockPipeline.mockClear()
-    mockPipeline.mockResolvedValue(mockClassify)
-    mockClassify.mockReset()
+    mockModelFromPretrained.mockClear()
+    mockModelFromPretrained.mockResolvedValue(mockModel)
+    mockTokenizerFromPretrained.mockClear()
+    mockTokenizerFromPretrained.mockResolvedValue(mockTokenizer)
+    mockTokenizer.mockClear()
+    mockModel.mockReset()
   })
 
   it('reorders candidates per the mocked model run (highest score first)', async () => {
-    mockClassify.mockImplementation(async (_query: string, opts: { text_pair: string }) => {
-      const scores: Record<string, number> = {
-        'low relevance': 0.1,
-        'high relevance': 0.9,
-        'mid relevance': 0.5,
-      }
-      return [{ label: 'LABEL_0', score: scores[opts.text_pair] ?? 0 }]
-    })
+    scoreByText({ 'low relevance': -5, 'high relevance': 8, 'mid relevance': 1 })
 
     const candidates: RerankCandidate[] = [
       { id: 'low', text: 'low relevance' },
@@ -48,7 +62,7 @@ describe('LocalCrossEncoderReranker', () => {
   })
 
   it('only sends the passed-in candidates to the model (payload length assertion)', async () => {
-    mockClassify.mockResolvedValue([{ label: 'LABEL_0', score: 0.5 }])
+    mockModel.mockResolvedValue({ logits: { data: [0.5] } })
     const candidates: RerankCandidate[] = Array.from({ length: 20 }, (_, i) => ({
       id: `id-${i}`,
       text: `text ${i}`,
@@ -57,14 +71,14 @@ describe('LocalCrossEncoderReranker', () => {
     const reranker = new LocalCrossEncoderReranker()
     await reranker.rerank('query', candidates, 20)
 
-    expect(mockClassify).toHaveBeenCalledTimes(20)
+    expect(mockModel).toHaveBeenCalledTimes(20)
   })
 
   it('returns an empty array for an empty candidate list without calling the model', async () => {
     const reranker = new LocalCrossEncoderReranker()
     const result = await reranker.rerank('query', [], 20)
     expect(result).toEqual([])
-    expect(mockPipeline).not.toHaveBeenCalled()
+    expect(mockModelFromPretrained).not.toHaveBeenCalled()
   })
 })
 
@@ -134,9 +148,12 @@ describe('rerankCandidates (orchestrator)', () => {
 
   beforeEach(() => {
     __resetLocalPipelineCacheForTests()
-    mockPipeline.mockClear()
-    mockPipeline.mockResolvedValue(mockClassify)
-    mockClassify.mockReset()
+    mockModelFromPretrained.mockClear()
+    mockModelFromPretrained.mockResolvedValue(mockModel)
+    mockTokenizerFromPretrained.mockClear()
+    mockTokenizerFromPretrained.mockResolvedValue(mockTokenizer)
+    mockTokenizer.mockClear()
+    mockModel.mockReset()
   })
 
   afterEach(() => {
@@ -146,9 +163,7 @@ describe('rerankCandidates (orchestrator)', () => {
   })
 
   it('uses the local cross-encoder when it loads and scores successfully', async () => {
-    mockClassify.mockImplementation(async (_q: string, opts: { text_pair: string }) => [
-      { label: 'LABEL_0', score: opts.text_pair === 'good' ? 0.9 : 0.1 },
-    ])
+    scoreByText({ good: 9, bad: -9 })
 
     const result = await rerankCandidates(
       'q',
@@ -163,7 +178,7 @@ describe('rerankCandidates (orchestrator)', () => {
   })
 
   it('falls back to OpenAIJudgeReranker when the local model fails to load', async () => {
-    mockPipeline.mockRejectedValue(new Error('ONNX load failed'))
+    mockModelFromPretrained.mockRejectedValue(new Error('ONNX load failed'))
     process.env.OPENAI_API_KEY = 'test-key'
     process.env.TAGES_OPENAI_EMBED = '1'
     globalThis.fetch = vi.fn().mockResolvedValue({
@@ -184,7 +199,7 @@ describe('rerankCandidates (orchestrator)', () => {
   })
 
   it('returns input order unchanged when both backends are unavailable (no throw)', async () => {
-    mockPipeline.mockRejectedValue(new Error('ONNX load failed'))
+    mockModelFromPretrained.mockRejectedValue(new Error('ONNX load failed'))
     // TAGES_OPENAI_EMBED not set -> OpenAI fallback gated off even with a key.
     process.env.OPENAI_API_KEY = 'test-key'
 
@@ -197,7 +212,7 @@ describe('rerankCandidates (orchestrator)', () => {
   })
 
   it('returns input order unchanged when neither OPENAI_API_KEY nor local model is available', async () => {
-    mockPipeline.mockRejectedValue(new Error('ONNX load failed'))
+    mockModelFromPretrained.mockRejectedValue(new Error('ONNX load failed'))
 
     const candidates: RerankCandidate[] = [
       { id: 'a', text: 'first' },
@@ -209,6 +224,6 @@ describe('rerankCandidates (orchestrator)', () => {
 
   it('returns an empty array for an empty candidate list', async () => {
     await expect(rerankCandidates('q', [], 20)).resolves.toEqual([])
-    expect(mockPipeline).not.toHaveBeenCalled()
+    expect(mockModelFromPretrained).not.toHaveBeenCalled()
   })
 })

@@ -22,23 +22,44 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 type RerankerModule = typeof import('../search/reranker')
 type RerankCandidate = import('../search/reranker').RerankCandidate
 
-const mockPipeline = vi.fn()
+const mockModel = vi.fn()
+const mockTokenizer = vi.fn((_query: string, opts?: { text_pair?: string }) => ({
+  text_pair: opts?.text_pair,
+}))
+const mockModelFromPretrained = vi.fn(async (..._a: unknown[]) => mockModel)
+const mockTokenizerFromPretrained = vi.fn(async (..._a: unknown[]) => mockTokenizer)
 
+// Mock the REAL cross-encoder shape the production code depends on:
+// tokenizer(query,{text_pair}) -> inputs, model(inputs) -> {logits:{data:[logit]}}.
+// Returning DISTINCT logits per candidate is the regression guard for the
+// silent-no-op bug (the old text-classification pipeline returned a constant
+// score, so rerank did nothing while tests stayed green).
 vi.mock('@huggingface/transformers', () => ({
-  pipeline: (...args: unknown[]) => mockPipeline(...args),
+  AutoTokenizer: { from_pretrained: (...a: unknown[]) => mockTokenizerFromPretrained(...a) },
+  AutoModelForSequenceClassification: { from_pretrained: (...a: unknown[]) => mockModelFromPretrained(...a) },
 }))
 
-// Mock "classifier": parses a `score=<n>` marker out of the candidate text so
-// each test can control ranking deterministically without a real model.
+// Parse a `score=<n>` marker out of the candidate text so each test controls
+// ranking deterministically without a real model.
 function scoreFromText(text: string): number {
   const match = text.match(/score=([\d.]+)/)
   return match ? Number(match[1]) : 0
+}
+function useTextScoreModel() {
+  mockModel.mockImplementation(async (inputs: { text_pair?: string }) => ({
+    logits: { data: [scoreFromText(inputs.text_pair ?? '')] },
+  }))
 }
 
 let mod: RerankerModule
 
 beforeEach(async () => {
-  mockPipeline.mockReset()
+  mockModel.mockReset()
+  mockTokenizer.mockClear()
+  mockModelFromPretrained.mockClear()
+  mockModelFromPretrained.mockResolvedValue(mockModel)
+  mockTokenizerFromPretrained.mockClear()
+  mockTokenizerFromPretrained.mockResolvedValue(mockTokenizer)
   delete process.env.OPENAI_API_KEY
   vi.resetModules()
   mod = await import('../search/reranker.js')
@@ -46,9 +67,7 @@ beforeEach(async () => {
 
 describe('LocalCrossEncoderReranker', () => {
   it('reorders candidates per a mocked model run', async () => {
-    mockPipeline.mockResolvedValue(async (_query: string, texts: string[]) => {
-      return [{ label: 'relevant', score: scoreFromText(texts[0]) }]
-    })
+    useTextScoreModel()
 
     const candidates: RerankCandidate[] = [
       { id: 'a', text: 'score=0.2 low relevance' },
@@ -61,11 +80,7 @@ describe('LocalCrossEncoderReranker', () => {
   })
 
   it('only sends the top 20 candidates to the model (payload length)', async () => {
-    const calls: string[][] = []
-    mockPipeline.mockResolvedValue(async (_query: string, texts: string[]) => {
-      calls.push(texts)
-      return [{ label: 'relevant', score: scoreFromText(texts[0]) }]
-    })
+    useTextScoreModel()
 
     const candidates: RerankCandidate[] = Array.from({ length: 30 }, (_, i) => ({
       id: `id-${i}`,
@@ -73,7 +88,8 @@ describe('LocalCrossEncoderReranker', () => {
     }))
 
     await new mod.LocalCrossEncoderReranker().rerank('q', candidates, 20)
-    expect(calls.length).toBe(20)
+    // Only the top-K (20) window is scored, not all 30.
+    expect(mockModel).toHaveBeenCalledTimes(20)
   })
 })
 
@@ -85,7 +101,7 @@ describe('rerank() selection + fallback', () => {
   })
 
   it('falls back to OpenAIJudgeReranker when the local model fails to load', async () => {
-    mockPipeline.mockRejectedValue(new Error('model load failed'))
+    mockModelFromPretrained.mockRejectedValue(new Error('model load failed'))
     process.env.OPENAI_API_KEY = 'test-key'
 
     const fetchMock = vi.fn().mockResolvedValue({
@@ -107,7 +123,7 @@ describe('rerank() selection + fallback', () => {
   })
 
   it('fails open (input order unchanged, no throw) when both backends are unavailable', async () => {
-    mockPipeline.mockRejectedValue(new Error('model load failed'))
+    mockModelFromPretrained.mockRejectedValue(new Error('model load failed'))
     // No OPENAI_API_KEY set.
 
     const candidates: RerankCandidate[] = [
@@ -123,7 +139,7 @@ describe('rerank() selection + fallback', () => {
   it('returns an empty array for an empty candidate list without invoking either backend', async () => {
     const result = await mod.rerank('q', [], 20)
     expect(result).toEqual([])
-    expect(mockPipeline).not.toHaveBeenCalled()
+    expect(mockModelFromPretrained).not.toHaveBeenCalled()
   })
 })
 
@@ -174,9 +190,7 @@ describe('OpenAIJudgeReranker', () => {
 
 describe('rerankMemories', () => {
   it('re-splices the reranked top-K to the front, appending the rest in original order', async () => {
-    mockPipeline.mockResolvedValue(async (_query: string, texts: string[]) => {
-      return [{ label: 'relevant', score: scoreFromText(texts[0]) }]
-    })
+    useTextScoreModel()
 
     const memories = [
       { id: '1', value: 'score=0.1 one' },
