@@ -135,12 +135,13 @@ describe('SupabaseSync._flushDirtyChunks (via flush()) — full wiring', () => {
     overrides: Partial<{
       getDirtyChunkGroups: () => Array<{ memoryId: string; projectId: string }>
       getKeyById: (id: string) => { projectId: string; key: string } | null
-      getChunksForMemory: (id: string) => Array<{ text: string; embedding: number[] }>
+      getDirtyChunkRows: (id: string) => Array<{ id: string; text: string; embedding: number[] }>
     }> = {},
   ) {
     const markChunksSynced = vi.fn()
+    const deleteChunksForMemory = vi.fn()
     const getKeyById = vi.fn(overrides.getKeyById ?? (() => null))
-    const getChunksForMemory = vi.fn(overrides.getChunksForMemory ?? (() => []))
+    const getDirtyChunkRows = vi.fn(overrides.getDirtyChunkRows ?? (() => []))
     const cache = {
       // _flushMemories runs first inside _flush(); an empty dirty list makes
       // it a no-op so it doesn't interfere with these chunk-only assertions.
@@ -148,19 +149,20 @@ describe('SupabaseSync._flushDirtyChunks (via flush()) — full wiring', () => {
       markSynced: vi.fn(),
       getDirtyChunkGroups: vi.fn(overrides.getDirtyChunkGroups ?? (() => [])),
       getKeyById,
-      getChunksForMemory,
+      getDirtyChunkRows,
       markChunksSynced,
+      deleteChunksForMemory,
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return { cache: cache as any as SqliteCache, markChunksSynced, getKeyById, getChunksForMemory }
+    return { cache: cache as any as SqliteCache, markChunksSynced, deleteChunksForMemory, getKeyById, getDirtyChunkRows }
   }
 
-  it('wires getDirtyChunkGroups -> getKeyById -> remoteUpsertChunks(project_id, key) -> markChunksSynced(local id)', async () => {
-    const { cache, markChunksSynced, getKeyById, getChunksForMemory } = makeCache({
+  it('wires getDirtyChunkGroups -> getKeyById -> getDirtyChunkRows -> remoteUpsertChunks(project_id, key) -> markChunksSynced(row ids)', async () => {
+    const { cache, markChunksSynced, getKeyById, getDirtyChunkRows } = makeCache({
       getDirtyChunkGroups: () => [{ memoryId: 'local-mem-1', projectId: 'proj-1' }],
       getKeyById: (id) => (id === 'local-mem-1' ? { projectId: 'proj-1', key: 'stripe-key' } : null),
-      getChunksForMemory: (id) =>
-        id === 'local-mem-1' ? [{ text: 'chunk zero', embedding: [0.1, 0.2] }] : [],
+      getDirtyChunkRows: (id) =>
+        id === 'local-mem-1' ? [{ id: 'row-a', text: 'chunk zero', embedding: [0.1, 0.2] }] : [],
     })
     const { supabase, selectCalls, deleteCalls, insertCalls } = makeSupabaseMock({
       parentsByKey: { 'stripe-key': { id: 'remote-mem-1' } },
@@ -171,19 +173,19 @@ describe('SupabaseSync._flushDirtyChunks (via flush()) — full wiring', () => {
     await sync.flush()
 
     expect(getKeyById).toHaveBeenCalledWith('local-mem-1')
-    expect(getChunksForMemory).toHaveBeenCalledWith('local-mem-1')
+    expect(getDirtyChunkRows).toHaveBeenCalledWith('local-mem-1')
     // Chunk parent resolved via the (project_id, key) getKeyById returned,
     // not the local memory id.
     expect(selectCalls).toEqual([{ projectId: 'proj-1', key: 'stripe-key' }])
     expect(deleteCalls).toEqual(['remote-mem-1'])
     expect(insertCalls).toHaveLength(1)
-    // Local sync-state bookkeeping is keyed on the LOCAL memory id (cache's
-    // own primary key), not the remote id.
-    expect(markChunksSynced).toHaveBeenCalledWith('local-mem-1')
+    // Fix C: dirty is cleared by the SPECIFIC chunk row ids captured at flush
+    // time, not memory-wide — so a concurrent v2 write is never clobbered.
+    expect(markChunksSynced).toHaveBeenCalledWith(['row-a'])
   })
 
-  it('skips a group entirely (no remote call, no markChunksSynced) when getKeyById cannot resolve the local id', async () => {
-    const { cache, markChunksSynced, getChunksForMemory } = makeCache({
+  it('deletes orphan dirty chunk rows (no remote call, no markChunksSynced) when getKeyById cannot resolve the local id (Fix F(b))', async () => {
+    const { cache, markChunksSynced, deleteChunksForMemory, getDirtyChunkRows } = makeCache({
       getDirtyChunkGroups: () => [{ memoryId: 'orphan-mem', projectId: 'proj-1' }],
       getKeyById: () => null,
     })
@@ -193,21 +195,22 @@ describe('SupabaseSync._flushDirtyChunks (via flush()) — full wiring', () => {
 
     await sync.flush()
 
-    // continue on !local — never even looks up the chunks to send, let
-    // alone issues any Supabase call for this group.
-    expect(getChunksForMemory).not.toHaveBeenCalled()
+    // Parent gone locally: delete the orphan rows instead of retrying forever.
+    // No remote call, no sync bookkeeping, no dirty-row read for the send.
+    expect(getDirtyChunkRows).not.toHaveBeenCalled()
     expect(fromCalls).toEqual([])
     expect(markChunksSynced).not.toHaveBeenCalled()
+    expect(deleteChunksForMemory).toHaveBeenCalledWith('orphan-mem')
   })
 
-  it('marks only the resolvable group synced when one group in a batch fails getKeyById and another succeeds', async () => {
-    const { cache, markChunksSynced } = makeCache({
+  it('marks only the resolvable group synced (by row ids) when one group fails getKeyById and another succeeds', async () => {
+    const { cache, markChunksSynced, deleteChunksForMemory } = makeCache({
       getDirtyChunkGroups: () => [
         { memoryId: 'orphan-mem', projectId: 'proj-1' },
         { memoryId: 'good-mem', projectId: 'proj-1' },
       ],
       getKeyById: (id) => (id === 'good-mem' ? { projectId: 'proj-1', key: 'good-key' } : null),
-      getChunksForMemory: (id) => (id === 'good-mem' ? [{ text: 'c', embedding: [0.1] }] : []),
+      getDirtyChunkRows: (id) => (id === 'good-mem' ? [{ id: 'good-row', text: 'c', embedding: [0.1] }] : []),
     })
     const { supabase, selectCalls } = makeSupabaseMock({
       parentsByKey: { 'good-key': { id: 'remote-good' } },
@@ -220,6 +223,8 @@ describe('SupabaseSync._flushDirtyChunks (via flush()) — full wiring', () => {
     // Only the resolvable group ever reaches a remote parent lookup.
     expect(selectCalls).toEqual([{ projectId: 'proj-1', key: 'good-key' }])
     expect(markChunksSynced).toHaveBeenCalledTimes(1)
-    expect(markChunksSynced).toHaveBeenCalledWith('good-mem')
+    expect(markChunksSynced).toHaveBeenCalledWith(['good-row'])
+    // The orphan group was cleaned up, not synced.
+    expect(deleteChunksForMemory).toHaveBeenCalledWith('orphan-mem')
   })
 })

@@ -234,10 +234,24 @@ function scheduleEmbeddingSync(
     .then(() => generateChunkEmbeddings(plaintext))
     .then(async (result) => {
       if (!result) return
-      cache.upsertChunks(memory.id, projectId, result.chunks)
+      // Fix B (finding 3): encrypt chunk_text at rest with the SAME field
+      // encryption as memories.value when a key is configured — otherwise the
+      // chunk mirror leaks the memory's plaintext even though memories.value is
+      // encrypted. The per-chunk embedding was computed from PLAINTEXT
+      // (result.chunks[].embedding) before this map, exactly as
+      // memories.embedding is computed from plaintextForIndex, so semantic
+      // search is unaffected while nothing plaintext is persisted at rest.
+      const encKey = getEncryptionKey()
+      const chunksAtRest = encKey
+        ? result.chunks.map((c) => ({ text: encryptValue(c.text, encKey), embedding: c.embedding }))
+        : result.chunks
+      // Fix C: markChunksSynced clears dirty only for the exact rows upsertChunks
+      // just inserted, so a concurrent v2 chunk write during the remote await
+      // (below) is not clobbered — see supabase-sync.ts _flushDirtyChunks.
+      const rowIds = cache.upsertChunks(memory.id, projectId, chunksAtRest)
       if (sync) {
-        const ok = await sync.remoteUpsertChunks(projectId, memory.key, result.chunks)
-        if (ok) cache.markChunksSynced(memory.id)
+        const ok = await sync.remoteUpsertChunks(projectId, memory.key, chunksAtRest)
+        if (ok) cache.markChunksSynced(rowIds)
       }
     })
     .catch((err) => {

@@ -680,6 +680,7 @@ describe('recall command', () => {
       select: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
       or: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
       limit: vi.fn().mockResolvedValue({ data: [temporalRow], error: null }),
     }
     mockSupabase.from.mockReturnValue(chain)

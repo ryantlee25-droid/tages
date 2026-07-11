@@ -511,13 +511,20 @@ describe('CLI generateChunkEmbeddings (Task 9)', () => {
     expect(openAiCalls).toBeGreaterThanOrEqual(2)
   })
 
-  it('does not fall back to Ollama — chunk storage is OpenAI-only', async () => {
+  it('tries Ollama FIRST and, when Ollama serves, uses Ollama-space chunks with NO OpenAI call (Fix A — findings 1/7)', async () => {
+    // Fix A reverses the old "chunk storage is OpenAI-only" behavior: chunk
+    // vectors must share the query's vector space (Ollama-first), and Ollama
+    // users must never be billed for OpenAI. Here Ollama succeeds, so the
+    // chunk embeddings come from Ollama and OpenAI is never called.
     let ollamaCalled = false
     let openAiCalls = 0
     globalThis.fetch = vi.fn().mockImplementation((url: string) => {
       if (typeof url === 'string' && url.includes('11434')) {
         ollamaCalled = true
-        return Promise.reject(new Error('should not be called'))
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
+        })
       }
       openAiCalls++
       return Promise.resolve({
@@ -526,8 +533,12 @@ describe('CLI generateChunkEmbeddings (Task 9)', () => {
       })
     }) as unknown as typeof fetch
 
-    await generateChunkEmbeddings('some text')
-    expect(ollamaCalled).toBe(false)
-    expect(openAiCalls).toBeGreaterThan(0)
+    const result = await generateChunkEmbeddings('some text')
+    expect(ollamaCalled).toBe(true)
+    expect(openAiCalls).toBe(0)
+    expect(result).not.toBeNull()
+    // Ollama's 768-dim vector, zero-padded to 1536 (not an OpenAI vector).
+    expect(result!.chunks[0].embedding.slice(0, 768)).toEqual(new Array(768).fill(0.1))
+    expect(result!.chunks[0].embedding.slice(768)).toEqual(new Array(768).fill(0))
   })
 })

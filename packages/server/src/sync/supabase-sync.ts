@@ -221,10 +221,23 @@ export class SupabaseSync {
       // Resolve the local row's (project_id, key) — remoteUpsertChunks is
       // keyed on the business key, not the (divergent) local id.
       const local = this.cache.getKeyById(memoryId)
-      if (!local) continue
-      const chunks = this.cache.getChunksForMemory(memoryId)
+      if (!local) {
+        // Fix F(b): the parent memory is gone locally (forgotten/deleted), so
+        // these chunk rows are orphans that will never resolve. Delete them
+        // instead of skipping forever (which left them dirty=1 and re-scanned
+        // every flush, wasting work and storage).
+        this.cache.deleteChunksForMemory(memoryId)
+        continue
+      }
+      // Fix C: capture the SPECIFIC dirty chunk row ids at flush time and clear
+      // dirty only for those after the round-trip. A concurrent v2 chunk write
+      // (upsertChunks delete-then-insert => fresh ids, dirty=1) landing during
+      // the network await below keeps its own dirty flag and syncs next cycle,
+      // instead of being clobbered by a memory-wide markChunksSynced(memoryId).
+      const dirtyRows = this.cache.getDirtyChunkRows(memoryId)
+      const chunks = dirtyRows.map((r) => ({ text: r.text, embedding: r.embedding }))
       const ok = await this.remoteUpsertChunks(projectId, local.key, chunks)
-      if (ok) this.cache.markChunksSynced(memoryId)
+      if (ok) this.cache.markChunksSynced(dirtyRows.map((r) => r.id))
     }
   }
 

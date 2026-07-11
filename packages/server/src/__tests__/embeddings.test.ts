@@ -372,12 +372,42 @@ describe('generateChunkEmbeddings (Task 9)', () => {
     return typeof url === 'string' && url.includes('11434')
   }
 
-  it('returns null when OPENAI_API_KEY is not configured (no provider)', async () => {
+  it('returns null when NO provider is available (Ollama down + no OPENAI_API_KEY)', async () => {
     delete process.env.OPENAI_API_KEY
-    globalThis.fetch = vi.fn() as unknown as typeof fetch
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('connection refused')) as unknown as typeof fetch
 
     const result = await generateChunkEmbeddings('some memory value')
     expect(result).toBeNull()
+  })
+
+  it('tries Ollama FIRST and uses Ollama-space chunks with NO OpenAI call when Ollama serves (Fix A — findings 1/7)', async () => {
+    // Fix A: chunk vectors must share the query vector space (Ollama-first) and
+    // Ollama-only users must never be billed for OpenAI. OPENAI_API_KEY is set
+    // (beforeEach) yet OpenAI must NOT be called because Ollama succeeds.
+    let ollamaCalled = false
+    let openAiCalls = 0
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('11434')) {
+        ollamaCalled = true
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
+        })
+      }
+      openAiCalls++
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ embedding: new Array(1536).fill(0.05) }] }),
+      })
+    }) as unknown as typeof fetch
+
+    const result = await generateChunkEmbeddings('some memory value')
+    expect(ollamaCalled).toBe(true)
+    expect(openAiCalls).toBe(0)
+    expect(result).not.toBeNull()
+    // Ollama's 768-dim vector zero-padded to 1536 — not an OpenAI vector.
+    expect(result!.chunks[0].embedding.slice(0, 768)).toEqual(new Array(768).fill(0.1))
+    expect(result!.chunks[0].embedding.slice(768)).toEqual(new Array(768).fill(0))
   })
 
   it('single-chunk parity for short text: one chunk row, pooled equals the single embedding', async () => {
@@ -487,13 +517,13 @@ describe('generateChunkEmbeddings (Task 9)', () => {
     expect(openAiCalls).toBeGreaterThanOrEqual(2)
   })
 
-  it('does not fall back to Ollama — chunk storage is OpenAI-only', async () => {
-    let ollamaCalled = false
+  it('falls through to OpenAI chunks when Ollama is DOWN (eval config: no Ollama, OPENAI_API_KEY set)', async () => {
+    // Fix A must not regress the OpenAI-only eval config: with Ollama
+    // unavailable and OPENAI_API_KEY set, chunks are still OpenAI vectors.
     let openAiCalls = 0
     globalThis.fetch = vi.fn().mockImplementation((url: string) => {
       if (typeof url === 'string' && url.includes('11434')) {
-        ollamaCalled = true
-        return Promise.reject(new Error('should not be called'))
+        return Promise.reject(new Error('connection refused'))
       }
       openAiCalls++
       return Promise.resolve({
@@ -502,9 +532,10 @@ describe('generateChunkEmbeddings (Task 9)', () => {
       })
     }) as unknown as typeof fetch
 
-    await generateChunkEmbeddings('some text')
-    expect(ollamaCalled).toBe(false)
+    const result = await generateChunkEmbeddings('some text')
+    expect(result).not.toBeNull()
     expect(openAiCalls).toBeGreaterThan(0)
+    expect(result!.chunks[0].embedding).toEqual(new Array(1536).fill(0.05))
   })
 
   function arraysEqual(a: number[], b: number[]): boolean {

@@ -329,7 +329,12 @@ export class SqliteCache {
     projectId: string,
     chunks: Array<{ text: string; embedding: number[] }>,
     dirty = true,
-  ): void {
+  ): string[] {
+    // Returns the freshly-inserted chunk row ids (Fix C): the caller captures
+    // them BEFORE the remote round-trip and clears dirty only for THOSE ids, so
+    // a concurrent v2 chunk write (delete-then-insert => new ids) during the
+    // await is never clobbered by a memory-wide dirty=0.
+    const ids: string[] = []
     const replace = this.db.transaction(() => {
       this.db.prepare('DELETE FROM memory_chunks WHERE memory_id = ?').run(memoryId)
       const insert = this.db.prepare(`
@@ -337,10 +342,13 @@ export class SqliteCache {
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `)
       chunks.forEach((chunk, index) => {
-        insert.run(_randomUUID(), memoryId, projectId, index, chunk.text, JSON.stringify(chunk.embedding), dirty ? 1 : 0)
+        const id = _randomUUID()
+        ids.push(id)
+        insert.run(id, memoryId, projectId, index, chunk.text, JSON.stringify(chunk.embedding), dirty ? 1 : 0)
       })
     })
     replace()
+    return ids
   }
 
   /** Distinct (memory_id, project_id) pairs with at least one dirty chunk row — drives flush()'s remote chunk sync. */
@@ -361,9 +369,42 @@ export class SqliteCache {
       .map((r) => ({ text: r.chunk_text, embedding: JSON.parse(r.embedding as string) as number[] }))
   }
 
-  /** Clear the dirty flag for a memory's chunk rows after a successful remote sync. */
-  markChunksSynced(memoryId: string): void {
-    this.db.prepare('UPDATE memory_chunks SET dirty = 0 WHERE memory_id = ?').run(memoryId)
+  /**
+   * Dirty chunk rows for a memory, WITH their row ids (Fix C). `_flushDirtyChunks`
+   * captures these ids at flush time and passes them to `markChunksSynced` after
+   * the remote round-trip so it clears dirty only for the exact rows it synced —
+   * a concurrent v2 chunk write (delete-then-insert => fresh ids, dirty=1)
+   * during the network await keeps its dirty flag and is picked up next cycle.
+   */
+  getDirtyChunkRows(memoryId: string): Array<{ id: string; text: string; embedding: number[] }> {
+    const rows = this.db.prepare(
+      'SELECT id, chunk_text, embedding FROM memory_chunks WHERE memory_id = ? AND dirty = 1 ORDER BY chunk_index'
+    ).all(memoryId) as { id: string; chunk_text: string; embedding: string | null }[]
+    return rows
+      .filter((r) => r.embedding)
+      .map((r) => ({ id: r.id, text: r.chunk_text, embedding: JSON.parse(r.embedding as string) as number[] }))
+  }
+
+  /**
+   * Clear the dirty flag for the SPECIFIC chunk rows just synced, by row id
+   * (Fix C) — NOT by memory_id. Clearing memory-wide would clobber a concurrent
+   * v2 chunk write that landed (with fresh ids) during the remote round-trip.
+   */
+  markChunksSynced(chunkRowIds: string[]): void {
+    if (chunkRowIds.length === 0) return
+    const placeholders = chunkRowIds.map(() => '?').join(',')
+    this.db.prepare(`UPDATE memory_chunks SET dirty = 0 WHERE id IN (${placeholders})`).run(...chunkRowIds)
+  }
+
+  /**
+   * Delete ALL chunk rows for a memory (Fix F). Called (a) when the parent
+   * memory is forgotten/deleted so its mirror chunk rows don't linger as
+   * orphans, and (b) from `_flushDirtyChunks` when the parent can no longer be
+   * resolved locally (getKeyById returns null) so dirty orphan rows aren't
+   * retried forever.
+   */
+  deleteChunksForMemory(memoryId: string): void {
+    this.db.prepare('DELETE FROM memory_chunks WHERE memory_id = ?').run(memoryId)
   }
 
   /**
@@ -451,9 +492,19 @@ export class SqliteCache {
   }
 
   deleteByKey(projectId: string, key: string): boolean {
+    // Fix F(a): resolve the row id BEFORE deleting the memory so its mirror
+    // memory_chunks rows can be cleaned up in the same call. Without this, chunk
+    // rows survive a forget/delete, stay dirty=1, and _flushDirtyChunks retries
+    // them forever (parent gone => getKeyById null) while wasting storage.
+    const row = this.db.prepare(
+      'SELECT id FROM memories WHERE project_id = ? AND key = ?'
+    ).get(projectId, key) as { id: string } | undefined
     const result = this.db.prepare(
       'DELETE FROM memories WHERE project_id = ? AND key = ?'
     ).run(projectId, key)
+    if (row) {
+      this.db.prepare('DELETE FROM memory_chunks WHERE memory_id = ?').run(row.id)
+    }
     return result.changes > 0
   }
 

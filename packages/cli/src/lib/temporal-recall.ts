@@ -28,6 +28,12 @@ export interface TemporalCandidateRow {
   [key: string]: unknown
 }
 
+// Fix D: generous, deterministic fetch cap for the date-carrying candidate
+// window (see fetchTemporalCandidates). Large enough to contain effectively all
+// of a project's date-carrying memories so the client-side proximity sort sees
+// the true nearest rows rather than an arbitrary truncated subset.
+const TEMPORAL_FETCH_CAP = 1000
+
 // Proximity formula duplicated from temporal-sort.ts's private
 // reorderProximity (per-package duplication convention — see that file's
 // header comment). Keep in sync by hand if either changes.
@@ -50,6 +56,16 @@ export async function fetchTemporalCandidates(
   const targetDate = extractTargetDate(query, new Date())
   if (!targetDate) return []
 
+  // Fix D: previously `.limit(limit)` with NO ORDER BY returned an ARBITRARY
+  // subset (PostgREST default ordering is unspecified), so the memory closest to
+  // the target date could be dropped BEFORE the client-side proximity sort below
+  // ever ran. Date-carrying memories are a small subset of a project's memories,
+  // so we fetch a generous, DETERMINISTIC (ordered) window that in practice
+  // contains ALL of them — guaranteeing the true nearest-by-proximity rows are
+  // present for the sort. Chosen over a two-sided (>= target ASC / < target
+  // DESC) fetch because proximityScore coalesces referenced_date AND
+  // relative_date; a single-column two-sided bound can't capture rows whose
+  // nearest date lives in the other column.
   const { data, error } = await supabase
     .from('memories')
     .select(
@@ -58,7 +74,8 @@ export async function fetchTemporalCandidates(
     .eq('project_id', projectId)
     .eq('status', 'live')
     .or('referenced_date.not.is.null,relative_date.not.is.null')
-    .limit(limit)
+    .order('referenced_date', { ascending: true, nullsFirst: false })
+    .limit(Math.max(limit, TEMPORAL_FETCH_CAP))
 
   if (error || !data) return []
 

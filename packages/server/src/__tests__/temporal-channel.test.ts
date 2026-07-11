@@ -27,18 +27,21 @@ function makeMemory(overrides: Partial<Memory> = {}): Memory {
 }
 
 // Minimal fake SupabaseClient covering only the query-builder surface
-// fetchTemporalCandidates uses (.from().select().eq().eq().or().limit()).
+// fetchTemporalCandidates uses (.from().select().eq().eq().or().order().limit()).
 function makeFakeSupabase(rows: unknown[]) {
+  const calls = { limit: [] as number[], order: [] as unknown[][] }
   const builder = {
     select: vi.fn(() => builder),
     eq: vi.fn(() => builder),
     or: vi.fn(() => builder),
-    limit: vi.fn(async () => ({ data: rows, error: null })),
+    order: vi.fn((...args: unknown[]) => { calls.order.push(args); return builder }),
+    limit: vi.fn(async (n: number) => { calls.limit.push(n); return { data: rows, error: null } }),
   }
   const from = vi.fn(() => builder)
-  return { from, __builder: builder } as unknown as {
+  return { from, __builder: builder, __calls: calls } as unknown as {
     from: typeof from
     __builder: typeof builder
+    __calls: typeof calls
   }
 }
 
@@ -96,6 +99,24 @@ describe('fetchTemporalCandidates', () => {
 
     expect(supabase.from).toHaveBeenCalledWith('memories')
     expect(result.map((m) => m.id)).toEqual(['near', 'far'])
+  })
+
+  it('fetches a deterministic, generously-capped window (Fix D) instead of an arbitrary .limit(limit) truncation', async () => {
+    const near = {
+      id: 'near', project_id: 'proj-1', key: 'k', value: 'v', type: 'convention',
+      source: 'manual', status: 'live', confidence: 1, file_paths: [], tags: [],
+      referenced_date: '2026-07-09', created_at: '2026-07-09T00:00:00.000Z', updated_at: '2026-07-09T00:00:00.000Z',
+    }
+    const supabase = makeFakeSupabase([near])
+
+    await fetchTemporalCandidates(supabase as never, 'proj-1', 'what happened on July 9, 2026', 20)
+
+    // Deterministic ordering (not arbitrary PostgREST default) ...
+    expect(supabase.__builder.order).toHaveBeenCalledWith('referenced_date', { ascending: true, nullsFirst: false })
+    // ... and a cap far larger than the passed pool limit (20), so effectively
+    // ALL date-carrying rows are returned for the client proximity sort — the
+    // nearest-by-date row can no longer be truncated away before ranking.
+    expect(supabase.__calls.limit[0]).toBe(1000)
   })
 
   it('excludes rows with no content-anchored date (zero proximity)', async () => {

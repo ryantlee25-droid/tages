@@ -135,11 +135,17 @@ export async function handleRecall(
         // rerank at all — only users hitting the remote-hybrid fallback path
         // see Task 6/7's effect. This is a known, documented scope boundary,
         // not a bug to fix here.
-        const reranked = await rerankMemories(fused, args.query, RERANK_TOP_K)
+        // Fix 4 (finding 4): decrypt the candidate memories BEFORE rerank so the
+        // cross-encoder scores PLAINTEXT values, not ciphertext. Previously
+        // decryptMemories ran only after rerank + reorder, so on an
+        // encrypted-at-rest project the reranker judged opaque `enc:v1:...`
+        // blobs and produced meaningless relevance scores.
+        const decrypted = decryptMemories(fused)
+        const reranked = await rerankMemories(decrypted, args.query, RERANK_TOP_K)
         const reordered = reorderByTemporalProximity(reranked, args.query)
         const limited = reordered.slice(0, limit)
 
-        let trimmed = decryptMemories(limited)
+        let trimmed = limited
         if (args.maxTokens !== undefined) {
           trimmed = budgetedResults(trimmed, args.maxTokens, formatMemory)
         }

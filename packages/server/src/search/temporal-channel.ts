@@ -32,6 +32,12 @@ import { isTemporalQuery, extractTargetDate } from './temporal-query'
 import { reorderProximity } from './ranker'
 import { dbRowToMemory } from '../sync/supabase-sync'
 
+// Fix D: generous, deterministic fetch cap for the date-carrying candidate
+// window (see fetchTemporalCandidates). Large enough to contain effectively all
+// of a project's date-carrying memories so the client-side proximity sort sees
+// the true nearest rows rather than an arbitrary truncated subset.
+const TEMPORAL_FETCH_CAP = 1000
+
 export async function fetchTemporalCandidates(
   supabase: SupabaseClient,
   projectId: string,
@@ -44,17 +50,25 @@ export async function fetchTemporalCandidates(
   const targetDate = extractTargetDate(query, anchor)
   if (!targetDate) return []
 
-  // Approximate PostgREST filter shape — exact syntax not hand-tested
-  // against the live schema in this implementation pass (mirrors the CLI
-  // Task 3 spec's own "not hand-tested" caveat); verify during the real
-  // MCP-server probe called for in Task 7's E2E Validation.
+  // Fix D: previously `.limit(limit)` with NO ORDER BY returned an ARBITRARY
+  // subset (PostgREST default ordering is unspecified), so the memory closest
+  // to the target date could be dropped BEFORE the client-side proximity sort
+  // below ever saw it. Date-carrying memories are a small subset of a project's
+  // memories, so we fetch a generous, DETERMINISTIC (ordered) window that in
+  // practice contains ALL of them — guaranteeing the true nearest-by-proximity
+  // rows are present for the client sort. Chosen over a two-sided
+  // (referenced_date >= target ASC / < target DESC) fetch because the proximity
+  // score here coalesces referenced_date AND relative_date; a single-column
+  // two-sided bound can't correctly capture rows whose nearest date lives in
+  // the other column.
   const { data, error } = await supabase
     .from('memories')
     .select('*')
     .eq('project_id', projectId)
     .eq('status', 'live')
     .or('referenced_date.not.is.null,relative_date.not.is.null')
-    .limit(limit)
+    .order('referenced_date', { ascending: true, nullsFirst: false })
+    .limit(Math.max(limit, TEMPORAL_FETCH_CAP))
 
   if (error || !data) return []
 
