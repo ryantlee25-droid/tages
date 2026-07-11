@@ -65,6 +65,33 @@ describe('generateAnswer (Task 2 + Task 5: type-aware + Chain-of-Note)', () => {
     const { cost } = await generateAnswer('q', [], 'single-session-user')
     expect(cost).toEqual({ prompt_tokens: 42, completion_tokens: 7 })
   })
+
+  describe('referenceDate (Task 1: temporal reader anchor)', () => {
+    it('forwards a passed referenceDate into the user-prompt content sent to the mocked OpenAI client', async () => {
+      createMock.mockResolvedValue(mockChatResponse('ANSWER: 3 weeks ago'))
+
+      await generateAnswer(
+        'How long ago did that happen?',
+        ['mem1'],
+        'temporal-reasoning',
+        '2023/04/10 (Mon) 23:07',
+      )
+
+      const call = createMock.mock.calls[0]![0] as { messages: Array<{ content: string }> }
+      expect(call.messages[1]!.content).toContain(
+        'Reference date (treat as "today" for any relative-date computation): 2023/04/10 (Mon) 23:07',
+      )
+    })
+
+    it('omits the reference-date line from the user-prompt content when referenceDate is not passed', async () => {
+      createMock.mockResolvedValue(mockChatResponse('ANSWER: ok'))
+
+      await generateAnswer('q', ['mem1'], 'multi-session')
+
+      const call = createMock.mock.calls[0]![0] as { messages: Array<{ content: string }> }
+      expect(call.messages[1]!.content).not.toContain('Reference date')
+    })
+  })
 })
 
 describe('judge (Task 1: per-type judge branching)', () => {
