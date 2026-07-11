@@ -14,6 +14,59 @@ interface RecallOptions {
   all?: boolean
 }
 
+// Vector similarity threshold for semantic_recall, tunable without a code
+// change via TAGES_RECALL_THRESHOLD (see PLAN.md Task 4). Default stays 0.3
+// unless a calibration rerun shows a clear win at a different value.
+function getRecallThreshold(): number {
+  const raw = process.env.TAGES_RECALL_THRESHOLD
+  if (raw === undefined || raw === '') return 0.3
+  const parsed = parseFloat(raw)
+  if (!Number.isFinite(parsed)) return 0.3
+  // Clamp into the valid cosine-distance range. A raw -1 would make the vector
+  // filter `(1 - cos) > -1` always true (every embedded memory returned,
+  // unranked); a raw 2 would reject everything. Clamp rather than trust the
+  // env value verbatim.
+  return Math.min(1, Math.max(0, parsed))
+}
+
+// Directional near-duplicate check: returns true only when `candidate` adds
+// nothing new over `kept` — i.e. the candidate's value is fully contained in
+// the already-kept value. Direction matters: a candidate that is a SUPERSET of
+// (longer than) a kept row is NOT a duplicate, because it carries extra unique
+// content and must be preserved. The >=40-char guard avoids pruning on a
+// coincidental short-substring match. Deliberately narrow — it should rarely
+// fire at session-level ingestion granularity.
+function isContainedInKept(candidate: string, kept: string): boolean {
+  const normCand = candidate.trim().toLowerCase().replace(/\s+/g, ' ')
+  const normKept = kept.trim().toLowerCase().replace(/\s+/g, ' ')
+  if (!normCand || !normKept) return false
+  if (normCand === normKept) return true
+  // Only prune when the candidate is at least 40 chars, so we never drop a
+  // short distinct row just because its text happens to appear inside a longer
+  // kept row by coincidence.
+  if (normCand.length < 40) return false
+  return normKept.includes(normCand)
+}
+
+// Drops later (lower-ranked) rows whose value adds no new content over an
+// earlier (higher-ranked) row — i.e. the later row's value is fully contained
+// in a kept row. Expects `rows` to already be sorted by rank/relevance so
+// "earlier" means "higher-ranked". Never drops a row that is a superset of a
+// kept row (it carries new content); the top-ranked row is always kept.
+function dedupeNearDuplicateContent(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  const kept: Record<string, unknown>[] = []
+  for (const row of rows) {
+    const value = row.value
+    const isDuplicate =
+      typeof value === 'string' &&
+      kept.some((k) => typeof k.value === 'string' && isContainedInKept(value, k.value as string))
+    if (!isDuplicate) {
+      kept.push(row)
+    }
+  }
+  return kept
+}
+
 export async function recallCommand(query: string | undefined, options: RecallOptions) {
   const config = loadProjectConfig(options.project)
   if (!config) {
@@ -85,7 +138,7 @@ export async function recallCommand(query: string | undefined, options: RecallOp
           p_embedding: embeddingStr,
           p_type: options.type || null,
           p_limit: limit,
-          p_threshold: 0.3,
+          p_threshold: getRecallThreshold(),
         })
         searchMethod = 'hybrid (trigram + semantic)'
       }
@@ -118,13 +171,17 @@ export async function recallCommand(query: string | undefined, options: RecallOp
 
       // Sort by similarity desc, take top N
       merged.sort((a, b) => ((b.similarity as number) || 0) - ((a.similarity as number) || 0))
+      // Drop near-duplicate content (e.g. two overlapping long-session chunks
+      // that both cleared threshold), keeping the higher-ranked occurrence.
+      // Runs after the by-id dedup/sort above and before temporal reordering.
+      const contentDeduped = dedupeNearDuplicateContent(merged)
       // Temporal anchoring (migration 0060): when the query is asking about
       // timing rather than content, reorder by date proximity/recency on top
       // of the similarity ordering above. Only semantic_recall rows carry
       // referenced_date/relative_date (recall_memories/trigram rows fall back
       // to created_at, which every row has) — see 0060's migration header for
       // why only hybrid_recall/semantic_recall were updated.
-      const temporallySorted = sortByTemporalProximity(merged, query!)
+      const temporallySorted = sortByTemporalProximity(contentDeduped, query!)
       data = temporallySorted.slice(0, limit)
 
       if (semanticResult.data === null) searchMethod = 'trigram'
@@ -140,9 +197,18 @@ export async function recallCommand(query: string | undefined, options: RecallOp
       const typeColor = getTypeColor(row.type as string)
       console.log(`  ${typeColor((row.type as string).padEnd(12))} ${chalk.bold(row.key as string)}`)
       console.log(`  ${chalk.dim('             ')}${row.value}`)
-      if (row.similarity) {
+      if (row.similarity !== undefined && row.similarity !== null) {
         const matchType = row.match_type ? ` [${row.match_type}]` : ''
         console.log(`  ${chalk.dim('             ')}${chalk.dim(`similarity: ${(row.similarity as number).toFixed(2)}${matchType}`)}`)
+      }
+      // Temporal anchoring (migration 0060): mirror the server's
+      // formatMemoryBody (packages/server/src/tools/recall.ts) so CLI users
+      // see the same extracted dates MCP-driven agents already get.
+      if (row.referenced_date || row.relative_date) {
+        const dateBits: string[] = []
+        if (row.referenced_date) dateBits.push(`referenced ${(row.referenced_date as string).slice(0, 10)}`)
+        if (row.relative_date) dateBits.push(`relative ${(row.relative_date as string).slice(0, 10)}`)
+        console.log(`  ${chalk.dim('             ')}${chalk.dim(`Dates: ${dateBits.join(', ')}`)}`)
       }
       console.log()
     }

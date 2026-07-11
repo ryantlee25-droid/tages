@@ -146,6 +146,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-07-10 (precision + recall)
+- **Reader temporal fix + recall widening.** The eval reader now receives the question's reference date: temporal-reasoning +15.4pt, knowledge-update +25pt, overall 54%→62% on the 50q LongMemEval calibration (mechanism row-verified: "28 weeks ago"→"2 weeks ago"). Added `word_similarity()` to `recall_memories`/`hybrid_recall` (migration 0061) to recover long-single-session recall dilution. CLI recall: surfaces referenced/relative dates, tunable `TAGES_RECALL_THRESHOLD` (clamped [0,1]), conservative content dedup. Migration 0061 validated on dev; recall-lift measurement + prod apply pending.
+
 ### 2026-07-10
 - **fix(cli): one-shot `tages remember` now generates + persists a durable embedding.** The CLI write path never embedded (only the long-lived MCP server did via fire-and-forget), so CLI-stored memories were invisible to semantic search (trigram-only). Also fixed: embedding was dropped on re-remember of an existing key (id vs project_id+key mismatch), and dropped in sync because rowToMemory never reconstructed it.
 

@@ -148,7 +148,12 @@ async function main() {
       await store.ingest(q)
       const memories = await store.recall(q.question, args.topK)
       const isAbstention = q.question_id.endsWith('_abs')
-      const { answer, cost: genCost } = await generateAnswer(q.question, memories, q.question_type)
+      const { answer, cost: genCost } = await generateAnswer(
+        q.question,
+        memories,
+        q.question_type,
+        q.question_date,
+      )
       const { correct, cost: judgeCost } = await judge(
         q.question,
         q.answer,

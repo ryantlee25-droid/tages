@@ -488,3 +488,213 @@ A LongMemEval-driven investigation (this session, confirmed empirically) found t
 - [ ] Migration 0060 applied cleanly against a scratch/dev Supabase instance; `hybrid_recall`/`semantic_recall` RPC callers outside `packages/server`/`packages/cli` (if any) re-verified before merging
 - [ ] Quality gates pass (code review, tests, security review)
 - [ ] PR opened with coverage gaps noted in description (multi-row storage and LLM-assisted date extraction explicitly flagged as deferred, not silent gaps)
+
+
+---
+
+# Plan: Memory Retrieval Precision/Recall — Reader-First (Post-Tier-1 LongMemEval Findings)
+_Created: 2026-07-10 | Type: Bug Fix + New Feature | Base branch: `main`_
+
+Note on scope relative to the plan above ("Tier-1 Retrieval-Quality Fixes"): that plan shipped and merged (`c01ab62`, PR #67) — chunking/pooling fix, chunk-size tuning to ~4k chars/15% overlap, and 3-date temporal anchoring (migration 0060, `referenced_date`/`relative_date` columns + server-side `formatMemoryBody` surfacing) are all live on `main`. This plan is the direct follow-up: this session ran the LongMemEval harness end-to-end against that shipped code (`tages-cli` backend, OpenAI `text-embedding-3-small`, n=50, seed=42) and used the actual failure data — not assumptions — to find the next levers. Two of this plan's findings are new discoveries from reading that raw output, not carried over from the prior plan: (1) the harness's synthetic reader is never given the question's own reference date, and (2) the Tier-1 chunking fix's mean-pooling tradeoff (explicitly flagged as a risk in that plan) is empirically causing complete retrieval misses on long single-session memories.
+
+## Goal
+Move LongMemEval overall accuracy and recall@k above the measured baseline (54% / 78%) by fixing the two concrete, evidence-backed root causes found this session — the reader's missing temporal anchor and long-document retrieval dilution — ahead of the more speculative candidate levers (reranking, hybrid-weight tuning), and close the CLI/server date-surfacing parity gap for real product users.
+
+## Baseline (measured this session — source of truth for every task's "did it work")
+
+Run: `tages-tages-cli-n50-seed42-2026-07-10T04-04-16-198Z`, `eval/longmemeval/results/tages-t2-50q-20260709.json`, backend `tages-cli`, embedder OpenAI `text-embedding-3-small` (`TAGES_OPENAI_EMBED=1`), n=50, seed=42, dataset `longmemeval_oracle` (cleaned split).
+
+| Metric | Overall | temporal-reasoning | multi-session | knowledge-update | single-session-user | single-session-assistant | single-session-preference |
+|---|---|---|---|---|---|---|---|
+| `overall_accuracy` | **54.0%** | 23.1% | 69.2% | 62.5% | 42.9% | 100% | 33.3% |
+| `recall_at_k` | **78.0%** | 84.6% | 69.2% | 100% | 42.9% | 100% | 66.7% |
+
+Additional facts derived from the raw `details[]` array in that JSON this session (not in the summary numbers — found by reading actual failing rows, the same technique that caught the embedding/temporal bugs this session):
+
+- **11 of 50 questions (22%) got `recalled_memory_count == 0`** — `tages recall` returned literally nothing, not "the wrong thing." Spans temporal-reasoning (2), multi-session (4, 2 of which are `_abs` abstention questions scored "correct" only because declining on zero evidence is the right abstention behavior — a metric artifact, not a real win), single-session-user (4), single-session-preference (1).
+- Every zero-hit question's haystack is dominated by **one very long single session (13,348–18,219 chars)** — 3.3–4.6x the Tier-1 plan's 4,000-char chunk target, meaning that memory's embedding is a mean-pool of 4-5 chunk vectors, and its trigram `similarity()` score is diluted by sheer length. Confirmed by direct measurement against `data/longmemeval_oracle.json` this session.
+- Direct evidence of reader-side date-arithmetic failure: question `gpt4_e072b769` (temporal-reasoning), gold memory retrieved (`recalled_gold_hit: true`), ground truth "3 weeks ago," model answered "28 weeks ago" — a clean arithmetic error, not a retrieval miss. Of the 13 wrong temporal-reasoning answers, 8 had a gold hit (reader-bound) vs 2 with `recalled_memory_count: 0` (retrieval-bound) and the remainder ambiguous.
+- `single-session-user`'s `recall_at_k` (42.9%) equals its `overall_accuracy` (42.9%) — this type is **retrieval-bound**, not reader-bound: accuracy cannot exceed what's retrieved, and it isn't.
+
+## Scope
+
+**In scope:**
+- `eval/longmemeval/src/{types,answer,prompts,run}.ts` — the synthetic reader is missing the dataset's own `question_date` field (present in the data, typed in `types.ts:20`, silently dropped between `run.ts` and `answer.ts`)
+- `supabase/migrations/0061_*.sql` — new migration (next available number; schema tip is 0060 on `main`)
+- `packages/cli/src/commands/recall.ts` — CLI/server date-surfacing parity gap + dedup/threshold pass
+- `packages/server/src/search`, `packages/server/src/tools/recall.ts` — read-only reference for parity (no changes needed; server side already surfaces dates per Tier-1)
+
+**Out of scope (evaluated, cut, with reasoning):**
+- **Multi-row/child-table chunk storage** (the "real" fix for vector-pooling dilution on long documents) — the Tier-1 plan already deferred this as a bigger, schema/RPC/ranker-aggregation change; this session's zero-hit evidence makes the case stronger, but it's still an L/XL redesign. Task 2 below ships a cheaper trigram-side mitigation now; multi-row storage stays a flagged Tier-2 follow-on if Task 2's cheaper fix proves insufficient on rerun.
+- **`packages/server/src/search/ranker.ts` weight/threshold tuning** — verified this session: the CLI's Supabase-backed recall path (which the LongMemEval harness exercises via `tages recall`) never imports `ranker.ts` at all; `ranker.ts` is exclusively the MCP server tool's local-SQLite-cache path (`packages/server/src/tools/recall.ts`). Tuning it would be real product value for MCP-tool users but is **not measurable by this harness** — cut from this plan; flagged as a separate follow-on that would need a new harness backend calling the MCP tool directly.
+- **HyDE / multi-query expansion** — cut. Task 2's `word_similarity()` fix targets the exact same failure mode (short query vs. long target dilution) far more cheaply, with no added LLM call latency/cost. Revisit only if Task 2's rerun doesn't recover the zero-hit questions.
+- **A true cross-encoder or LLM-judge reranker** — evaluated per the brief's candidate list, included as Task 5 but demoted to lowest priority and scoped as a cheap heuristic (dedup + trim), not a new model/LLM call. Reasoning: `multi-session` and `knowledge-update`'s `recall_at_k` already ≈ `overall_accuracy` (retrieval-bound, reranking can't help), and `temporal-reasoning`'s gap is an arithmetic failure a reranker can't fix either. The one type where reranking could plausibly help (`single-session-preference`, recall@k 67% vs. accuracy 33%) is a 3-of-50-question stratum — low statistical power to prove or disprove impact.
+- `apps/dashboard` — Task 2's migration changes only the internal `WHERE`/scoring expression inside `recall_memories`/`hybrid_recall`; `RETURNS TABLE` shape is unchanged, so dashboard's two `recall_memories` callers (`command-palette.tsx`, `memory-table.tsx`) are unaffected. No dashboard code changes needed, but they're on the migration's blast-radius grep list (see Task 2's pre-mortem).
+- Production migration application — **DEV ONLY**. Per Ryan's explicit instruction, migration 0061 is applied to a scratch/DEV Supabase project (`longmemeval-sandbox` or equivalent) for this entire effort. Never apply to prod (`wezagdgpvwfywjoxztfs`) as part of this plan.
+
+**Ambiguities resolved:**
+- `word_similarity()` threshold for the new trigram-dilution fix → default **0.4** (conservative; pg_trgm's own `<%` operator default GUC is 0.6, but that operator is tuned for exact-word search UIs, not this asymmetric long-document case — 0.4 is a starting point, not a hard commitment; Task 2's own calibration rerun is the tuning signal).
+- `question_date` passed to the reader **as-is** (the dataset's raw string, e.g. `"2023/04/10 (Mon) 23:07"`), not reformatted to ISO — lowest-risk change, GPT-4o parses this format natively; reformatting is unnecessary surface area.
+- Task 5 (rerank) implementation → a **heuristic** pass (session-id dedup + rank-preserving trim), not a new LLM call or ML model — matches the low-confidence-of-impact finding above; a real reranker is not justified by current evidence.
+- `TAGES_EVAL_PROJECT` → `longmemeval-sandbox`, assumed provisioned on the DEV Supabase instance (per project memory, `ugogdqzhhnuzwgcaovty`). Verified before Task 2's migration is applied (see Open Questions).
+
+## Critical infra fact — READ BEFORE RUNNING ANY E2E VALIDATION
+
+Verified this session: `which tages` → `/Users/ryan/.npm-global/bin/tages` → symlinked (`npm link`) to `/Users/ryan/.npm-global/lib/node_modules/@tages/cli` → symlinked to **this repo's `packages/cli`**, and the package's `bin` entry points at `./dist/packages/cli/src/index.js` (compiled output, not `src/`). The eval harness's `tages-cli` backend shells out to this binary via `execFileSync('tages', ...)` (`eval/longmemeval/src/memory.ts:178,197,214`).
+
+**Editing `packages/cli/src/commands/recall.ts` (or any CLI source) has ZERO effect on any eval harness rerun until `pnpm --filter @tages/cli build` regenerates `dist/`.** This is exactly the class of bug the coordinator flagged from this session's earlier failures (changes that pass unit tests against `src/` but are invisible to the real binary). Every task below that touches CLI source states this explicitly as a required pre-rerun step — do not skip it, and do not trust a "no change" harness result without first confirming the rebuild happened (`ls -la dist/packages/cli/src/commands/recall.js` timestamp newer than the source edit).
+
+## Type Dependencies
+No new shared types. `LongMemEvalQuestion.question_date` (`eval/longmemeval/src/types.ts:20`) already exists and is populated in the real dataset (verified: `data/longmemeval_oracle.json`, e.g. `"2023/04/10 (Mon) 23:07"`) — Task 1 is purely wiring an existing field through, not adding one. `Memory.referencedDate`/`relativeDate` (`packages/shared/src/types.ts`, added by migration 0060 / Tier-1) are consumed read-only by Task 3 — no schema change.
+
+## End-to-End Validation Gate (hard gate — applies to every task below)
+
+No task in this plan is "done" on green unit tests + code review alone. Every task must clear this gate before being marked complete, matching this session's own recurring failure mode (1089 passing unit tests + clean White review, but the temporal reorder discarded relevance, embeddings were never generated, and a migration would have broken prod — all invisible to unit tests + review).
+
+**Standard rerun procedure** (same command for every task, only the comparison target changes):
+
+```bash
+# 0. MANDATORY if the task touched packages/cli/src/** — rebuild, or the rerun tests stale dist:
+pnpm --filter @tages/cli build
+
+# 1. Rerun the 50q calibration sample, same seed as baseline, DEV project only:
+cd eval/longmemeval
+TAGES_OPENAI_EMBED=1 TAGES_EVAL_PROJECT=longmemeval-sandbox \
+  pnpm run -- --n 50 --seed 42 --backend tages-cli \
+  --output results/tages-<task-id>-$(date +%Y%m%d-%H%M).json
+
+# 2. Diff against baseline (results/tages-t2-50q-20260709.json) on:
+#    overall_accuracy, accuracy_by_type[<task's target type(s)>], recall_at_k,
+#    recall_at_k_by_type[<task's target type(s)>]
+```
+
+**Pass/fail rule:** a task's target metric must move in the expected direction versus baseline. No movement or a regression means the task **failed**, regardless of unit test / code review status — fix or revert, don't ship. Non-target metrics must not regress by more than noise (this is a 50-question sample; a ±1 question swing in a type with n≈3-7 is noise, a swing in `overall_accuracy` or a type with n≈13 is not).
+
+**Beyond the aggregate number — read the raw rows.** For every task, before declaring success, open the new results JSON's `details[]` array and manually read 2-3 of the previously-wrong rows this task targeted (question ids are named per-task below). Confirm the *mechanism* changed (e.g. Task 1: does `model_answer` for `gpt4_e072b769` now show correct arithmetic, not just "did the aggregate percentage go up"). This is the exact technique that surfaced every real finding in this plan — a moved percentage with an unchanged failure mechanism is not trustworthy.
+
+**Product-behavior smoke checklist** (classes of bugs unit tests structurally cannot catch — run once, at the end, on the combined diff, not per-task):
+- [ ] **Dist freshness**: `packages/cli/dist/packages/cli/src/commands/recall.js` (and any other touched compiled file) has a mtime newer than the last source commit in this plan, confirming the build in the gate procedure above actually ran and wasn't skipped.
+- [ ] **Real CLI round-trip, not mocked**: `tages remember` a memory containing an explicit date into a real (DEV) project, then `tages recall` it and visually inspect the printed terminal output — not a test assertion — for the expected new content (Task 3: a `Dates:` line; Task 2/4: the memory is found at all for a long-value case).
+- [ ] **DB round-trip against DEV, not a mock client**: after migration 0061 is applied, run the RPC directly via `psql`/Supabase SQL editor against a real long-value row and confirm the returned `similarity` reflects the new scoring — not just that the migration file applies without a Postgres error.
+- [ ] **Async/process-lifecycle**: confirm `tages remember`'s embedding write (already fixed pre-Tier-1 to be synchronous/awaited before CLI exit) is untouched by this plan's changes — no task here should reintroduce a fire-and-forget race on the write path.
+- [ ] **Cross-package/global-bin consistency**: `which tages` still resolves through the same symlink chain verified above; no task accidentally shadows it with a second global install.
+- [ ] **Migration reversibility check**: confirm migration 0061 was applied to `longmemeval-sandbox` (DEV) only — `supabase migration list --linked` against the DEV project shows 0061 applied; the same command against prod (if ever run, which it should not be for this plan) must NOT show 0061.
+
+## Tasks
+
+Ranked by expected impact. Per the user's requested default order (reader → reranking → recall), Task 2 (recall/long-document fix) is promoted ahead of reranking based on this session's own evidence — 22% of all 50 questions returned zero memories, a larger and more concrete failure mode than anything reranking could plausibly address given the retrieval-bound-vs-reader-bound split found above. This deviation is intentional and evidence-based, not an oversight.
+
+---
+
+- [ ] **Task 1 — READER: thread `question_date` into the LongMemEval synthetic reader as its temporal anchor**
+  - **Why #1**: Directly explains a confirmed, read-off-the-raw-output arithmetic failure (`gpt4_e072b769`: gold memory retrieved, ground truth "3 weeks ago," answered "28 weeks ago"). `prompts.ts`'s existing `DATE_ARITHMETIC_INSTRUCTIONS` (line 20) already tells the model to use "the question's reference date if one is provided" — it is never provided. Cheapest fix in this plan (no schema, no migration, no product code).
+  - Files:
+    - Modify `eval/longmemeval/src/prompts.ts` — `buildAnswerUserPrompt(question, memories)` → `buildAnswerUserPrompt(question, memories, referenceDate?)`; when `referenceDate` is present, prepend a line (e.g. `Reference date (treat as "today" for any relative-date computation): ${referenceDate}`) before the `Question:` line.
+    - Modify `eval/longmemeval/src/answer.ts` — `generateAnswer(question, memories, questionType)` → `generateAnswer(question, memories, questionType, referenceDate?)`, passed through to `buildAnswerUserPrompt`.
+    - Modify `eval/longmemeval/src/run.ts` — line 151 call site: `generateAnswer(q.question, memories, q.question_type, q.question_date)`.
+  - Tests:
+    - Modify `eval/longmemeval/src/prompts.test.ts` — `buildAnswerUserPrompt` includes the reference-date line when a date is passed, and omits it entirely (byte-identical to current output) when omitted — regression guard for non-temporal call sites.
+    - Modify `eval/longmemeval/src/answer.test.ts` — `generateAnswer` forwards a passed `referenceDate` into the user-prompt content sent to the mocked OpenAI client.
+  - E2E Validation: Standard rerun procedure above (no build step needed — this is eval-harness TypeScript run via `tsx`, not compiled CLI dist). Target metric: `accuracy_by_type['temporal-reasoning']` (baseline 23.1%) must increase; `recall_at_k_by_type['temporal-reasoning']` (baseline 84.6%) must NOT regress (this task only changes the reader, not retrieval — a drop here would indicate a bug, e.g. the date line pushing memory content out of context). Read the raw `details[]` rows for `gpt4_e072b769` and `gpt4_468eb063` specifically post-rerun and confirm the model's arithmetic is now correct (or, for `gpt4_468eb063`, correctly recognizes it has no evidence — that one is a Task 2 zero-hit case, not fixable here).
+  - Depends on: nothing
+  - Effort: S
+  - Notes: This is eval-harness-only code (the file headers explicitly document "EVAL-ONLY... has no effect on the shipped `recall`/`remember` MCP tools or CLI" — Tages ships no LLM reader of its own; the real "reader" for a live product user is whatever agent, e.g. Claude Code, is calling the `recall` tool). This task's value is diagnostic/benchmark-integrity plus proof that Tages' retrieved memories, given adequate reasoning support, can support much higher temporal accuracy — informs whether the product-level "surface dates to the calling agent" work (Task 3) is worth doing (it demonstrably is, per this task's expected result).
+
+---
+
+- [ ] **Task 2 — RECALL: fix long-document trigram/vector dilution via `word_similarity()`, propagate the existing ILIKE-fallback fix to `hybrid_recall`**
+  - **Why #2 (promoted ahead of reranking)**: 22% of all 50 questions (11/50) got zero memories back, concentrated on single-session haystacks of 13-18K chars — 3-4x the chunking task's 4K-char target. Migration `0039_recall_ilike_fallback.sql` already diagnosed and partially fixed this exact class of bug ("`pg_trgm similarity()` dilutes scores on long values") for `recall_memories`, but that fix (`ilike '%' || p_query || '%'`) only works when the query is a short literal substring — LongMemEval (and any agent) passes full natural-language sentences as the query, which essentially never appears verbatim inside a transcript. `hybrid_recall` (added after 0039, in migration 0012/0060's lineage) never got even that fix. `pg_trgm`'s `word_similarity(query, target)` is the correct primitive here — it measures the best match between the query and any word-bounded substring of the target, which is exactly this asymmetric-length case, unlike `similarity()`.
+  - Files:
+    - Create `supabase/migrations/0061_word_similarity_recall_fix.sql`:
+      - `recall_memories(uuid, text, text, int)`: reproduce the current definition (`0039_recall_ilike_fallback.sql`) verbatim, widening the score expression from `greatest(similarity(m.key,p_query), similarity(m.value,p_query))` to additionally include `word_similarity(p_query, m.key)` and `word_similarity(p_query, m.value)` in the `greatest(...)`, and widening the `WHERE` filter's OR-chain to include `word_similarity(p_query, m.value) > 0.4 OR word_similarity(p_query, m.key) > 0.4` alongside the existing `> 0.15` similarity check and ILIKE fallback (all three stay — this adds a fourth OR-branch, doesn't replace any).
+      - `hybrid_recall(uuid, text, vector, text, int)`: reproduce the current definition (`0060_temporal_date_anchoring.sql`, which already carries `referenced_date`/`relative_date` — preserve those columns and every other clause verbatim per this file's own "diff against the current definition, don't drop a clause" convention) with the same `word_similarity` widening applied only to the `trigram_results` CTE's `sim` computation and `WHERE` filter. The `vector_results` CTE (embedding leg) is untouched — `word_similarity` doesn't apply there; the embedding-pooling dilution is the deferred multi-row-storage problem, out of scope here (see Scope).
+    - No application code changes — both RPCs' `RETURNS TABLE` signatures are unchanged (only the internal scoring/filter expression changes), so no call site (`packages/cli/src/commands/{recall,query}.ts`, `packages/server/src/sync/supabase-sync.ts`, `apps/dashboard/src/components/{command-palette,memory-table}.tsx`) needs a code change.
+  - Tests: No automated SQL test harness exists in this repo (confirmed via Step 1 search, same as migration 0060's own convention) — this is a DB-only change; verification is the manual SQL steps below plus the harness rerun.
+  - E2E Validation:
+    1. **Grep the full blast radius before applying**: `grep -rn "\.rpc('hybrid_recall'\|\.rpc('recall_memories'" apps packages --include="*.ts" --include="*.tsx" | grep -v node_modules` (confirmed this session: 5 non-server-recall.ts callers exist — `apps/dashboard/src/components/command-palette.tsx:49`, `memory-table.tsx:97`, `packages/server/src/sync/supabase-sync.ts:304,330`, `packages/cli/src/commands/query.ts:25` — re-verify this list is unchanged before applying, since the migration's safety claim depends on it).
+    2. Apply migration 0061 to the **DEV** Supabase project only (`supabase db push` against `longmemeval-sandbox`'s project ref — confirm via `supabase migration list --linked` before AND after that only DEV is targeted).
+    3. Manual SQL smoke test: `select * from recall_memories('<longmemeval-sandbox project id>'::uuid, '<the literal question text from gpt4_468eb063>', null, 30);` against a project still holding that question's ingested session (or re-ingest via the harness first) — confirm at least one row returns where zero did before.
+    4. Standard rerun procedure. Target metrics: `recall_at_k` overall (baseline 78.0%) must increase; specifically count of `recalled_memory_count == 0` rows in the new `details[]` (baseline 11/50) must decrease. `overall_accuracy` should also move (more evidence reaching the reader), though less predictably than `recall_at_k` since it's gated by the reader too.
+    5. Read the raw rows for the 4 single-session-user zero-hit questions (`001be529`, `726462e0`, `6f9b354f`, `1e043500`) post-rerun and confirm `recalled_memory_count > 0` for at least most of them — this is the type with the starkest retrieval-bound signature (recall@k == accuracy at 42.9%), so it's the clearest before/after read.
+  - Depends on: nothing (independent of Task 1 and Task 3)
+  - Effort: L (base M for the SQL change itself — two `DROP FUNCTION`/`CREATE OR REPLACE` statements with a scoring-expression widening; ×1.5 for database migration per the standard multiplier — irreversibility/coordination risk on a function touched by 6 real call sites across 3 packages)
+  - Pre-mortem: If this takes 3x longer, it will be because `CREATE OR REPLACE FUNCTION` with an unchanged `RETURNS TABLE` still trips a Postgres catalog dependency issue on one of the 6 call sites in a way that only shows up as a runtime RPC error, not a migration-apply error — or because `word_similarity`'s 0.4 threshold turns out too permissive (precision regression: previously-filtered noise now clears the bar) or too strict (doesn't actually catch the 18K-char cases). Mitigate: the grep-blast-radius step above catches the first risk before applying; the calibration rerun's `recalled_memory_count == 0` count (not just the aggregate `recall_at_k`) is a fast, direct signal for the second — if it doesn't drop, the threshold or the CTE it was added to is wrong, iterate before considering this task done.
+  - Notes: This is the highest-confidence, most concrete finding in this plan (backed by exact character counts on the exact failing rows, not inference). Zero file overlap with any other task — SQL-only.
+
+---
+
+- [ ] **Task 3 — PRODUCT PARITY: surface `referenced_date`/`relative_date` in `tages recall`'s CLI output**
+  - **Why #3**: The server MCP tool already does this (`packages/server/src/tools/recall.ts`'s `formatMemoryBody`, shipped in Tier-1) — the CLI never got the matching change. Real product correctness gap for the ~half of Tages usage that's CLI-driven rather than MCP-driven, cheap to fix. Explicitly flagged: **this task will NOT move any LongMemEval harness number** — the harness's `tages-cli` backend (`eval/longmemeval/src/memory.ts:196-209`) parses only the memory *key* out of `tages recall`'s printed output and looks up the full text from its own `ingestedText` cache, bypassing whatever `recall.ts` prints entirely. Confirmed by reading `memory.ts` this session. Do this task for real product correctness, not for a harness delta — its E2E validation is a real-product probe, not a rerun.
+  - Files:
+    - Modify `packages/cli/src/commands/recall.ts` — in the per-row console output loop (lines 139-148), after the existing `similarity`/`match_type` line, print a `Dates:` line mirroring the server's `formatMemoryBody` (`packages/server/src/tools/recall.ts:129-134`) when `row.referenced_date` or `row.relative_date` is present: `referenced <YYYY-MM-DD>, relative <YYYY-MM-DD>` (reuse the same `formatCiteDate`-style `.slice(0, 10)` truncation the server uses, inlined here since the CLI doesn't import server code). Also add these two columns to the `listAll` branch's existing `.select(...)` call (line 42) if not already present — confirmed they already are (`referenced_date, relative_date` present in that select list) — so this is print-only, no query change needed for `listAll`; the hybrid-search branch's rows already carry these fields from the RPCs (migration 0060), just unprinted.
+  - Tests:
+    - Modify `packages/cli/src/__tests__/recall.test.ts` — add a case asserting the printed output contains a `Dates:` line when a mocked row has `referenced_date`/`relative_date` set, and asserts the line is absent when both are null (regression guard for the common no-date case, matching the sparsity documented in migration 0060's own header).
+  - E2E Validation:
+    - **No harness rerun for this task** (see "Why #3" above — it wouldn't move any number, and reporting a delta here would be misleading).
+    - **Real-product probe (this task's actual proof)**: rebuild (`pnpm --filter @tages/cli build`), then against a real DEV project: `tages remember temporal-parity-check "Shipped the feature on July 9, 2026" --project <dev-project>`, then `tages recall "when did we ship the feature" --project <dev-project>` and visually confirm the terminal output includes a `Dates:` line with `referenced 2026-07-09`. This is the exact technique ("write, then read, then look at the actual output") that caught the embedding and temporal-reorder bugs this session — do not skip it in favor of only the unit test.
+  - Depends on: nothing (Task 4 depends on this — same file, see Task 4)
+  - Effort: S
+  - Notes: Zero-conflict with Task 2 (different files entirely). Task 4 below touches the same file (`recall.ts`) in a different region (the merge/dedup logic, not the print loop) — sequenced after this task to avoid a two-agent same-file conflict in parallel execution (see File Ownership Matrix).
+
+---
+
+- [ ] **Task 4 — RECALL: CLI-side dedup + vector-threshold calibration on the hybrid merge path**
+  - **Why #4**: Smaller, more speculative recall lever than Task 2. Targets the CLI's own merge/sort logic (`packages/cli/src/commands/recall.ts` lines 100-131) — the code path the harness actually exercises (unlike `packages/server/src/search/ranker.ts`, which the harness never touches — see Scope). Two sub-changes: (a) the merge step already dedups by `id` across trigram/semantic result sets but does not dedup near-duplicate *content* (e.g. two overlapping long-session chunks that both cleared threshold) — low observed evidence of this being a real problem at session-level ingestion granularity, so scoped narrowly; (b) `semanticPromise`'s hardcoded `p_threshold: 0.3` (line 88) is a candidate tuning knob for the vector-pooling-dilution cases Task 2 doesn't reach.
+  - Files:
+    - Modify `packages/cli/src/commands/recall.ts` — parameterize `p_threshold` (currently hardcoded `0.3` at line 88) so it can be lowered in the calibration experiment below without a second code change; keep the merge/dedup-by-id logic (lines 100-117) as-is unless the calibration rerun shows a concrete near-duplicate problem (none observed in this session's data — don't build speculative dedup logic without evidence).
+  - Tests:
+    - Modify `packages/cli/src/__tests__/recall.test.ts` — the threshold value used in the `semantic_recall` RPC call is asserted against the (possibly-lowered) constant, not hardcoded `0.3`, so the test doesn't silently drift from the calibrated value.
+  - E2E Validation:
+    1. Rebuild (`pnpm --filter @tages/cli build`).
+    2. Run the standard rerun procedure TWICE post-Task-2: once at `p_threshold: 0.3` (current) as a post-Task-2 recheck baseline, once at `p_threshold: 0.25`. Compare `recall_at_k` (overall and per-type) between the two. Pick whichever value doesn't regress precision (a lower threshold pulling in more true positives is good; pulling in more noise that pushes correct answers out of the reader's top-k is bad — check `overall_accuracy` moved the same direction as `recall_at_k`, not opposite).
+    3. If neither value changes `recall_at_k` meaningfully versus the post-Task-2 number, ship at 0.3 (no evidence to change it) and note the experiment's null result rather than picking a value with no justification.
+  - Depends on: Task 3 (same file, `packages/cli/src/commands/recall.ts` — sequential per Gate 5c, not parallel)
+  - Effort: S
+  - Notes: This task is explicitly a calibration experiment, not a committed change — the "Ambiguities resolved" default is "keep 0.3 unless the rerun shows a clear win." Low file-overlap risk since it's sequenced after Task 3, not parallel with it.
+
+---
+
+- [ ] **Task 5 — RERANK (lowest priority, optional): heuristic dedup/trim pass before the reader**
+  - **Why #5 (lowest, explicitly optional)**: Evaluated per the brief's candidate list. Current evidence weighs against high impact: `multi-session` and `knowledge-update`'s `recall_at_k` ≈ `overall_accuracy` (retrieval-bound — a reranker can't fix what wasn't retrieved), and `temporal-reasoning`'s gap is an arithmetic failure (Task 1's target, not a ranking problem). The one plausible beneficiary, `single-session-preference` (recall@k 67% vs. accuracy 33%), is only 3 of 50 sampled questions — too little signal to confirm or deny impact confidently. Ship this only if Tasks 1-4 land and time/budget remains; do not block the rest of this plan on it.
+  - Files:
+    - Create `eval/longmemeval/src/rerank.ts` — a pure function `rerank(memories: string[], goldFallbackLimit: number): string[]` that dedups by parsed `[session=<id>]` tag (keep first occurrence, preserving original rank order) and trims to the top N (default: unchanged from current `topK`, i.e. a no-op unless dedup actually removes rows — this task adds no new truncation risk beyond what already exists).
+    - Modify `eval/longmemeval/src/run.ts` — call `rerank(memories, args.topK)` between `store.recall(...)` (line 149) and `generateAnswer(...)` (line 151).
+  - Tests:
+    - Create `eval/longmemeval/src/rerank.test.ts` — dedup removes a repeated session id while preserving the first occurrence's rank position; a list with no duplicates is returned unchanged (byte-identical, regression guard).
+  - E2E Validation: Standard rerun procedure. Target metric: `recall_at_k_by_type['single-session-preference']` and `accuracy_by_type['single-session-preference']` (baseline 66.7% / 33.3%, n≈3 — treat any single-question swing as the entire signal, not statistically reliable) plus overall `recall_at_k`/`overall_accuracy` must not regress. Given the low-confidence framing above, a null result (no movement) is an acceptable, expected outcome for this task specifically — do not force a "positive" reading of noise on a 3-question stratum.
+  - Depends on: Task 1 (same file, `eval/longmemeval/src/run.ts` — sequential per Gate 5c, not parallel)
+  - Effort: M (base S for the dedup logic itself; ×1.5 applied because the pre-mortem below states genuine uncertainty about whether this task will move any metric at all — per the effort-calibration rule, an honest "we don't know" pre-mortem answer triggers the uncertainty multiplier)
+  - Pre-mortem: If this task "fails" (no metric movement), it will be because the evidence above was right and reranking isn't the lever for Tages' current failure modes — that's a valid, useful negative result, not a wasted task, but it means the 1.5-2 hours spent here were lower-leverage than any of Tasks 1-4. This is exactly why it's ranked last and marked optional.
+
+## File Ownership Matrix
+
+| Task | Creates | Modifies |
+|------|---------|----------|
+| 1 | — | `eval/longmemeval/src/prompts.ts`, `eval/longmemeval/src/answer.ts`, `eval/longmemeval/src/run.ts`, `eval/longmemeval/src/prompts.test.ts`, `eval/longmemeval/src/answer.test.ts` |
+| 2 | `supabase/migrations/0061_word_similarity_recall_fix.sql` | — |
+| 3 | — | `packages/cli/src/commands/recall.ts`, `packages/cli/src/__tests__/recall.test.ts` |
+| 4 | — | `packages/cli/src/commands/recall.ts` (same file Task 3 modifies — **sequential dependency, not parallel**), `packages/cli/src/__tests__/recall.test.ts` |
+| 5 | `eval/longmemeval/src/rerank.ts`, `eval/longmemeval/src/rerank.test.ts` | `eval/longmemeval/src/run.ts` (same file Task 1 modifies — **sequential dependency, not parallel**) |
+
+**File conflicts identified and resolved:**
+- `packages/cli/src/commands/recall.ts` — Task 3 (print loop, lines ~139-148) and Task 4 (merge/threshold, lines ~62-131). Resolution: **sequential** — Task 4 depends on Task 3. Different regions of the same file, but two independent Howlers editing the same file in parallel risks a merge conflict regardless of line distance.
+- `eval/longmemeval/src/run.ts` — Task 1 (line 151, `generateAnswer` call) and Task 5 (new line calling `rerank()` between lines 149-151). Resolution: **sequential** — Task 5 depends on Task 1, both because they touch adjacent lines of the same function and because Task 5 is lowest-priority/optional and naturally runs last regardless.
+
+**Parallel-safe wave**: Tasks 1, 2, 3 can run fully in parallel (zero file overlap, verified above). Tasks 4 and 5 follow in a second wave once Task 3 and Task 1 respectively merge.
+
+## Open Questions
+- [ ] **Does the `longmemeval-sandbox` Supabase project exist and is it confirmed DEV, not prod?** — Blocks: Task 2's apply-and-rerun steps (migration 0061 must land somewhere real before its E2E validation can run). Default if unresolved: verify with `supabase projects list` / `supabase migration list --linked` before applying anything; if it doesn't exist, provision a fresh DEV-tier project rather than reusing an existing one, per the "never touch prod" constraint.
+- [ ] **`word_similarity()` threshold (0.4) exact value** — Blocks: nothing (ships with 0.4 as written; Task 2's own calibration rerun is the tuning signal, and its pre-mortem already accounts for this). Default if unresolved: 0.4, revisit only if the rerun's `recalled_memory_count == 0` count doesn't improve.
+- [ ] **Should Task 5 (rerank) be dropped from this plan entirely rather than shipped as "optional"?** — Blocks: nothing either way. Default if unresolved: keep it in the plan as written (lowest priority, explicitly cuttable) — Ryan can descope it at Spectrum-dispatch time without replanning if the earlier tasks' results confirm it's not worth the slot.
+- [ ] **Multi-row (child-table) chunk storage for the vector-pooling-dilution cases Task 2 doesn't reach** — Blocks: nothing in this plan (explicitly out of scope, see Scope). Default if unresolved: revisit as a new plan if Task 2's rerun shows `recall_at_k` still meaningfully depressed by long single-session memories after the trigram-side fix ships.
+
+## Definition of Done
+- [ ] Code written and self-reviewed
+- [ ] Tests written or updated for changed logic (see per-task Tests: entries)
+- [ ] `pnpm --filter cli test`, `pnpm --filter eval-longmemeval test` (or equivalent `vitest run` in `eval/longmemeval`) pass; `pnpm typecheck` passes
+- [ ] **Every task's E2E Validation steps completed and the target metric's before/after numbers recorded** — not just "tests pass." This is the hard gate; a task with green unit tests but no recorded harness/product-probe delta is not done.
+- [ ] Product-behavior smoke checklist (above) run once on the combined diff
+- [ ] Migration 0061 confirmed applied to DEV (`longmemeval-sandbox`) only, never prod
+- [ ] A final combined rerun (all merged tasks together, standard procedure) recorded against the baseline table above, reported as: overall_accuracy delta, recall_at_k delta, per-type deltas, and the `recalled_memory_count == 0` count delta
+- [ ] Quality gates pass (code review, tests, security review)
+- [ ] PR opened with coverage gaps noted in description (Task 5's low-confidence framing, deferred multi-row chunk storage, and deferred ranker.ts/MCP-path tuning explicitly flagged as known-deferred, not silent gaps)
