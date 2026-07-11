@@ -101,15 +101,18 @@ export class LocalCrossEncoderReranker implements Reranker {
     if (candidates.length === 0) return []
     const { tokenizer, model } = await loadLocalModelWithTimeout()
 
-    const scored: Array<{ id: string; score: number }> = []
-    for (const candidate of candidates) {
-      // Cross-encoder pair scoring: query + passage as a sentence pair, read
-      // the single raw relevance logit (higher = more relevant).
-      const inputs = tokenizer(query, { text_pair: candidate.text, padding: true, truncation: true })
-      const { logits } = await model(inputs)
-      const score = Number(logits.data[0])
-      scored.push({ id: candidate.id, score: Number.isFinite(score) ? score : -Infinity })
-    }
+    // Score the window concurrently (parity with the server copy) rather than
+    // serializing every inference in an await-in-for-loop.
+    const scored = await Promise.all(
+      candidates.map(async (candidate) => {
+        // Cross-encoder pair scoring: query + passage as a sentence pair, read
+        // the single raw relevance logit (higher = more relevant).
+        const inputs = tokenizer(query, { text_pair: candidate.text, padding: true, truncation: true })
+        const { logits } = await model(inputs)
+        const score = Number(logits.data[0])
+        return { id: candidate.id, score: Number.isFinite(score) ? score : -Infinity }
+      }),
+    )
 
     scored.sort((a, b) => b.score - a.score)
     return scored.slice(0, topK).map((s) => s.id)
