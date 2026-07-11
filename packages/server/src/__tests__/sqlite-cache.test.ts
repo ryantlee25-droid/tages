@@ -313,4 +313,99 @@ describe('SqliteCache', () => {
       expect(counts.has(mem1.id)).toBe(true)
     })
   })
+
+  /**
+   * Tests for Task 9 (Phase 2): local `memory_chunks` mirror table.
+   */
+  describe('upsertChunks / chunk sync helpers', () => {
+    function makeChunks(n: number): Array<{ text: string; embedding: number[] }> {
+      return Array.from({ length: n }, (_, i) => ({
+        text: `chunk ${i}`,
+        embedding: new Array(1536).fill(0).map((_, j) => (j === 0 ? i + 1 : 0)),
+      }))
+    }
+
+    it('inserts chunk rows retrievable via getChunksForMemory, in chunk_index order', () => {
+      const mem = makeMemory({ key: 'chunked-key' })
+      cache.upsertMemory(mem)
+
+      cache.upsertChunks(mem.id, TEST_PROJECT, makeChunks(3))
+
+      const chunks = cache.getChunksForMemory(mem.id)
+      expect(chunks).toHaveLength(3)
+      expect(chunks.map((c) => c.text)).toEqual(['chunk 0', 'chunk 1', 'chunk 2'])
+    })
+
+    it('replaces (not appends) chunk rows for the same memory_id on a second call', () => {
+      const mem = makeMemory({ key: 'replace-key' })
+      cache.upsertMemory(mem)
+
+      cache.upsertChunks(mem.id, TEST_PROJECT, makeChunks(3))
+      expect(cache.getChunksForMemory(mem.id)).toHaveLength(3)
+
+      // Re-chunk with a different count — old rows must be gone, not merged.
+      cache.upsertChunks(mem.id, TEST_PROJECT, makeChunks(2))
+
+      const chunks = cache.getChunksForMemory(mem.id)
+      expect(chunks).toHaveLength(2)
+      expect(chunks.map((c) => c.text)).toEqual(['chunk 0', 'chunk 1'])
+    })
+
+    it('does not affect chunk rows belonging to a different memory', () => {
+      const memA = makeMemory({ key: 'key-a' })
+      const memB = makeMemory({ key: 'key-b' })
+      cache.upsertMemory(memA)
+      cache.upsertMemory(memB)
+
+      cache.upsertChunks(memA.id, TEST_PROJECT, makeChunks(2))
+      cache.upsertChunks(memB.id, TEST_PROJECT, makeChunks(1))
+
+      cache.upsertChunks(memA.id, TEST_PROJECT, makeChunks(4))
+
+      expect(cache.getChunksForMemory(memA.id)).toHaveLength(4)
+      expect(cache.getChunksForMemory(memB.id)).toHaveLength(1)
+    })
+
+    it('marks new chunk rows dirty by default, surfaced via getDirtyChunkGroups', () => {
+      const mem = makeMemory({ key: 'dirty-key' })
+      cache.upsertMemory(mem)
+      cache.upsertChunks(mem.id, TEST_PROJECT, makeChunks(2))
+
+      const groups = cache.getDirtyChunkGroups()
+      expect(groups).toContainEqual({ memoryId: mem.id, projectId: TEST_PROJECT })
+    })
+
+    it('markChunksSynced clears the dirty flag so the memory drops out of getDirtyChunkGroups', () => {
+      const mem = makeMemory({ key: 'synced-key' })
+      cache.upsertMemory(mem)
+      cache.upsertChunks(mem.id, TEST_PROJECT, makeChunks(2))
+
+      cache.markChunksSynced(mem.id)
+
+      const groups = cache.getDirtyChunkGroups()
+      expect(groups.find((g) => g.memoryId === mem.id)).toBeUndefined()
+    })
+
+    it('honors dirty=false for callers that do not want the row queued for remote sync', () => {
+      const mem = makeMemory({ key: 'no-dirty-key' })
+      cache.upsertMemory(mem)
+      cache.upsertChunks(mem.id, TEST_PROJECT, makeChunks(1), false)
+
+      const groups = cache.getDirtyChunkGroups()
+      expect(groups.find((g) => g.memoryId === mem.id)).toBeUndefined()
+      // Still retrievable locally even though not marked dirty.
+      expect(cache.getChunksForMemory(mem.id)).toHaveLength(1)
+    })
+
+    it('round-trips embeddings through getChunksForMemory unchanged', () => {
+      const mem = makeMemory({ key: 'embedding-roundtrip-key' })
+      cache.upsertMemory(mem)
+      const chunks = makeChunks(2)
+      cache.upsertChunks(mem.id, TEST_PROJECT, chunks)
+
+      const stored = cache.getChunksForMemory(mem.id)
+      expect(stored[0].embedding).toEqual(chunks[0].embedding)
+      expect(stored[1].embedding).toEqual(chunks[1].embedding)
+    })
+  })
 })

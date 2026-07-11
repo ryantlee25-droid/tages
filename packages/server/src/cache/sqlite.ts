@@ -75,6 +75,25 @@ CREATE TABLE IF NOT EXISTS sync_meta (
   last_synced_at TEXT,
   memory_count INTEGER NOT NULL DEFAULT 0
 );
+
+-- Task 9 (Phase 2): local mirror of the remote memory_chunks child table
+-- (migration 0063). Mirrors the memories table's own dirty-flag pattern so
+-- SupabaseSync's flush() can pick up chunk rows the same way it picks up
+-- dirty memory rows (needed for the CLI's durable, awaited write path, which
+-- has no direct access to SupabaseSync — only cache + flush()).
+CREATE TABLE IF NOT EXISTS memory_chunks (
+  id TEXT PRIMARY KEY,
+  memory_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  chunk_text TEXT NOT NULL,
+  embedding TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  dirty INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS memory_chunks_memory_id ON memory_chunks(memory_id);
+CREATE INDEX IF NOT EXISTS memory_chunks_dirty ON memory_chunks(dirty) WHERE dirty = 1;
 `
 
 export class SqliteCache {
@@ -289,6 +308,62 @@ export class SqliteCache {
     this.db.prepare(
       'UPDATE memories SET embedding = ? WHERE project_id = ? AND key = ?'
     ).run(JSON.stringify(embedding), projectId, key)
+  }
+
+  /**
+   * Replace all local chunk rows for a memory (delete-then-insert, NOT
+   * append) — mirrors supabase-sync.ts's remoteUpsertChunks so the local
+   * mirror and remote table always hold the exact same chunk set, never a
+   * partial merge of old + new. Wrapped in a transaction so a mid-loop
+   * failure can't leave the memory with zero chunks (deleted-but-not-yet-
+   * reinserted).
+   *
+   * New rows default to dirty=1 so SupabaseSync's flush() picks them up for
+   * remote sync on its next pass — the same dirty-flag pattern the memories
+   * table already uses, which is what lets the CLI's durable write path
+   * (cache.upsertChunks + the existing `await flush()` call, no direct
+   * SupabaseSync access needed) actually reach Supabase.
+   */
+  upsertChunks(
+    memoryId: string,
+    projectId: string,
+    chunks: Array<{ text: string; embedding: number[] }>,
+    dirty = true,
+  ): void {
+    const replace = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM memory_chunks WHERE memory_id = ?').run(memoryId)
+      const insert = this.db.prepare(`
+        INSERT INTO memory_chunks (id, memory_id, project_id, chunk_index, chunk_text, embedding, dirty)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `)
+      chunks.forEach((chunk, index) => {
+        insert.run(_randomUUID(), memoryId, projectId, index, chunk.text, JSON.stringify(chunk.embedding), dirty ? 1 : 0)
+      })
+    })
+    replace()
+  }
+
+  /** Distinct (memory_id, project_id) pairs with at least one dirty chunk row — drives flush()'s remote chunk sync. */
+  getDirtyChunkGroups(): Array<{ memoryId: string; projectId: string }> {
+    const rows = this.db.prepare(
+      'SELECT DISTINCT memory_id, project_id FROM memory_chunks WHERE dirty = 1'
+    ).all() as { memory_id: string; project_id: string }[]
+    return rows.map((r) => ({ memoryId: r.memory_id, projectId: r.project_id }))
+  }
+
+  /** Ordered chunk rows for a memory, parsed back into {text, embedding}. */
+  getChunksForMemory(memoryId: string): Array<{ text: string; embedding: number[] }> {
+    const rows = this.db.prepare(
+      'SELECT chunk_text, embedding FROM memory_chunks WHERE memory_id = ? ORDER BY chunk_index'
+    ).all(memoryId) as { chunk_text: string; embedding: string | null }[]
+    return rows
+      .filter((r) => r.embedding)
+      .map((r) => ({ text: r.chunk_text, embedding: JSON.parse(r.embedding as string) as number[] }))
+  }
+
+  /** Clear the dirty flag for a memory's chunk rows after a successful remote sync. */
+  markChunksSynced(memoryId: string): void {
+    this.db.prepare('UPDATE memory_chunks SET dirty = 0 WHERE memory_id = ?').run(memoryId)
   }
 
   /**

@@ -6,7 +6,7 @@ import { scanForSensitiveData, formatSafetyWarnings, hasHighSeverity } from './s
 import { getEncryptionKey, encryptValue } from '../crypto/encryption'
 import { computeFieldDiff } from '../diff/field-diff'
 import { tokenize } from '../search/tokenizer'
-import { generateEmbedding } from '../embeddings'
+import { generateEmbedding, generateChunkEmbeddings } from '../embeddings'
 import { extractDatesFromMemory } from '../temporal/date-extraction'
 
 export async function handleRemember(
@@ -211,5 +211,36 @@ function scheduleEmbeddingSync(
     })
     .catch((err) => {
       console.error('[tages] Embedding generation/sync failed:', (err as Error).message)
+    })
+
+  // Task 9 (Phase 2): additionally persist per-chunk embeddings for
+  // chunk-aware recall. Deliberately a SEPARATE fire-and-forget chain from
+  // the pooled embedding above, not chained after it — a chunk-generation or
+  // chunk-persistence failure must never affect the pooled embedding write
+  // (fail-open for the write path as a whole; chunk generation itself is
+  // fail-closed internally, see generateChunkEmbeddings). Keyed by
+  // memory.id, not (projectId, key): memory_chunks rows carry a memory_id FK,
+  // not a (project_id, key) unique constraint, and handleRemember already
+  // guarantees memory.id is the existing row's id on an update (line 70:
+  // `existing?.id || randomUUID()`), so this is safe the same way the pooled
+  // path's (projectId, key) keying is safe for the memories table.
+  // Wrapped in Promise.resolve().then(...) rather than calling
+  // generateChunkEmbeddings(plaintext) directly: this guarantees even a
+  // SYNCHRONOUS throw from the call itself (not just an async rejection)
+  // lands in the .catch() below instead of escaping scheduleEmbeddingSync
+  // and crashing handleRemember's caller — consistent with this being a
+  // fully fail-open path.
+  void Promise.resolve()
+    .then(() => generateChunkEmbeddings(plaintext))
+    .then(async (result) => {
+      if (!result) return
+      cache.upsertChunks(memory.id, projectId, result.chunks)
+      if (sync) {
+        const ok = await sync.remoteUpsertChunks(memory.id, projectId, result.chunks)
+        if (ok) cache.markChunksSynced(memory.id)
+      }
+    })
+    .catch((err) => {
+      console.error('[tages] Chunk embedding generation/sync failed:', (err as Error).message)
     })
 }

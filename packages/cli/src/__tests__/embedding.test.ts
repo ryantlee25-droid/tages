@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { generateEmbedding } from '../lib/embedding.js'
+import { generateEmbedding, generateChunkEmbeddings } from '../lib/embedding.js'
 import { chunkText } from '../lib/chunking.js'
 
 describe('CLI generateEmbedding (provider parity)', () => {
@@ -373,5 +373,161 @@ describe('CLI generateEmbedding chunking + error handling (Task A)', () => {
 
     expect(result).toBeNull()
     expect(openAiCalls).toBe(2)
+  })
+})
+
+/**
+ * Tests for Task 9 (Phase 2): CLI mirror of
+ * packages/server/src/__tests__/embeddings.test.ts's generateChunkEmbeddings
+ * suite. Same TAGES_OPENAI_EMBED opt-in gate as this module's generateEmbedding.
+ */
+describe('CLI generateChunkEmbeddings (Task 9)', () => {
+  const originalFetch = globalThis.fetch
+  const originalOpenAiKey = process.env.OPENAI_API_KEY
+  const originalEmbedFlag = process.env.TAGES_OPENAI_EMBED
+
+  beforeEach(() => {
+    process.env.OPENAI_API_KEY = 'test-openai-key'
+    process.env.TAGES_OPENAI_EMBED = '1'
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY
+    else process.env.OPENAI_API_KEY = originalOpenAiKey
+    if (originalEmbedFlag === undefined) delete process.env.TAGES_OPENAI_EMBED
+    else process.env.TAGES_OPENAI_EMBED = originalEmbedFlag
+  })
+
+  function rejectOllama(url: string): boolean {
+    return typeof url === 'string' && url.includes('11434')
+  }
+
+  it('returns null when OPENAI_API_KEY is not configured', async () => {
+    delete process.env.OPENAI_API_KEY
+    globalThis.fetch = vi.fn() as unknown as typeof fetch
+
+    const result = await generateChunkEmbeddings('some memory value')
+    expect(result).toBeNull()
+  })
+
+  it('returns null when TAGES_OPENAI_EMBED opt-in is not set, even with a key present', async () => {
+    delete process.env.TAGES_OPENAI_EMBED
+    globalThis.fetch = vi.fn() as unknown as typeof fetch
+
+    const result = await generateChunkEmbeddings('some memory value')
+    expect(result).toBeNull()
+  })
+
+  it('honors an explicit allowOpenAIFallback:false even when the env flag is on', async () => {
+    let openAiCalls = 0
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (rejectOllama(url)) return Promise.reject(new Error('connection refused'))
+      openAiCalls++
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: [{ embedding: new Array(1536).fill(0.05) }] }) })
+    }) as unknown as typeof fetch
+
+    const result = await generateChunkEmbeddings('some text', { allowOpenAIFallback: false })
+    expect(result).toBeNull()
+    expect(openAiCalls).toBe(0)
+  })
+
+  it('single-chunk parity for short text: one chunk row, pooled equals the single embedding', async () => {
+    let openAiCalls = 0
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (rejectOllama(url)) return Promise.reject(new Error('connection refused'))
+      openAiCalls++
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ embedding: new Array(1536).fill(0.05) }] }),
+      })
+    }) as unknown as typeof fetch
+
+    const shortText = 'a short memory value'
+    const result = await generateChunkEmbeddings(shortText)
+
+    expect(result).not.toBeNull()
+    expect(openAiCalls).toBe(1)
+    expect(result!.chunks).toHaveLength(1)
+    expect(result!.chunks[0].text).toBe(shortText)
+    expect(result!.pooled).not.toBeNull()
+    expect(result!.pooled!.length).toBe(1536)
+  })
+
+  it('multiple chunk rows with distinct embeddings for long text (15,000-char integration case)', async () => {
+    let callIndex = 0
+    const usedEmbeddings: number[][] = []
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (rejectOllama(url)) return Promise.reject(new Error('connection refused'))
+      callIndex++
+      const embedding = Array.from({ length: 1536 }, (_, i) => Math.sin(i * 0.01 + callIndex))
+      usedEmbeddings.push(embedding)
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ embedding }] }),
+      })
+    }) as unknown as typeof fetch
+
+    const longText = 'the quick brown fox jumps over the lazy dog. '.repeat(400) // ~18,800 chars
+    expect(longText.length).toBeGreaterThan(15000)
+    expect(chunkText(longText).length).toBeGreaterThan(1)
+
+    const result = await generateChunkEmbeddings(longText)
+
+    expect(result).not.toBeNull()
+    expect(result!.chunks.length).toBeGreaterThan(1)
+    expect(result!.chunks.length).toBe(usedEmbeddings.length)
+    result!.chunks.forEach((chunk, i) => {
+      expect(chunk.embedding).toEqual(usedEmbeddings[i])
+    })
+    expect(result!.pooled).not.toBeNull()
+    expect(result!.pooled!.length).toBe(1536)
+  })
+
+  it('fail-closed: a single failed chunk invalidates the whole chunk set (returns null, not a partial set)', async () => {
+    let openAiCalls = 0
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (rejectOllama(url)) return Promise.reject(new Error('connection refused'))
+      openAiCalls++
+      if (openAiCalls === 2) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          headers: { get: () => null },
+          text: () => Promise.resolve('internal server error'),
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ embedding: new Array(1536).fill(0.02) }] }),
+      })
+    }) as unknown as typeof fetch
+
+    const longText = 'lorem ipsum dolor sit amet '.repeat(300)
+    expect(chunkText(longText).length).toBeGreaterThan(1)
+
+    const result = await generateChunkEmbeddings(longText)
+    expect(result).toBeNull()
+    expect(openAiCalls).toBeGreaterThanOrEqual(2)
+  })
+
+  it('does not fall back to Ollama — chunk storage is OpenAI-only', async () => {
+    let ollamaCalled = false
+    let openAiCalls = 0
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('11434')) {
+        ollamaCalled = true
+        return Promise.reject(new Error('should not be called'))
+      }
+      openAiCalls++
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ embedding: new Array(1536).fill(0.05) }] }),
+      })
+    }) as unknown as typeof fetch
+
+    await generateChunkEmbeddings('some text')
+    expect(ollamaCalled).toBe(false)
+    expect(openAiCalls).toBeGreaterThan(0)
   })
 })
