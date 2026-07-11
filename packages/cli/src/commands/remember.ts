@@ -63,13 +63,14 @@ export async function rememberCommand(key: string, value: string, options: Remem
     // memory — fall back to the plain upsert path so the fact is still stored
     // (trigram-recallable now, embedding backfilled later out-of-band).
     // Single-pass embedding (Task 11 integration): generateChunkEmbeddings
-    // returns BOTH the per-chunk vectors and their mean-pool in one API
-    // pass, so when the OpenAI chunk path is available we take the pooled
-    // vector from it instead of paying a second, redundant embedding pass
-    // via generateEmbedding (which re-embeds the same chunks internally).
-    // generateEmbedding remains the fallback so Ollama-only setups (no
-    // TAGES_OPENAI_EMBED) keep their pooled embeddings exactly as before —
-    // generateChunkEmbeddings has no Ollama leg and returns null there.
+    // returns BOTH the per-chunk vectors and their mean-pool in one pass, so
+    // we take the pooled vector from it instead of paying a second, redundant
+    // embedding pass via generateEmbedding. Post-Fix-A generateChunkEmbeddings
+    // shares generateEmbedding's Ollama-first/OpenAI-opt-in selection (embedOne),
+    // so the pooled vector lands in the SAME space as the recall-time query in
+    // every provider config; the pooled vector is chunk-mean-pooled in all
+    // configs now (not a whole-text embed). generateEmbedding stays as the
+    // fallback for when no chunk provider is available (returns null).
     let embedding: number[] | null = null
     let chunks: Array<{ text: string; embedding: number[] }> | null = null
     try {
