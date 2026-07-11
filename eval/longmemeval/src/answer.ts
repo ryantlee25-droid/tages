@@ -31,19 +31,23 @@ export interface LlmCost {
  * arithmetic / numeric aggregation / preference-response mode) and every
  * prompt variant includes the Chain-of-Note "NOTES: ... ANSWER: ..."
  * structure (Task 5); `extractFinalAnswer` strips the notes back out so
- * callers only see the final answer text.
+ * callers only see the final answer text. `referenceDate` (Task 1: the
+ * question's `question_date`) is forwarded to `buildAnswerUserPrompt` as the
+ * reader's "today" anchor for relative-date arithmetic; omitted, prompt
+ * construction is unchanged from before this task.
  */
 export async function generateAnswer(
   question: string,
   memories: string[],
   questionType: QuestionType,
+  referenceDate?: string,
 ): Promise<{ answer: string; cost: LlmCost }> {
   const res = await getClient().chat.completions.create({
     model: MODEL,
     temperature: 0,
     messages: [
       { role: 'system', content: buildAnswerSystemPrompt(questionType) },
-      { role: 'user', content: buildAnswerUserPrompt(question, memories) },
+      { role: 'user', content: buildAnswerUserPrompt(question, memories, referenceDate) },
     ],
   })
   const raw = res.choices[0]?.message?.content?.trim() ?? ''

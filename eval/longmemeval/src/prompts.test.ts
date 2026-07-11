@@ -65,6 +65,26 @@ describe('buildAnswerUserPrompt', () => {
     const prompt = buildAnswerUserPrompt('anything', [])
     expect(prompt).toContain('(no memories retrieved)')
   })
+
+  describe('referenceDate (Task 1: temporal reader anchor)', () => {
+    it('prepends a reference-date line before Question: when a date is passed', () => {
+      const prompt = buildAnswerUserPrompt('How long ago was that?', ['mem1'], '2023/04/10 (Mon) 23:07')
+      expect(prompt).toContain(
+        'Reference date (treat as "today" for any relative-date computation): 2023/04/10 (Mon) 23:07',
+      )
+      const refIdx = prompt.indexOf('Reference date')
+      const qIdx = prompt.indexOf('Question:')
+      expect(refIdx).toBeGreaterThan(-1)
+      expect(refIdx).toBeLessThan(qIdx)
+    })
+
+    it('omits the reference-date line entirely, byte-identical to the no-arg call, when referenceDate is not passed', () => {
+      const withoutArg = buildAnswerUserPrompt('anything', ['mem1'])
+      const withUndefined = buildAnswerUserPrompt('anything', ['mem1'], undefined)
+      expect(withoutArg).not.toContain('Reference date')
+      expect(withUndefined).toBe(withoutArg)
+    })
+  })
 })
 
 describe('extractFinalAnswer (Task 5: Chain-of-Note marker parsing)', () => {

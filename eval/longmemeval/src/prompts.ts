@@ -44,12 +44,26 @@ export function buildAnswerSystemPrompt(questionType: QuestionType): string {
     : ANSWER_SYSTEM_PROMPT
 }
 
-export function buildAnswerUserPrompt(question: string, memories: string[]): string {
+/**
+ * Task 1: `referenceDate` threads the question's `question_date` through as the
+ * reader's "today" anchor for relative-date arithmetic (DATE_ARITHMETIC_INSTRUCTIONS
+ * above already tells the model to use "the question's reference date if one is
+ * provided" — this is what provides it). Omitted, the output is byte-identical to
+ * the prior signature (regression guard for non-temporal call sites).
+ */
+export function buildAnswerUserPrompt(
+  question: string,
+  memories: string[],
+  referenceDate?: string,
+): string {
   const memoryBlock =
     memories.length === 0
       ? '(no memories retrieved)'
       : memories.map((m, i) => `[${i + 1}] ${m}`).join('\n')
-  return `Memories from prior conversations:\n${memoryBlock}\n\nQuestion: ${question}\n\nAnswer:`
+  const referenceDateLine = referenceDate
+    ? `Reference date (treat as "today" for any relative-date computation): ${referenceDate}\n`
+    : ''
+  return `Memories from prior conversations:\n${memoryBlock}\n\n${referenceDateLine}Question: ${question}\n\nAnswer:`
 }
 
 /**
