@@ -169,8 +169,13 @@ export function relevanceFromRank(index: number): number {
  * recently-WRITTEN but content-dateless row never competes on the same
  * proximity scale as a row whose text actually referenced a date. Range
  * [0, 1]; higher = closer to the comparison instant.
+ *
+ * Exported (PLAN.md Task 7) so `search/temporal-channel.ts` can rank its own
+ * date-range candidates with the exact same formula, rather than duplicating
+ * it — both call sites operate on the same "content-anchored date only, no
+ * createdAt fallback" semantics.
  */
-function reorderProximity(memory: Memory, anchor: Date, targetDate?: Date): number {
+export function reorderProximity(memory: Memory, anchor: Date, targetDate?: Date): number {
   const dateStr = memory.referencedDate ?? memory.relativeDate
   if (!dateStr) return 0
   const memTime = new Date(dateStr).getTime()
