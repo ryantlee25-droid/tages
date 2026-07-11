@@ -28,6 +28,16 @@ vi.mock('@tages/shared', () => ({
   createSupabaseClient: vi.fn(() => mockSupabase),
 }))
 
+// The reranker calls out to a local ONNX model (or OpenAI) — never exercise
+// either in these tests. Mocked to an identity reorder (a dedicated
+// reranker.test.ts covers the real reorder/fallback/fail-open behavior with
+// the transformers pipeline itself mocked).
+vi.mock('../lib/reranker.js', () => ({
+  rerankCandidates: vi.fn(async (_query: string, candidates: Array<{ id: string }>) =>
+    candidates.map((c) => c.id),
+  ),
+}))
+
 let tempConfigDir: string
 let cleanupFn: () => void
 
@@ -72,7 +82,10 @@ describe('recall command', () => {
     expect(mockRpc).toHaveBeenCalledWith('recall_memories', expect.objectContaining({
       p_project_id: 'test-project-id',
       p_query: 'authentication',
-      p_limit: 5,
+      // The RPC now requests the widened candidate pool (default 50), not
+      // the user's --limit (5 here) — RRF fuses over the wider pool and the
+      // final result is capped to --limit afterward (Task 1).
+      p_limit: 50,
     }))
     const output = console_.logs.join('\n')
     expect(output).toContain('auth-pattern')
@@ -152,15 +165,41 @@ describe('recall command', () => {
     exitSpy.mockRestore()
   })
 
-  it('respects --limit option', async () => {
+  it('widens the RPC candidate pool independently of --limit, and caps the final result to --limit (Task 1)', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
-    mockRpc.mockResolvedValue({ data: [], error: null })
+    const manyRows = Array.from({ length: 6 }, (_, i) => ({
+      id: `id-${i}`,
+      key: `key-${i}`,
+      value: `value ${i}`,
+      type: 'convention',
+      similarity: 0.9 - i * 0.01,
+    }))
+    mockRpc.mockResolvedValue({ data: manyRows, error: null })
 
     await recallCommand('test', { limit: '2' })
 
+    // The RPC call still requests the widened candidate-pool default, not
+    // the user's --limit.
     expect(mockRpc).toHaveBeenCalledWith('recall_memories', expect.objectContaining({
-      p_limit: 2,
+      p_limit: 50,
     }))
+
+    const output = console_.logs.join('\n')
+    expect(output).toContain('Found 2 memories')
+  })
+
+  it('overrides the RPC candidate pool via TAGES_RECALL_CANDIDATE_POOL', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    process.env.TAGES_RECALL_CANDIDATE_POOL = '10'
+    mockRpc.mockResolvedValue({ data: [], error: null })
+
+    await recallCommand('test', {})
+
+    expect(mockRpc).toHaveBeenCalledWith('recall_memories', expect.objectContaining({
+      p_limit: 10,
+    }))
+
+    delete process.env.TAGES_RECALL_CANDIDATE_POOL
   })
 
   it('respects --type filter', async () => {
@@ -586,5 +625,48 @@ describe('recall command', () => {
     expect(mockRpc).toHaveBeenCalledWith('semantic_recall', expect.objectContaining({
       p_threshold: 0.3,
     }))
+  })
+
+  it('fuses in a memory found only via the temporal channel, not trigram or semantic (Task 3)', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+
+    // Trigram (and semantic, via Ollama-down fail-fast) return nothing.
+    mockRpc.mockResolvedValue({ data: [], error: null })
+
+    const temporalRow = {
+      id: 'temporal-only-id',
+      key: 'temporal-only-key',
+      value: 'A memory dated close to the target date.',
+      type: 'lesson',
+      referenced_date: '2026-07-09T00:00:00.000Z',
+      relative_date: null,
+    }
+
+    const chain = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      or: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({ data: [temporalRow], error: null }),
+    }
+    mockSupabase.from.mockReturnValue(chain)
+
+    await recallCommand('what happened on 2026-07-09', {})
+
+    const output = console_.logs.join('\n')
+    expect(output).toContain('temporal-only-key')
+
+    mockSupabase.from.mockReset()
+  })
+
+  it('issues zero temporal-channel PostgREST calls for a non-temporal query (Task 3)', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    mockRpc.mockResolvedValue({
+      data: [{ id: '1', key: 'auth-pattern', value: 'Use JWT tokens', type: 'convention', similarity: 0.8 }],
+      error: null,
+    })
+
+    await recallCommand('authentication', {})
+
+    expect(mockSupabase.from).not.toHaveBeenCalled()
   })
 })
