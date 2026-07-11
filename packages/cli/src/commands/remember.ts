@@ -4,7 +4,7 @@ import { loadProjectConfig } from '../config/project.js'
 import { randomUUID } from 'crypto'
 import { openCliSync } from '../sync/cli-sync.js'
 import { extractDatesFromMemory } from '../lib/date-extraction.js'
-import { generateEmbedding } from '../lib/embedding.js'
+import { generateEmbedding, generateChunkEmbeddings } from '../lib/embedding.js'
 
 interface RememberOptions {
   type: string
@@ -84,7 +84,35 @@ export async function rememberCommand(key: string, value: string, options: Remem
       cache.upsertMemory(memory, true)
     }
 
-    // Best-effort cloud sync — never fatal
+    // Task 9 (Phase 2): per-chunk embeddings for chunk-aware recall, same
+    // synchronous/awaited durable-write design as the pooled embedding above
+    // (see this function's header comment) — the CLI process exits right
+    // after this returns, so there is no fire-and-forget background path
+    // like the MCP server's scheduleEmbeddingSync to fall back on.
+    //
+    // Resolve the actual persisted row id via getByKey rather than trusting
+    // the local `memory` variable's id: upsertMemory's ON CONFLICT(project_id,
+    // key) DO UPDATE keeps the EXISTING row's id on a re-remember of an
+    // existing key, but `memory.id` above is always a freshly generated
+    // randomUUID() (see upsertMemoryWithEmbedding's own comment on this exact
+    // mismatch). Chunk rows carry a memory_id reference, so they must be
+    // associated with the row's real id, not a possibly-stale local one.
+    try {
+      const chunkResult = await generateChunkEmbeddings(value)
+      if (chunkResult) {
+        const persisted = cache.getByKey(config.projectId, key)
+        cache.upsertChunks(persisted?.id ?? memory.id, config.projectId, chunkResult.chunks)
+      }
+    } catch (err) {
+      console.error(
+        chalk.yellow('Chunk embedding generation failed; storing without chunks.'),
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+
+    // Best-effort cloud sync — never fatal. Also carries any dirty chunk rows
+    // written above (SupabaseSync._flush pushes dirty chunks alongside dirty
+    // memories — see supabase-sync.ts's _flushDirtyChunks).
     await flush()
   } finally {
     close()

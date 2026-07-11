@@ -45,6 +45,13 @@
  * non-OK HTTP responses are now read and logged (never silently swallowed),
  * and 429s are retried with backoff (respecting a `Retry-After` header when
  * present).
+ *
+ * Multi-vector chunk storage (Task 9, Phase 2): `generateChunkEmbeddings`
+ * below mirrors the server's copy (packages/server/src/embeddings.ts) — a
+ * separate entry point from `generateEmbedding` for the new per-chunk
+ * `memory_chunks` table, OpenAI-only, gated behind the same
+ * TAGES_OPENAI_EMBED opt-in as this file's OpenAI fallback (see above).
+ * `generateEmbedding()` itself is unchanged.
  */
 
 import { chunkText, estimateTokenCount, SAFE_SINGLE_CALL_TOKEN_LIMIT } from './chunking.js'
@@ -132,36 +139,93 @@ async function embedLongTextViaOpenAI(text: string, apiKey: string): Promise<num
   const chunkEmbeddings: number[][] = []
 
   for (const chunk of chunks) {
-    const data = await fetchEmbeddingJson(
-      'https://api.openai.com/v1/embeddings',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({ model: 'text-embedding-3-small', input: chunk }),
-      },
-      'OpenAI (chunk)',
-      10000,
-    ) as { data: Array<{ embedding: number[] }> } | null
-
-    const embedding = data?.data?.[0]?.embedding
+    const embedding = await embedSingleChunkViaOpenAI(chunk, apiKey)
     if (!embedding) return null
     chunkEmbeddings.push(embedding)
   }
 
   if (chunkEmbeddings.length === 0) return null
+  return poolChunkEmbeddings(chunkEmbeddings)
+}
 
-  // Degenerate mean guard (W1): if the pooled vector's norm is ~0 (e.g. chunk
-  // embeddings that cancel out), normalizing would yield an all-zero vector,
-  // which stores as a zero embedding -> NaN cosine -> the memory silently never
-  // matches. Treat that as "no embedding" (return null) rather than persisting
-  // a poisoned vector.
+/**
+ * Embed a single chunk of text via OpenAI's embeddings endpoint, normalized
+ * to 1536 dims. Factored out of `embedLongTextViaOpenAI` so both the pooled
+ * long-text path and `generateChunkEmbeddings` (Task 9) share exactly one
+ * per-chunk embed call instead of drifting apart.
+ */
+async function embedSingleChunkViaOpenAI(chunk: string, apiKey: string): Promise<number[] | null> {
+  const data = await fetchEmbeddingJson(
+    'https://api.openai.com/v1/embeddings',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({ model: 'text-embedding-3-small', input: chunk }),
+    },
+    'OpenAI (chunk)',
+    10000,
+  ) as { data: Array<{ embedding: number[] }> } | null
+
+  const embedding = data?.data?.[0]?.embedding
+  return embedding ? normalizeTo1536(embedding) : null
+}
+
+/**
+ * Mean-pool + L2-renormalize a set of chunk embeddings into one 1536-dim
+ * vector. Shared by `embedLongTextViaOpenAI` (pooled single-vector path) and
+ * `generateChunkEmbeddings` (per-chunk storage path, which also returns this
+ * as its convenience `pooled` field).
+ *
+ * Degenerate mean guard (W1): if the pooled vector's norm is ~0 (e.g. chunk
+ * embeddings that cancel out), normalizing would yield an all-zero vector,
+ * which stores as a zero embedding -> NaN cosine -> the memory silently never
+ * matches. Treat that as "no embedding" (return null) rather than persisting
+ * a poisoned vector.
+ */
+function poolChunkEmbeddings(chunkEmbeddings: number[][]): number[] | null {
   const pooled = meanPool(chunkEmbeddings)
   const pooledNorm = Math.sqrt(pooled.reduce((sum, x) => sum + x * x, 0))
   if (!(pooledNorm > 1e-8)) return null
   return normalizeTo1536(pooled.map((x) => x / pooledNorm))
+}
+
+/**
+ * Generate per-chunk embeddings for multi-vector chunk storage (Task 9,
+ * Phase 2), alongside (not instead of) the existing pooled `generateEmbedding`.
+ *
+ * OpenAI-only, gated behind the same TAGES_OPENAI_EMBED opt-in as this
+ * module's OpenAI fallback (see header) — chunk storage never fires an
+ * unexpected billable network call on a machine that hasn't opted in. Returns
+ * null (no chunks persisted) when the key is missing or the opt-in is off.
+ *
+ * Fail-closed for chunk storage (distinct from the pooled path's fail-open
+ * contract): if ANY individual chunk fails to embed, the whole result is
+ * discarded (returns null) rather than persisting a partial chunk set — the
+ * caller (remember.ts) simply skips writing chunk rows this time; the pooled
+ * embedding write (a separate, independent call) is entirely unaffected.
+ */
+export async function generateChunkEmbeddings(
+  text: string,
+  opts: GenerateEmbeddingOptions = {},
+): Promise<{ pooled: number[] | null; chunks: Array<{ text: string; embedding: number[] }> } | null> {
+  const openaiKey = process.env.OPENAI_API_KEY
+  if (!openaiKey || !openAIFallbackEnabled(opts.allowOpenAIFallback)) return null
+
+  const chunkTexts = chunkText(text)
+  const chunks: Array<{ text: string; embedding: number[] }> = []
+
+  for (const chunkTextValue of chunkTexts) {
+    const embedding = await embedSingleChunkViaOpenAI(chunkTextValue, openaiKey)
+    if (!embedding) return null
+    chunks.push({ text: chunkTextValue, embedding })
+  }
+
+  if (chunks.length === 0) return null
+
+  return { pooled: poolChunkEmbeddings(chunks.map((c) => c.embedding)), chunks }
 }
 
 /**
