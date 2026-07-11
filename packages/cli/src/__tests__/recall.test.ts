@@ -80,6 +80,52 @@ describe('recall command', () => {
     expect(output).toContain('Found 2 memories')
   })
 
+  it('prints a Dates line when a row has referenced_date/relative_date set', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    mockRpc.mockResolvedValue({
+      data: [
+        {
+          id: '1',
+          key: 'ship-date',
+          value: 'Shipped the feature on July 9, 2026',
+          type: 'lesson',
+          similarity: 0.8,
+          referenced_date: '2026-07-09T00:00:00.000Z',
+          relative_date: '2026-07-10T00:00:00.000Z',
+        },
+      ],
+      error: null,
+    })
+
+    await recallCommand('when did we ship', {})
+
+    const output = console_.logs.join('\n')
+    expect(output).toContain('Dates: referenced 2026-07-09, relative 2026-07-10')
+  })
+
+  it('omits the Dates line when referenced_date and relative_date are both null', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    mockRpc.mockResolvedValue({
+      data: [
+        {
+          id: '1',
+          key: 'auth-pattern',
+          value: 'Use JWT tokens',
+          type: 'convention',
+          similarity: 0.8,
+          referenced_date: null,
+          relative_date: null,
+        },
+      ],
+      error: null,
+    })
+
+    await recallCommand('authentication', {})
+
+    const output = console_.logs.join('\n')
+    expect(output).not.toContain('Dates:')
+  })
+
   it('prints "no memories found" for empty results', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
     mockRpc.mockResolvedValue({ data: [], error: null })

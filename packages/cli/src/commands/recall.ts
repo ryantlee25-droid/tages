@@ -144,6 +144,15 @@ export async function recallCommand(query: string | undefined, options: RecallOp
         const matchType = row.match_type ? ` [${row.match_type}]` : ''
         console.log(`  ${chalk.dim('             ')}${chalk.dim(`similarity: ${(row.similarity as number).toFixed(2)}${matchType}`)}`)
       }
+      // Temporal anchoring (migration 0060): mirror the server's
+      // formatMemoryBody (packages/server/src/tools/recall.ts) so CLI users
+      // see the same extracted dates MCP-driven agents already get.
+      if (row.referenced_date || row.relative_date) {
+        const dateBits: string[] = []
+        if (row.referenced_date) dateBits.push(`referenced ${(row.referenced_date as string).slice(0, 10)}`)
+        if (row.relative_date) dateBits.push(`relative ${(row.relative_date as string).slice(0, 10)}`)
+        console.log(`  ${chalk.dim('             ')}${chalk.dim(`Dates: ${dateBits.join(', ')}`)}`)
+      }
       console.log()
     }
   } else {
