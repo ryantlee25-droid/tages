@@ -233,6 +233,12 @@ export async function recallCommand(query: string | undefined, options: RecallOp
       // The OpenAI fallback is opt-in via TAGES_OPENAI_EMBED (see lib/embedding).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let semanticPromise: any = Promise.resolve({ data: null, error: null })
+      // Chunk-level semantic channel (PLAN.md Task 11): matches per-chunk
+      // embeddings (migration 0064) and rolls up to the parent memory with
+      // the winning chunk's identity. This is the channel that finds long
+      // memories whose mean-pooled vector misses the threshold entirely.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let chunkPromise: any = Promise.resolve({ data: null, error: null })
       const embedding = await generateEmbedding(query!)
       if (embedding) {
         const embeddingStr = `[${embedding.join(',')}]`
@@ -244,17 +250,25 @@ export async function recallCommand(query: string | undefined, options: RecallOp
           p_limit: candidatePool,
           p_threshold: getRecallThreshold(),
         })
-        searchMethod = 'hybrid (trigram + semantic)'
+        chunkPromise = supabase.rpc('chunk_semantic_recall', {
+          p_project_id: config.projectId,
+          p_embedding: embeddingStr,
+          p_type: options.type || null,
+          p_limit: candidatePool,
+          p_threshold: getRecallThreshold(),
+        })
+        searchMethod = 'hybrid (trigram + semantic + chunk)'
       }
 
       // Temporal date-range channel (Task 3): zero-cost (no query issued) for
       // non-temporal queries or queries with no resolvable concrete date.
       const temporalPromise = fetchTemporalCandidates(supabase, config.projectId, query!, candidatePool)
 
-      const [trigramResult, semanticResult, temporalRows] = await Promise.all([
+      const [trigramResult, semanticResult, temporalRows, chunkResult] = await Promise.all([
         trigramPromise,
         semanticPromise,
         temporalPromise,
+        chunkPromise,
       ])
 
       if (trigramResult.error) {
@@ -271,9 +285,16 @@ export async function recallCommand(query: string | undefined, options: RecallOp
       const trigramRows = (trigramResult.data || []).map((r: any) => ({ ...r, match_type: 'trigram' }))
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const temporalTagged = (temporalRows || []).map((r: any) => ({ ...r, match_type: 'temporal' }))
+      // Chunk rows carry chunk_index/chunk_text (the winning passage) in
+      // addition to the parent memory's columns — preserved through fusion
+      // for citation. Same id as the parent memory, so RRF sums its rank
+      // contributions with the other channels' rather than duplicating rows.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const chunkRows = (chunkResult.data || []).map((r: any) => ({ ...r, match_type: 'chunk' }))
 
       const merged = reciprocalRankFusion<Record<string, unknown> & { id: string }>([
         semanticRows,
+        chunkRows,
         trigramRows,
         temporalTagged,
       ])

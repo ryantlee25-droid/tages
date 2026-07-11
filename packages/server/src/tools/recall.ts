@@ -9,7 +9,7 @@ import { computeDecayScore, shouldArchive } from '../decay/scoring'
 import { getEncryptionKey, decryptValue } from '../crypto/encryption'
 import { budgetedResults } from '../search/token-budget'
 import { rerankMemories } from '../search/reranker'
-import { fetchTemporalCandidates, fuseTemporalChannel } from '../search/temporal-channel'
+import { fetchTemporalCandidates, fuseMemoryLists } from '../search/temporal-channel'
 
 // PLAN.md Task 6: candidate pool widened before rerank/fusion narrow it back
 // down to args.limit. Overridable for tuning/testing, mirroring the CLI's
@@ -103,18 +103,24 @@ export async function handleRecall(
       // so rerank has more than `limit` rows to work with; narrowed back down
       // to `limit` only after rerank + temporal reordering below.
       const poolLimit = Math.max(limit, RECALL_CANDIDATE_POOL)
-      const hybridResults = await sync.remoteHybridRecall(args.query, embedding, args.type, poolLimit)
-      if (hybridResults && hybridResults.length > 0) {
-        // PLAN.md Task 7: temporal date-range channel — a third candidate
-        // source, fused alongside remoteHybridRecall's already-fused
-        // trigram+semantic list. No-op (empty array, zero queries) for
-        // non-temporal queries or when no supabaseClient was threaded
-        // through — see this function's supabaseClient param doc and
-        // search/temporal-channel.ts's module doc.
+      // PLAN.md Task 11: the chunk channel runs alongside remoteHybridRecall,
+      // not gated on it — a long memory whose pooled vector misses the
+      // threshold entirely (the mean-pool-dilution zero-hit case Phase 2
+      // exists to fix) is findable ONLY via chunk_semantic_recall, so an
+      // empty hybrid list must not short-circuit the chunk results.
+      const [hybridResults, chunkResults] = await Promise.all([
+        sync.remoteHybridRecall(args.query, embedding, args.type, poolLimit),
+        sync.remoteChunkSemanticRecall(embedding, args.type, poolLimit),
+      ])
+      if ((hybridResults && hybridResults.length > 0) || (chunkResults && chunkResults.length > 0)) {
+        // PLAN.md Task 7: temporal date-range channel — a further candidate
+        // source. No-op (empty array, zero queries) for non-temporal queries
+        // or when no supabaseClient was threaded through — see this
+        // function's supabaseClient param doc and search/temporal-channel.ts.
         const temporalCandidates = supabaseClient
           ? await fetchTemporalCandidates(supabaseClient, projectId, args.query, poolLimit)
           : []
-        const fused = fuseTemporalChannel(hybridResults, temporalCandidates)
+        const fused = fuseMemoryLists([hybridResults ?? [], chunkResults ?? [], temporalCandidates])
 
         // PLAN.md Task 6: cross-encoder rerank pass, inserted BEFORE
         // reorderByTemporalProximity so temporal anchoring stays the final

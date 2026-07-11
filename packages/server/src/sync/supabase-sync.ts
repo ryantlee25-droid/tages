@@ -449,6 +449,39 @@ export class SupabaseSync {
     }
   }
 
+  /**
+   * Chunk-level semantic recall (PLAN.md Task 11): calls the
+   * `chunk_semantic_recall` RPC (migration 0064), which matches against
+   * per-chunk embeddings and rolls up to one row per parent memory (its
+   * best-matching chunk). Mirrors `remoteHybridRecall`'s shape; the RPC's
+   * extra chunk_index/chunk_text columns are dropped by dbRowToMemory —
+   * the parent memory's full value is what the MCP tool returns.
+   */
+  async remoteChunkSemanticRecall(
+    embedding: number[],
+    type?: string,
+    limit = 5,
+  ): Promise<Memory[] | null> {
+    try {
+      const embeddingStr = embeddingToPgVector(embedding)
+      const { data, error } = await this.supabase.rpc('chunk_semantic_recall', {
+        p_project_id: this.projectId,
+        p_embedding: embeddingStr,
+        p_type: type || null,
+        p_limit: limit,
+      })
+
+      if (error) {
+        console.error('[tages] Chunk semantic recall failed:', error.message)
+        return null
+      }
+
+      return (data || []).map(dbRowToMemory)
+    } catch {
+      return null
+    }
+  }
+
   async remoteGetByType(type: string): Promise<Memory[] | null> {
     try {
       const { data, error } = await this.supabase

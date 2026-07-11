@@ -85,19 +85,30 @@ const RRF_K = 60
  * `tools/recall.ts`, post-merge.
  */
 export function fuseTemporalChannel(hybridResults: Memory[], temporalResults: Memory[]): Memory[] {
-  if (temporalResults.length === 0) return hybridResults
+  return fuseMemoryLists([hybridResults, temporalResults])
+}
+
+/**
+ * N-list reciprocal-rank fusion over Memory lists (PLAN.md Task 11
+ * generalized this from the 2-list fuseTemporalChannel above so the chunk
+ * channel fuses at the same merge point with the same k). Empty lists
+ * contribute nothing; when only one list is non-empty its order is
+ * preserved exactly (single-list RRF is order-preserving).
+ */
+export function fuseMemoryLists(lists: Memory[][]): Memory[] {
+  const nonEmpty = lists.filter((l) => l.length > 0)
+  if (nonEmpty.length === 0) return []
+  if (nonEmpty.length === 1) return nonEmpty[0]
 
   const scores = new Map<string, number>()
   const rows = new Map<string, Memory>()
-  const add = (list: Memory[]) => {
+  for (const list of nonEmpty) {
     list.forEach((m, i) => {
       const contribution = 1 / (RRF_K + i + 1)
       scores.set(m.id, (scores.get(m.id) ?? 0) + contribution)
       if (!rows.has(m.id)) rows.set(m.id, m)
     })
   }
-  add(hybridResults)
-  add(temporalResults)
 
   return [...rows.values()].sort((a, b) => (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0))
 }

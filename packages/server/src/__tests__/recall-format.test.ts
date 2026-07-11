@@ -120,6 +120,7 @@ describe('Task 13: recall output shaping', () => {
     const sync = {
       remoteRecall: async () => [legacyRow],
       remoteHybridRecall: async () => null,
+      remoteChunkSemanticRecall: async () => null,
     } as unknown as import('../sync/supabase-sync').SupabaseSync
 
     // Local cache is empty for this project, so handleRecall falls through to
@@ -238,6 +239,7 @@ describe('PLAN.md Tasks 6/7 (server): rerank + temporal channel on the remote-hy
     const sync = {
       remoteHybridRecall,
       remoteRecall: async () => null,
+      remoteChunkSemanticRecall: async () => null,
     } as unknown as import('../sync/supabase-sync').SupabaseSync
 
     await handleRecall({ query: 'anything', limit: 3 }, PROJECT, cache, sync)
@@ -253,6 +255,7 @@ describe('PLAN.md Tasks 6/7 (server): rerank + temporal channel on the remote-hy
     const sync = {
       remoteHybridRecall,
       remoteRecall: async () => null,
+      remoteChunkSemanticRecall: async () => null,
     } as unknown as import('../sync/supabase-sync').SupabaseSync
 
     await handleRecall({ query: 'anything', limit: 5 }, PROJECT, cache, sync)
@@ -265,6 +268,7 @@ describe('PLAN.md Tasks 6/7 (server): rerank + temporal channel on the remote-hy
     const sync = {
       remoteHybridRecall,
       remoteRecall: async () => null,
+      remoteChunkSemanticRecall: async () => null,
     } as unknown as import('../sync/supabase-sync').SupabaseSync
 
     const temporalOnly = makeRemoteMemory('temporal-only')
@@ -286,6 +290,7 @@ describe('PLAN.md Tasks 6/7 (server): rerank + temporal channel on the remote-hy
     const sync = {
       remoteHybridRecall,
       remoteRecall: async () => null,
+      remoteChunkSemanticRecall: async () => null,
     } as unknown as import('../sync/supabase-sync').SupabaseSync
 
     const fetchSpy = vi.spyOn(temporalChannelModule, 'fetchTemporalCandidates')
@@ -300,6 +305,7 @@ describe('PLAN.md Tasks 6/7 (server): rerank + temporal channel on the remote-hy
     const sync = {
       remoteHybridRecall,
       remoteRecall: async () => null,
+      remoteChunkSemanticRecall: async () => null,
     } as unknown as import('../sync/supabase-sync').SupabaseSync
 
     const result = await handleRecall(
@@ -309,5 +315,26 @@ describe('PLAN.md Tasks 6/7 (server): rerank + temporal channel on the remote-hy
     const text = result.content[0].text
 
     expect(text).toContain('Assembled context for "anything"')
+  })
+
+  it('surfaces a memory found only via chunk_semantic_recall when hybrid returns nothing (PLAN.md Task 11)', async () => {
+    // The Phase 2 zero-hit case: a long memory whose mean-pooled vector
+    // misses the hybrid threshold entirely is findable only at chunk level.
+    const remoteHybridRecall = vi.fn(async (..._args: unknown[]) => [])
+    const remoteChunkSemanticRecall = vi.fn(async (..._args: unknown[]) => [makeRemoteMemory('chunk-only')])
+    const sync = {
+      remoteHybridRecall,
+      remoteRecall: async () => null,
+      remoteChunkSemanticRecall,
+    } as unknown as import('../sync/supabase-sync').SupabaseSync
+
+    const result = await handleRecall({ query: 'anything', limit: 5 }, PROJECT, cache, sync)
+    const text = result.content[0].text
+
+    expect(remoteChunkSemanticRecall).toHaveBeenCalled()
+    // Same widened candidate pool as the hybrid call (limit is arg index 2)
+    const calledLimit = remoteChunkSemanticRecall.mock.calls[0][2]
+    expect(calledLimit).toBeGreaterThanOrEqual(50)
+    expect(text).toContain('key-chunk-only')
   })
 })

@@ -62,15 +62,38 @@ export async function rememberCommand(key: string, value: string, options: Remem
     // Ollama down mid-request, provider 5xx). A throw here must NEVER lose the
     // memory — fall back to the plain upsert path so the fact is still stored
     // (trigram-recallable now, embedding backfilled later out-of-band).
+    // Single-pass embedding (Task 11 integration): generateChunkEmbeddings
+    // returns BOTH the per-chunk vectors and their mean-pool in one API
+    // pass, so when the OpenAI chunk path is available we take the pooled
+    // vector from it instead of paying a second, redundant embedding pass
+    // via generateEmbedding (which re-embeds the same chunks internally).
+    // generateEmbedding remains the fallback so Ollama-only setups (no
+    // TAGES_OPENAI_EMBED) keep their pooled embeddings exactly as before —
+    // generateChunkEmbeddings has no Ollama leg and returns null there.
     let embedding: number[] | null = null
+    let chunks: Array<{ text: string; embedding: number[] }> | null = null
     try {
-      embedding = await generateEmbedding(value)
+      const chunkResult = await generateChunkEmbeddings(value)
+      if (chunkResult) {
+        embedding = chunkResult.pooled
+        chunks = chunkResult.chunks
+      }
     } catch (err) {
       console.error(
-        chalk.yellow('Embedding generation failed; storing without embedding.'),
+        chalk.yellow('Chunk embedding generation failed; falling back to pooled-only.'),
         err instanceof Error ? err.message : String(err),
       )
-      embedding = null
+    }
+    if (!embedding) {
+      try {
+        embedding = await generateEmbedding(value)
+      } catch (err) {
+        console.error(
+          chalk.yellow('Embedding generation failed; storing without embedding.'),
+          err instanceof Error ? err.message : String(err),
+        )
+        embedding = null
+      }
     }
 
     // Primary write: SQLite first (dirty=1 marks it for sync).
@@ -97,17 +120,9 @@ export async function rememberCommand(key: string, value: string, options: Remem
     // randomUUID() (see upsertMemoryWithEmbedding's own comment on this exact
     // mismatch). Chunk rows carry a memory_id reference, so they must be
     // associated with the row's real id, not a possibly-stale local one.
-    try {
-      const chunkResult = await generateChunkEmbeddings(value)
-      if (chunkResult) {
-        const persisted = cache.getByKey(config.projectId, key)
-        cache.upsertChunks(persisted?.id ?? memory.id, config.projectId, chunkResult.chunks)
-      }
-    } catch (err) {
-      console.error(
-        chalk.yellow('Chunk embedding generation failed; storing without chunks.'),
-        err instanceof Error ? err.message : String(err),
-      )
+    if (chunks) {
+      const persisted = cache.getByKey(config.projectId, key)
+      cache.upsertChunks(persisted?.id ?? memory.id, config.projectId, chunks)
     }
 
     // Best-effort cloud sync — never fatal. Also carries any dirty chunk rows

@@ -363,11 +363,45 @@ describe('recall command', () => {
     await recallCommand('test', {})
 
     const output = console_.logs.join('\n')
-    expect(output).toContain('hybrid (trigram + semantic)')
+    expect(output).toContain('hybrid (trigram + semantic + chunk)')
     expect(output).toContain('opt-in-key')
 
     delete process.env.OPENAI_API_KEY
     delete process.env.TAGES_OPENAI_EMBED
+  })
+
+  it('calls chunk_semantic_recall with the candidate-pool limit and surfaces a chunk-only memory (PLAN.md Task 11)', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+
+    // Ollama available so the embedding-gated channels run.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
+    })
+
+    mockRpc.mockImplementation((rpcName: string) => {
+      if (rpcName === 'chunk_semantic_recall') {
+        // Found ONLY at chunk level — the Phase 2 zero-hit recovery case.
+        return Promise.resolve({
+          data: [{
+            id: 'chunk-only-id', key: 'chunk-only-key',
+            value: 'long memory only findable via its chunks',
+            type: 'lesson', similarity: 0.8, chunk_index: 3,
+            chunk_text: 'the specific matching passage',
+          }],
+          error: null,
+        })
+      }
+      return Promise.resolve({ data: [], error: null })
+    })
+
+    await recallCommand('needle in a long session', {})
+
+    expect(mockRpc).toHaveBeenCalledWith('chunk_semantic_recall', expect.objectContaining({
+      p_limit: 50,
+    }))
+    const output = console_.logs.join('\n')
+    expect(output).toContain('chunk-only-key')
   })
 
   it('drops a near-duplicate content result while keeping distinct results (Task 4 content dedup)', async () => {

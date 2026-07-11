@@ -277,7 +277,7 @@ async function main() {
       limit: RecallSchema.shape.limit,
     },
     async (args) => {
-      const result = await handleRecall(args, projectId, cache, sync)
+      const result = await handleRecall(args, projectId, cache, sync, supabaseClient || undefined)
       // Track recall access
       const memories = cache.queryMemories(projectId, args.query, undefined, args.limit || 5)
       await tracker.logRecall(
