@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { normalizeTo1536, generateEmbedding } from '../embeddings'
+import { normalizeTo1536, generateEmbedding, generateChunkEmbeddings } from '../embeddings'
 import { chunkText } from '../chunking'
 
 function l2Norm(v: number[]): number {
@@ -345,4 +345,200 @@ describe('generateEmbedding chunking + error handling (Task A)', () => {
     // never sleep the full 600s Retry-After.
     expect(openAiCalls).toBe(2)
   })
+})
+
+/**
+ * Tests for Task 9 (Phase 2): per-chunk embeddings for multi-vector chunk
+ * storage. `generateChunkEmbeddings` is a separate entry point from
+ * `generateEmbedding`, reusing `chunkText()` and the same single-chunk OpenAI
+ * embed call as `embedLongTextViaOpenAI` (embedSingleChunkViaOpenAI), but
+ * OpenAI-only and fail-closed on any partial chunk failure.
+ */
+describe('generateChunkEmbeddings (Task 9)', () => {
+  const originalFetch = globalThis.fetch
+  const originalOpenAiKey = process.env.OPENAI_API_KEY
+
+  beforeEach(() => {
+    process.env.OPENAI_API_KEY = 'test-openai-key'
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY
+    else process.env.OPENAI_API_KEY = originalOpenAiKey
+  })
+
+  function rejectOllama(url: string): boolean {
+    return typeof url === 'string' && url.includes('11434')
+  }
+
+  it('returns null when NO provider is available (Ollama down + no OPENAI_API_KEY)', async () => {
+    delete process.env.OPENAI_API_KEY
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('connection refused')) as unknown as typeof fetch
+
+    const result = await generateChunkEmbeddings('some memory value')
+    expect(result).toBeNull()
+  })
+
+  it('tries Ollama FIRST and uses Ollama-space chunks with NO OpenAI call when Ollama serves (Fix A — findings 1/7)', async () => {
+    // Fix A: chunk vectors must share the query vector space (Ollama-first) and
+    // Ollama-only users must never be billed for OpenAI. OPENAI_API_KEY is set
+    // (beforeEach) yet OpenAI must NOT be called because Ollama succeeds.
+    let ollamaCalled = false
+    let openAiCalls = 0
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('11434')) {
+        ollamaCalled = true
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
+        })
+      }
+      openAiCalls++
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ embedding: new Array(1536).fill(0.05) }] }),
+      })
+    }) as unknown as typeof fetch
+
+    const result = await generateChunkEmbeddings('some memory value')
+    expect(ollamaCalled).toBe(true)
+    expect(openAiCalls).toBe(0)
+    expect(result).not.toBeNull()
+    // Ollama's 768-dim vector zero-padded to 1536 — not an OpenAI vector.
+    expect(result!.chunks[0].embedding.slice(0, 768)).toEqual(new Array(768).fill(0.1))
+    expect(result!.chunks[0].embedding.slice(768)).toEqual(new Array(768).fill(0))
+  })
+
+  it('single-chunk parity for short text: one chunk row, pooled equals the single embedding', async () => {
+    let openAiCalls = 0
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (rejectOllama(url)) return Promise.reject(new Error('connection refused'))
+      openAiCalls++
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ embedding: new Array(1536).fill(0.05) }] }),
+      })
+    }) as unknown as typeof fetch
+
+    const shortText = 'a short memory value'
+    const result = await generateChunkEmbeddings(shortText)
+
+    expect(result).not.toBeNull()
+    expect(openAiCalls).toBe(1)
+    expect(result!.chunks).toHaveLength(1)
+    expect(result!.chunks[0].text).toBe(shortText)
+    expect(result!.chunks[0].embedding).toEqual(new Array(1536).fill(0.05))
+    // Pooling a single vector is a no-op (mod L2 renormalization): parity
+    // with the single embedded chunk.
+    expect(result!.pooled).not.toBeNull()
+    expect(result!.pooled!.length).toBe(1536)
+  })
+
+  it('multiple chunk rows with distinct embeddings for long text (15,000-char integration case)', async () => {
+    let callIndex = 0
+    const usedEmbeddings: number[][] = []
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (rejectOllama(url)) return Promise.reject(new Error('connection refused'))
+      callIndex++
+      // Distinct per-chunk vectors (not identical fills) so we can assert
+      // the stored chunk embeddings are actually different from each other.
+      const embedding = Array.from({ length: 1536 }, (_, i) => Math.sin(i * 0.01 + callIndex))
+      usedEmbeddings.push(embedding)
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ embedding }] }),
+      })
+    }) as unknown as typeof fetch
+
+    const longText = 'the quick brown fox jumps over the lazy dog. '.repeat(400) // ~18,800 chars
+    expect(longText.length).toBeGreaterThan(15000)
+    expect(chunkText(longText).length).toBeGreaterThan(1)
+
+    const result = await generateChunkEmbeddings(longText)
+
+    expect(result).not.toBeNull()
+    expect(result!.chunks.length).toBeGreaterThan(1)
+    expect(result!.chunks.length).toBe(usedEmbeddings.length)
+    // Every chunk's stored embedding is the exact (normalized) per-chunk
+    // vector, not some pooled/averaged value.
+    result!.chunks.forEach((chunk, i) => {
+      expect(chunk.embedding).toEqual(usedEmbeddings[i])
+    })
+    // Distinct embeddings, not the same vector duplicated per chunk.
+    const firstEmbedding = result!.chunks[0].embedding
+    expect(result!.chunks.some((c) => c.embedding !== firstEmbedding && !arraysEqual(c.embedding, firstEmbedding))).toBe(true)
+    // Pooled convenience field is still a valid 1536-dim vector.
+    expect(result!.pooled).not.toBeNull()
+    expect(result!.pooled!.length).toBe(1536)
+  })
+
+  it('chunk text boundaries match chunkText() output exactly', async () => {
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (rejectOllama(url)) return Promise.reject(new Error('connection refused'))
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ embedding: new Array(1536).fill(0.02) }] }),
+      })
+    }) as unknown as typeof fetch
+
+    const longText = 'lorem ipsum dolor sit amet '.repeat(300)
+    const expectedChunks = chunkText(longText)
+    const result = await generateChunkEmbeddings(longText)
+
+    expect(result).not.toBeNull()
+    expect(result!.chunks.map((c) => c.text)).toEqual(expectedChunks)
+  })
+
+  it('fail-closed: a single failed chunk invalidates the whole chunk set (returns null, not a partial set)', async () => {
+    let openAiCalls = 0
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (rejectOllama(url)) return Promise.reject(new Error('connection refused'))
+      openAiCalls++
+      if (openAiCalls === 2) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          headers: { get: () => null },
+          text: () => Promise.resolve('internal server error'),
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ embedding: new Array(1536).fill(0.02) }] }),
+      })
+    }) as unknown as typeof fetch
+
+    const longText = 'lorem ipsum dolor sit amet '.repeat(300)
+    expect(chunkText(longText).length).toBeGreaterThan(1)
+
+    const result = await generateChunkEmbeddings(longText)
+    expect(result).toBeNull()
+    expect(openAiCalls).toBeGreaterThanOrEqual(2)
+  })
+
+  it('falls through to OpenAI chunks when Ollama is DOWN (eval config: no Ollama, OPENAI_API_KEY set)', async () => {
+    // Fix A must not regress the OpenAI-only eval config: with Ollama
+    // unavailable and OPENAI_API_KEY set, chunks are still OpenAI vectors.
+    let openAiCalls = 0
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (typeof url === 'string' && url.includes('11434')) {
+        return Promise.reject(new Error('connection refused'))
+      }
+      openAiCalls++
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ data: [{ embedding: new Array(1536).fill(0.05) }] }),
+      })
+    }) as unknown as typeof fetch
+
+    const result = await generateChunkEmbeddings('some text')
+    expect(result).not.toBeNull()
+    expect(openAiCalls).toBeGreaterThan(0)
+    expect(result!.chunks[0].embedding).toEqual(new Array(1536).fill(0.05))
+  })
+
+  function arraysEqual(a: number[], b: number[]): boolean {
+    return a.length === b.length && a.every((v, i) => v === b[i])
+  }
 })

@@ -13,19 +13,28 @@ import {
 const {
   mockUpsertMemory,
   mockUpsertMemoryWithEmbedding,
+  mockUpsertChunks,
+  mockGetByKey,
   mockFlush,
   mockClose,
   mockOpenCliSync,
   mockGenerateEmbedding,
+  mockGenerateChunkEmbeddings,
 } = vi.hoisted(() => {
   const mockUpsertMemory = vi.fn()
   const mockUpsertMemoryWithEmbedding = vi.fn()
+  const mockUpsertChunks = vi.fn()
+  // Default: no persisted row found — preserves the memory.id fallback the
+  // pre-existing (chunk-less) tests exercise. Overridden per-test.
+  const mockGetByKey = vi.fn().mockReturnValue(null)
   const mockFlush = vi.fn().mockResolvedValue(undefined)
   const mockClose = vi.fn()
   const mockOpenCliSync = vi.fn().mockResolvedValue({
     cache: {
       upsertMemory: mockUpsertMemory,
       upsertMemoryWithEmbedding: mockUpsertMemoryWithEmbedding,
+      upsertChunks: mockUpsertChunks,
+      getByKey: mockGetByKey,
     },
     flush: mockFlush,
     close: mockClose,
@@ -33,13 +42,21 @@ const {
   // Default: no embedding provider available (returns null) — preserves the
   // trigram-only behaviour the pre-existing tests assert. Overridden per-test.
   const mockGenerateEmbedding = vi.fn().mockResolvedValue(null)
+  // Default: no chunk provider available (returns null) — preserves existing
+  // (chunk-less) behaviour; the caller's try/catch also tolerates this being
+  // entirely absent (see the module factory below), but an explicit mock
+  // lets chunk-path tests control it directly. Overridden per-test.
+  const mockGenerateChunkEmbeddings = vi.fn().mockResolvedValue(null)
   return {
     mockUpsertMemory,
     mockUpsertMemoryWithEmbedding,
+    mockUpsertChunks,
+    mockGetByKey,
     mockFlush,
     mockClose,
     mockOpenCliSync,
     mockGenerateEmbedding,
+    mockGenerateChunkEmbeddings,
   }
 })
 
@@ -49,6 +66,7 @@ vi.mock('../sync/cli-sync.js', () => ({
 
 vi.mock('../lib/embedding.js', () => ({
   generateEmbedding: mockGenerateEmbedding,
+  generateChunkEmbeddings: mockGenerateChunkEmbeddings,
 }))
 
 let tempConfigDir: string
@@ -77,10 +95,14 @@ describe('remember command', () => {
     // Reset mock return values after clearAllMocks
     mockFlush.mockResolvedValue(undefined)
     mockGenerateEmbedding.mockResolvedValue(null)
+    mockGenerateChunkEmbeddings.mockResolvedValue(null)
+    mockGetByKey.mockReturnValue(null)
     mockOpenCliSync.mockResolvedValue({
       cache: {
         upsertMemory: mockUpsertMemory,
         upsertMemoryWithEmbedding: mockUpsertMemoryWithEmbedding,
+        upsertChunks: mockUpsertChunks,
+        getByKey: mockGetByKey,
       },
       flush: mockFlush,
       close: mockClose,
@@ -349,6 +371,63 @@ describe('remember command', () => {
       expect(mockUpsertMemoryWithEmbedding).not.toHaveBeenCalled()
       // Memory still confirmed stored to the user.
       expect(console_.logs.join('\n')).toContain('robust-key')
+    })
+  })
+
+  // Chunk-sync key-resolution path (Task 9 Phase 2): `remember.ts` resolves
+  // the chunk rows' parent id via `cache.getByKey` rather than trusting the
+  // locally-generated `memory.id`, because `upsertMemory`'s
+  // ON CONFLICT(project_id, key) DO UPDATE keeps the EXISTING row's id on a
+  // re-remember of an existing key. Same id-divergence bug class documented
+  // in supabase-sync.ts (caught live on the dev eval: chunks stranded local-
+  // only because they were keyed on a local id the remote row didn't share).
+  describe('chunk write path — persisted?.id ?? memory.id resolution', () => {
+    it('re-remember of an existing key: chunks are keyed on the PERSISTED row id, not the fresh local memory.id', async () => {
+      writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+      const chunks = [{ text: 'chunk one', embedding: [0.1, 0.2] }]
+      mockGenerateChunkEmbeddings.mockResolvedValue({ pooled: [0.1, 0.2], chunks })
+      // Simulates ON CONFLICT DO UPDATE: the existing row keeps its own,
+      // different id from the fresh randomUUID() generated for this call.
+      mockGetByKey.mockReturnValue({ id: 'existing-persisted-id', key: 'stripe-key' })
+
+      await rememberCommand('stripe-key', 'We switched payment provider to Stripe', {
+        type: 'decision',
+      })
+
+      expect(mockGetByKey).toHaveBeenCalledWith('test-project-id', 'stripe-key')
+      // Keyed on the persisted row's id — never the throwaway fresh local id
+      // generated for this call (upsertChunks called exactly once, with the
+      // persisted id as its sole first-argument value).
+      expect(mockUpsertChunks).toHaveBeenCalledTimes(1)
+      expect(mockUpsertChunks).toHaveBeenCalledWith('existing-persisted-id', 'test-project-id', chunks)
+    })
+
+    it('brand-new key: falls back to the local memory.id when getByKey finds nothing yet', async () => {
+      writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+      const chunks = [{ text: 'chunk one', embedding: [0.3, 0.4] }]
+      mockGenerateChunkEmbeddings.mockResolvedValue({ pooled: [0.3, 0.4], chunks })
+      mockGetByKey.mockReturnValue(null)
+
+      await rememberCommand('brand-new-key', 'a brand new fact', { type: 'convention' })
+
+      expect(mockUpsertChunks).toHaveBeenCalledTimes(1)
+      const [calledId, calledProjectId, calledChunks] = mockUpsertChunks.mock.calls[0]
+      expect(typeof calledId).toBe('string')
+      expect(calledId).not.toBe('') // falls back to memory.id (a fresh randomUUID), never empty/undefined
+      expect(calledProjectId).toBe('test-project-id')
+      expect(calledChunks).toEqual(chunks)
+    })
+
+    it('does not call upsertChunks at all when generateChunkEmbeddings returns null (no chunk provider)', async () => {
+      writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+      mockGenerateChunkEmbeddings.mockResolvedValue(null)
+
+      await rememberCommand('no-chunk-key', 'no-chunk-value', { type: 'convention' })
+
+      expect(mockUpsertChunks).not.toHaveBeenCalled()
+      // getByKey is only needed to resolve a chunk parent id — must not be
+      // called when there are no chunks to persist.
+      expect(mockGetByKey).not.toHaveBeenCalled()
     })
   })
 })

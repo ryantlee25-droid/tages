@@ -275,9 +275,15 @@ async function main() {
       query: RecallSchema.shape.query,
       type: RecallSchema.shape.type,
       limit: RecallSchema.shape.limit,
+      // Fix E (finding 8): these were absent from the registered input schema,
+      // so the MCP SDK stripped them from `args` before handleRecall ran —
+      // making the server-half assembled-context feature (and the pre-existing
+      // maxTokens budget) unreachable over MCP. Register them so they survive.
+      maxTokens: RecallSchema.shape.maxTokens,
+      assembledContext: RecallSchema.shape.assembledContext,
     },
     async (args) => {
-      const result = await handleRecall(args, projectId, cache, sync)
+      const result = await handleRecall(args, projectId, cache, sync, supabaseClient || undefined)
       // Track recall access
       const memories = cache.queryMemories(projectId, args.query, undefined, args.limit || 5)
       await tracker.logRecall(

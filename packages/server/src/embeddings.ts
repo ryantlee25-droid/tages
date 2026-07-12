@@ -20,6 +20,17 @@
  * recall.ts, backfill-embeddings.ts) needs zero changes. All non-OK HTTP
  * responses are now read and logged (never silently swallowed), and 429s are
  * retried with backoff (respecting a `Retry-After` header when present).
+ *
+ * Multi-vector chunk storage (Task 9, Phase 2): `generateChunkEmbeddings`
+ * below is a SEPARATE entry point from `generateEmbedding`, added for the new
+ * per-chunk `memory_chunks` table rather than folded into the pooled path.
+ * It reuses `chunkText()` and, per chunk, the SAME single-text embed helper
+ * (`embedOne`) that generateEmbedding's short-text path uses — Ollama-first,
+ * then OpenAI (Fix A). Previously it was OpenAI-only, so whenever Ollama was
+ * running the query (Ollama-space) and the stored chunks (OpenAI-space) lived
+ * in different vector spaces and their cosine was meaningless, silently
+ * zero-ing the chunk channel AND billing OpenAI even for Ollama-only users.
+ * `generateEmbedding()`'s external behavior is unchanged by this addition.
  */
 
 import { chunkText, estimateTokenCount, SAFE_SINGLE_CALL_TOKEN_LIMIT } from './chunking'
@@ -27,7 +38,29 @@ import { chunkText, estimateTokenCount, SAFE_SINGLE_CALL_TOKEN_LIMIT } from './c
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434'
 
 export async function generateEmbedding(text: string): Promise<number[] | null> {
-  // Try Ollama first
+  // Long OpenAI-fallback inputs still chunk+pool (embedLongTextViaOpenAI), but
+  // only AFTER Ollama misses on the whole text — Ollama gets the whole input
+  // first, exactly as before. Every other (short-text) case goes through the
+  // shared single-text `embedOne` helper, which is the SAME provider-selection
+  // path `generateChunkEmbeddings` uses per chunk (Fix A). That shared path is
+  // what guarantees query vectors and chunk vectors always live in the same
+  // vector space — before, chunks were OpenAI-only while queries were
+  // Ollama-first, so their cosine was meaningless whenever Ollama was running.
+  const openaiKey = process.env.OPENAI_API_KEY
+  if (openaiKey && estimateTokenCount(text) > SAFE_SINGLE_CALL_TOKEN_LIMIT) {
+    const ollama = await embedViaOllama(text)
+    if (ollama) return ollama
+    return await embedLongTextViaOpenAI(text, openaiKey)
+  }
+  return embedOne(text)
+}
+
+/**
+ * Embed a single text via the local Ollama endpoint, normalized to 1536 dims.
+ * Returns null (never throws) when Ollama is unavailable, so callers can fall
+ * through to the next provider.
+ */
+async function embedViaOllama(text: string): Promise<number[] | null> {
   try {
     const data = await fetchEmbeddingJson(
       `${OLLAMA_URL}/api/embeddings`,
@@ -50,42 +83,31 @@ export async function generateEmbedding(text: string): Promise<number[] | null> 
   } catch {
     // Ollama not available
   }
+  return null
+}
 
-  // Try OpenAI-compatible API
+/**
+ * Embed a single text (a query, or ONE already-chunk-sized passage) using the
+ * SAME provider selection as generateEmbedding's short-text path: Ollama-first,
+ * then OpenAI (gated on OPENAI_API_KEY, exactly as generateEmbedding is). This
+ * is the shared helper `generateChunkEmbeddings` calls per chunk (Fix A), so
+ * chunk vectors and query vectors are always produced by the same provider and
+ * are comparable in one vector space. Assumes `text` already fits a single
+ * embed call (chunkText upstream guarantees chunk-sized input); the long-text
+ * chunk+pool path stays in generateEmbedding/embedLongTextViaOpenAI.
+ */
+async function embedOne(text: string): Promise<number[] | null> {
+  const ollama = await embedViaOllama(text)
+  if (ollama) return ollama
+
   const openaiKey = process.env.OPENAI_API_KEY
   if (openaiKey) {
     try {
-      // Text over the safe single-call threshold gets chunked + pooled;
-      // everything else takes the original single-request path unchanged.
-      if (estimateTokenCount(text) > SAFE_SINGLE_CALL_TOKEN_LIMIT) {
-        return await embedLongTextViaOpenAI(text, openaiKey)
-      }
-
-      const data = await fetchEmbeddingJson(
-        'https://api.openai.com/v1/embeddings',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${openaiKey}`,
-          },
-          body: JSON.stringify({
-            model: 'text-embedding-3-small',
-            input: text,
-          }),
-        },
-        'OpenAI',
-        10000,
-      ) as { data: Array<{ embedding: number[] }> } | null
-
-      if (data?.data?.[0]?.embedding) {
-        return normalizeTo1536(data.data[0].embedding)
-      }
+      return await embedSingleChunkViaOpenAI(text, openaiKey)
     } catch {
       // OpenAI not available
     }
   }
-
   return null
 }
 
@@ -105,39 +127,103 @@ async function embedLongTextViaOpenAI(text: string, apiKey: string): Promise<num
   const chunkEmbeddings: number[][] = []
 
   for (const chunk of chunks) {
-    const data = await fetchEmbeddingJson(
-      'https://api.openai.com/v1/embeddings',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: 'text-embedding-3-small',
-          input: chunk,
-        }),
-      },
-      'OpenAI (chunk)',
-      10000,
-    ) as { data: Array<{ embedding: number[] }> } | null
-
-    const embedding = data?.data?.[0]?.embedding
+    const embedding = await embedSingleChunkViaOpenAI(chunk, apiKey)
     if (!embedding) return null
     chunkEmbeddings.push(embedding)
   }
 
   if (chunkEmbeddings.length === 0) return null
+  return poolChunkEmbeddings(chunkEmbeddings)
+}
 
-  // Degenerate mean guard (W1): if the pooled vector's norm is ~0 (e.g. chunk
-  // embeddings that cancel out), normalizing would yield an all-zero vector,
-  // which stores as a zero embedding -> NaN cosine -> the memory silently never
-  // matches. Treat that as "no embedding" (return null) rather than persisting
-  // a poisoned vector.
+/**
+ * Embed a single chunk of text via OpenAI's embeddings endpoint, normalized
+ * to 1536 dims. Factored out of `embedLongTextViaOpenAI` so both the pooled
+ * long-text path and `generateChunkEmbeddings` (Task 9) share exactly one
+ * per-chunk embed call instead of drifting apart.
+ */
+async function embedSingleChunkViaOpenAI(chunk: string, apiKey: string): Promise<number[] | null> {
+  const data = await fetchEmbeddingJson(
+    'https://api.openai.com/v1/embeddings',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'text-embedding-3-small',
+        input: chunk,
+      }),
+    },
+    'OpenAI (chunk)',
+    10000,
+  ) as { data: Array<{ embedding: number[] }> } | null
+
+  const embedding = data?.data?.[0]?.embedding
+  return embedding ? normalizeTo1536(embedding) : null
+}
+
+/**
+ * Mean-pool + L2-renormalize a set of chunk embeddings into one 1536-dim
+ * vector. Shared by `embedLongTextViaOpenAI` (pooled single-vector path) and
+ * `generateChunkEmbeddings` (per-chunk storage path, which also returns this
+ * as its convenience `pooled` field).
+ *
+ * Degenerate mean guard (W1): if the pooled vector's norm is ~0 (e.g. chunk
+ * embeddings that cancel out), normalizing would yield an all-zero vector,
+ * which stores as a zero embedding -> NaN cosine -> the memory silently never
+ * matches. Treat that as "no embedding" (return null) rather than persisting
+ * a poisoned vector.
+ */
+function poolChunkEmbeddings(chunkEmbeddings: number[][]): number[] | null {
   const pooled = meanPool(chunkEmbeddings)
   const pooledNorm = Math.sqrt(pooled.reduce((sum, x) => sum + x * x, 0))
   if (!(pooledNorm > 1e-8)) return null
   return normalizeTo1536(pooled.map((x) => x / pooledNorm))
+}
+
+/**
+ * Generate per-chunk embeddings for multi-vector chunk storage (Task 9,
+ * Phase 2), alongside (not instead of) the existing pooled `generateEmbedding`.
+ *
+ * Same provider selection as generateEmbedding (Fix A): each chunk is embedded
+ * via `embedOne` (Ollama-first, then OpenAI), so chunk vectors, the pooled
+ * vector, AND the query vector are always produced by the same provider/model
+ * — required for chunk-level and pooled cosine similarity to be comparable in
+ * one vector space. Returns null (no chunks persisted) only when NO provider is
+ * available at all (embedOne returns null), mirroring the rest of this module's
+ * "no provider available -> null" contract. In the OpenAI-only eval config (no
+ * Ollama, OPENAI_API_KEY set) embedOne yields OpenAI vectors, so this returns
+ * OpenAI chunk vectors exactly as before.
+ *
+ * Fail-closed for chunk storage (distinct from the pooled path's fail-open
+ * contract): if ANY individual chunk fails to embed, the whole result is
+ * discarded (returns null) rather than persisting a partial, silently
+ * incomplete chunk set for the memory — a caller (remember.ts) that gets
+ * null here simply skips writing chunk rows this time; the pooled embedding
+ * write (a separate, independent call) is entirely unaffected.
+ *
+ * Short text (<= the chunking threshold) still chunks cleanly: `chunkText`
+ * returns a single-element array equal to the whole input, so this produces
+ * exactly one chunk row whose embedding is identical (mod pooling arithmetic)
+ * to `pooled` — single-chunk parity with the short-text case.
+ */
+export async function generateChunkEmbeddings(
+  text: string,
+): Promise<{ pooled: number[] | null; chunks: Array<{ text: string; embedding: number[] }> } | null> {
+  const chunkTexts = chunkText(text)
+  const chunks: Array<{ text: string; embedding: number[] }> = []
+
+  for (const chunkTextValue of chunkTexts) {
+    const embedding = await embedOne(chunkTextValue)
+    if (!embedding) return null
+    chunks.push({ text: chunkTextValue, embedding })
+  }
+
+  if (chunks.length === 0) return null
+
+  return { pooled: poolChunkEmbeddings(chunks.map((c) => c.embedding)), chunks }
 }
 
 /**

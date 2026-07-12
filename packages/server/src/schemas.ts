@@ -42,6 +42,10 @@ export const RecallSchema = z.object({
   type: MemoryTypeSchema.optional().describe('Filter by memory type'),
   limit: z.number().int().min(1).max(50).default(5).describe('Max results'),
   maxTokens: z.number().int().min(100).max(100_000).optional().describe('Maximum token budget for response (approx 4 chars per token). Results truncated to fit.'),
+  // PLAN.md Task 4 (server half): opt-in, additive output mode — one deduped,
+  // chronologically-ordered block instead of numbered passages. Unset/false
+  // leaves the existing numbered-passage output completely unchanged.
+  assembledContext: z.boolean().optional().describe('Return one deduped, chronologically-ordered assembled-context block instead of numbered passages'),
 })
 
 export const ForgetSchema = z.object({

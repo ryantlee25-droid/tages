@@ -313,4 +313,191 @@ describe('SqliteCache', () => {
       expect(counts.has(mem1.id)).toBe(true)
     })
   })
+
+  /**
+   * Tests for Task 9 (Phase 2): local `memory_chunks` mirror table.
+   */
+  describe('upsertChunks / chunk sync helpers', () => {
+    function makeChunks(n: number): Array<{ text: string; embedding: number[] }> {
+      return Array.from({ length: n }, (_, i) => ({
+        text: `chunk ${i}`,
+        embedding: new Array(1536).fill(0).map((_, j) => (j === 0 ? i + 1 : 0)),
+      }))
+    }
+
+    it('inserts chunk rows retrievable via getChunksForMemory, in chunk_index order', () => {
+      const mem = makeMemory({ key: 'chunked-key' })
+      cache.upsertMemory(mem)
+
+      cache.upsertChunks(mem.id, TEST_PROJECT, makeChunks(3))
+
+      const chunks = cache.getChunksForMemory(mem.id)
+      expect(chunks).toHaveLength(3)
+      expect(chunks.map((c) => c.text)).toEqual(['chunk 0', 'chunk 1', 'chunk 2'])
+    })
+
+    it('replaces (not appends) chunk rows for the same memory_id on a second call', () => {
+      const mem = makeMemory({ key: 'replace-key' })
+      cache.upsertMemory(mem)
+
+      cache.upsertChunks(mem.id, TEST_PROJECT, makeChunks(3))
+      expect(cache.getChunksForMemory(mem.id)).toHaveLength(3)
+
+      // Re-chunk with a different count — old rows must be gone, not merged.
+      cache.upsertChunks(mem.id, TEST_PROJECT, makeChunks(2))
+
+      const chunks = cache.getChunksForMemory(mem.id)
+      expect(chunks).toHaveLength(2)
+      expect(chunks.map((c) => c.text)).toEqual(['chunk 0', 'chunk 1'])
+    })
+
+    it('does not affect chunk rows belonging to a different memory', () => {
+      const memA = makeMemory({ key: 'key-a' })
+      const memB = makeMemory({ key: 'key-b' })
+      cache.upsertMemory(memA)
+      cache.upsertMemory(memB)
+
+      cache.upsertChunks(memA.id, TEST_PROJECT, makeChunks(2))
+      cache.upsertChunks(memB.id, TEST_PROJECT, makeChunks(1))
+
+      cache.upsertChunks(memA.id, TEST_PROJECT, makeChunks(4))
+
+      expect(cache.getChunksForMemory(memA.id)).toHaveLength(4)
+      expect(cache.getChunksForMemory(memB.id)).toHaveLength(1)
+    })
+
+    it('marks new chunk rows dirty by default, surfaced via getDirtyChunkGroups', () => {
+      const mem = makeMemory({ key: 'dirty-key' })
+      cache.upsertMemory(mem)
+      cache.upsertChunks(mem.id, TEST_PROJECT, makeChunks(2))
+
+      const groups = cache.getDirtyChunkGroups()
+      expect(groups).toContainEqual({ memoryId: mem.id, projectId: TEST_PROJECT })
+    })
+
+    it('markChunksSynced clears the dirty flag (by row id) so the memory drops out of getDirtyChunkGroups', () => {
+      const mem = makeMemory({ key: 'synced-key' })
+      cache.upsertMemory(mem)
+      const rowIds = cache.upsertChunks(mem.id, TEST_PROJECT, makeChunks(2))
+
+      // Fix C: markChunksSynced now takes the specific chunk row ids.
+      cache.markChunksSynced(rowIds)
+
+      const groups = cache.getDirtyChunkGroups()
+      expect(groups.find((g) => g.memoryId === mem.id)).toBeUndefined()
+    })
+
+    it('upsertChunks returns the inserted row ids, retrievable as dirty via getDirtyChunkRows (Fix C)', () => {
+      const mem = makeMemory({ key: 'rowid-key' })
+      cache.upsertMemory(mem)
+      const rowIds = cache.upsertChunks(mem.id, TEST_PROJECT, makeChunks(3))
+
+      expect(rowIds).toHaveLength(3)
+      const dirty = cache.getDirtyChunkRows(mem.id)
+      expect(dirty.map((r) => r.id).sort()).toEqual([...rowIds].sort())
+      expect(dirty.map((r) => r.text)).toEqual(['chunk 0', 'chunk 1', 'chunk 2'])
+    })
+
+    it('markChunksSynced by OLD row ids leaves a concurrently-rewritten v2 chunk set dirty (Fix C isolation)', () => {
+      const mem = makeMemory({ key: 'concurrent-key' })
+      cache.upsertMemory(mem)
+      // v1 written and its row ids captured (as a flush would, pre-await).
+      const v1Ids = cache.upsertChunks(mem.id, TEST_PROJECT, makeChunks(2))
+      // A concurrent v2 write lands during the (simulated) remote round-trip:
+      // delete-then-insert => brand-new row ids, all dirty=1.
+      const v2Ids = cache.upsertChunks(mem.id, TEST_PROJECT, makeChunks(3))
+      expect(v2Ids.some((id) => v1Ids.includes(id))).toBe(false)
+
+      // The flush completes and marks only the v1 ids it actually synced.
+      cache.markChunksSynced(v1Ids)
+
+      // v2 must STILL be dirty (its rows never synced) — not clobbered clean.
+      const groups = cache.getDirtyChunkGroups()
+      expect(groups).toContainEqual({ memoryId: mem.id, projectId: TEST_PROJECT })
+      const stillDirty = cache.getDirtyChunkRows(mem.id)
+      expect(stillDirty.map((r) => r.id).sort()).toEqual([...v2Ids].sort())
+    })
+
+    it('deleteChunksForMemory removes all of a memory\'s chunk rows (Fix F)', () => {
+      const mem = makeMemory({ key: 'orphan-cleanup-key' })
+      cache.upsertMemory(mem)
+      cache.upsertChunks(mem.id, TEST_PROJECT, makeChunks(3))
+      expect(cache.getChunksForMemory(mem.id)).toHaveLength(3)
+
+      cache.deleteChunksForMemory(mem.id)
+
+      expect(cache.getChunksForMemory(mem.id)).toHaveLength(0)
+      expect(cache.getDirtyChunkGroups().find((g) => g.memoryId === mem.id)).toBeUndefined()
+    })
+
+    it('deleteByKey also deletes the memory\'s mirror chunk rows (Fix F(a))', () => {
+      const mem = makeMemory({ key: 'forget-with-chunks' })
+      cache.upsertMemory(mem)
+      cache.upsertChunks(mem.id, TEST_PROJECT, makeChunks(2))
+      expect(cache.getChunksForMemory(mem.id)).toHaveLength(2)
+
+      cache.deleteByKey(TEST_PROJECT, 'forget-with-chunks')
+
+      // No orphaned chunk rows survive the forget.
+      expect(cache.getChunksForMemory(mem.id)).toHaveLength(0)
+      expect(cache.getDirtyChunkGroups().find((g) => g.memoryId === mem.id)).toBeUndefined()
+    })
+
+    it('honors dirty=false for callers that do not want the row queued for remote sync', () => {
+      const mem = makeMemory({ key: 'no-dirty-key' })
+      cache.upsertMemory(mem)
+      cache.upsertChunks(mem.id, TEST_PROJECT, makeChunks(1), false)
+
+      const groups = cache.getDirtyChunkGroups()
+      expect(groups.find((g) => g.memoryId === mem.id)).toBeUndefined()
+      // Still retrievable locally even though not marked dirty.
+      expect(cache.getChunksForMemory(mem.id)).toHaveLength(1)
+    })
+
+    it('round-trips embeddings through getChunksForMemory unchanged', () => {
+      const mem = makeMemory({ key: 'embedding-roundtrip-key' })
+      cache.upsertMemory(mem)
+      const chunks = makeChunks(2)
+      cache.upsertChunks(mem.id, TEST_PROJECT, chunks)
+
+      const stored = cache.getChunksForMemory(mem.id)
+      expect(stored[0].embedding).toEqual(chunks[0].embedding)
+      expect(stored[1].embedding).toEqual(chunks[1].embedding)
+    })
+  })
+
+  /**
+   * Tests for getKeyById (Task 9 Phase 2): resolves (project_id, key) for a
+   * locally-cached memory id. This is the lookup `SupabaseSync._flushDirtyChunks`
+   * uses to resolve the AUTHORITATIVE remote id at flush time, since remote
+   * memory upserts strip the local id and a local id routinely diverges from
+   * the remote row's real id (same id-divergence class PR #70 fixed for
+   * embedding updates).
+   */
+  describe('getKeyById', () => {
+    it('returns the (project_id, key) pair for an existing memory id', () => {
+      const mem = makeMemory({ key: 'lookup-key' })
+      cache.upsertMemory(mem)
+
+      const result = cache.getKeyById(mem.id)
+
+      expect(result).toEqual({ projectId: TEST_PROJECT, key: 'lookup-key' })
+    })
+
+    it('returns null for an id that does not exist (never throws)', () => {
+      const result = cache.getKeyById('no-such-memory-id')
+
+      expect(result).toBeNull()
+    })
+
+    it('returns null for a memory that has been forget-deleted (row removed)', () => {
+      const mem = makeMemory({ key: 'to-be-deleted' })
+      cache.upsertMemory(mem)
+      cache.deleteByKey(TEST_PROJECT, 'to-be-deleted')
+
+      const result = cache.getKeyById(mem.id)
+
+      expect(result).toBeNull()
+    })
+  })
 })

@@ -75,6 +75,25 @@ CREATE TABLE IF NOT EXISTS sync_meta (
   last_synced_at TEXT,
   memory_count INTEGER NOT NULL DEFAULT 0
 );
+
+-- Task 9 (Phase 2): local mirror of the remote memory_chunks child table
+-- (migration 0063). Mirrors the memories table's own dirty-flag pattern so
+-- SupabaseSync's flush() can pick up chunk rows the same way it picks up
+-- dirty memory rows (needed for the CLI's durable, awaited write path, which
+-- has no direct access to SupabaseSync — only cache + flush()).
+CREATE TABLE IF NOT EXISTS memory_chunks (
+  id TEXT PRIMARY KEY,
+  memory_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  chunk_text TEXT NOT NULL,
+  embedding TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  dirty INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS memory_chunks_memory_id ON memory_chunks(memory_id);
+CREATE INDEX IF NOT EXISTS memory_chunks_dirty ON memory_chunks(dirty) WHERE dirty = 1;
 `
 
 export class SqliteCache {
@@ -292,6 +311,117 @@ export class SqliteCache {
   }
 
   /**
+   * Replace all local chunk rows for a memory (delete-then-insert, NOT
+   * append) — mirrors supabase-sync.ts's remoteUpsertChunks so the local
+   * mirror and remote table always hold the exact same chunk set, never a
+   * partial merge of old + new. Wrapped in a transaction so a mid-loop
+   * failure can't leave the memory with zero chunks (deleted-but-not-yet-
+   * reinserted).
+   *
+   * New rows default to dirty=1 so SupabaseSync's flush() picks them up for
+   * remote sync on its next pass — the same dirty-flag pattern the memories
+   * table already uses, which is what lets the CLI's durable write path
+   * (cache.upsertChunks + the existing `await flush()` call, no direct
+   * SupabaseSync access needed) actually reach Supabase.
+   */
+  upsertChunks(
+    memoryId: string,
+    projectId: string,
+    chunks: Array<{ text: string; embedding: number[] }>,
+    dirty = true,
+  ): string[] {
+    // Returns the freshly-inserted chunk row ids (Fix C): the caller captures
+    // them BEFORE the remote round-trip and clears dirty only for THOSE ids, so
+    // a concurrent v2 chunk write (delete-then-insert => new ids) during the
+    // await is never clobbered by a memory-wide dirty=0.
+    const ids: string[] = []
+    const replace = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM memory_chunks WHERE memory_id = ?').run(memoryId)
+      const insert = this.db.prepare(`
+        INSERT INTO memory_chunks (id, memory_id, project_id, chunk_index, chunk_text, embedding, dirty)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `)
+      chunks.forEach((chunk, index) => {
+        const id = _randomUUID()
+        ids.push(id)
+        insert.run(id, memoryId, projectId, index, chunk.text, JSON.stringify(chunk.embedding), dirty ? 1 : 0)
+      })
+    })
+    replace()
+    return ids
+  }
+
+  /** Distinct (memory_id, project_id) pairs with at least one dirty chunk row — drives flush()'s remote chunk sync. */
+  getDirtyChunkGroups(): Array<{ memoryId: string; projectId: string }> {
+    const rows = this.db.prepare(
+      'SELECT DISTINCT memory_id, project_id FROM memory_chunks WHERE dirty = 1'
+    ).all() as { memory_id: string; project_id: string }[]
+    return rows.map((r) => ({ memoryId: r.memory_id, projectId: r.project_id }))
+  }
+
+  /** Ordered chunk rows for a memory, parsed back into {text, embedding}. */
+  getChunksForMemory(memoryId: string): Array<{ text: string; embedding: number[] }> {
+    const rows = this.db.prepare(
+      'SELECT chunk_text, embedding FROM memory_chunks WHERE memory_id = ? ORDER BY chunk_index'
+    ).all(memoryId) as { chunk_text: string; embedding: string | null }[]
+    return rows
+      .filter((r) => r.embedding)
+      .map((r) => ({ text: r.chunk_text, embedding: JSON.parse(r.embedding as string) as number[] }))
+  }
+
+  /**
+   * Dirty chunk rows for a memory, WITH their row ids (Fix C). `_flushDirtyChunks`
+   * captures these ids at flush time and passes them to `markChunksSynced` after
+   * the remote round-trip so it clears dirty only for the exact rows it synced —
+   * a concurrent v2 chunk write (delete-then-insert => fresh ids, dirty=1)
+   * during the network await keeps its dirty flag and is picked up next cycle.
+   */
+  getDirtyChunkRows(memoryId: string): Array<{ id: string; text: string; embedding: number[] }> {
+    const rows = this.db.prepare(
+      'SELECT id, chunk_text, embedding FROM memory_chunks WHERE memory_id = ? AND dirty = 1 ORDER BY chunk_index'
+    ).all(memoryId) as { id: string; chunk_text: string; embedding: string | null }[]
+    return rows
+      .filter((r) => r.embedding)
+      .map((r) => ({ id: r.id, text: r.chunk_text, embedding: JSON.parse(r.embedding as string) as number[] }))
+  }
+
+  /**
+   * Clear the dirty flag for the SPECIFIC chunk rows just synced, by row id
+   * (Fix C) — NOT by memory_id. Clearing memory-wide would clobber a concurrent
+   * v2 chunk write that landed (with fresh ids) during the remote round-trip.
+   */
+  markChunksSynced(chunkRowIds: string[]): void {
+    if (chunkRowIds.length === 0) return
+    const placeholders = chunkRowIds.map(() => '?').join(',')
+    this.db.prepare(`UPDATE memory_chunks SET dirty = 0 WHERE id IN (${placeholders})`).run(...chunkRowIds)
+  }
+
+  /**
+   * Delete ALL chunk rows for a memory (Fix F). Called (a) when the parent
+   * memory is forgotten/deleted so its mirror chunk rows don't linger as
+   * orphans, and (b) from `_flushDirtyChunks` when the parent can no longer be
+   * resolved locally (getKeyById returns null) so dirty orphan rows aren't
+   * retried forever.
+   */
+  deleteChunksForMemory(memoryId: string): void {
+    this.db.prepare('DELETE FROM memory_chunks WHERE memory_id = ?').run(memoryId)
+  }
+
+  /**
+   * (project_id, key) for a locally-cached memory id. Chunk sync uses this
+   * to resolve the row's AUTHORITATIVE remote id at flush time: remote
+   * memory upserts strip the local id (Supabase keeps/assigns its own), so
+   * a local id routinely differs from the remote row's id — the same
+   * id-divergence class PR #70 fixed for embedding updates.
+   */
+  getKeyById(id: string): { projectId: string; key: string } | null {
+    const row = this.db.prepare('SELECT project_id, key FROM memories WHERE id = ?').get(id) as
+      | { project_id: string; key: string }
+      | undefined
+    return row ? { projectId: row.project_id, key: row.key } : null
+  }
+
+  /**
    * Semantic search using local cosine similarity on cached embeddings.
    * No network call needed — runs entirely from SQLite.
    */
@@ -362,9 +492,19 @@ export class SqliteCache {
   }
 
   deleteByKey(projectId: string, key: string): boolean {
+    // Fix F(a): resolve the row id BEFORE deleting the memory so its mirror
+    // memory_chunks rows can be cleaned up in the same call. Without this, chunk
+    // rows survive a forget/delete, stay dirty=1, and _flushDirtyChunks retries
+    // them forever (parent gone => getKeyById null) while wasting storage.
+    const row = this.db.prepare(
+      'SELECT id FROM memories WHERE project_id = ? AND key = ?'
+    ).get(projectId, key) as { id: string } | undefined
     const result = this.db.prepare(
       'DELETE FROM memories WHERE project_id = ? AND key = ?'
     ).run(projectId, key)
+    if (row) {
+      this.db.prepare('DELETE FROM memory_chunks WHERE memory_id = ?').run(row.id)
+    }
     return result.changes > 0
   }
 

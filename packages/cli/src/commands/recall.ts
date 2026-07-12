@@ -6,12 +6,105 @@ import { loadProjectConfig } from '../config/project.js'
 import { getCacheDir } from '../config/paths.js'
 import { generateEmbedding } from '../lib/embedding.js'
 import { sortByTemporalProximity } from '../lib/temporal-sort.js'
+import { reciprocalRankFusion } from '../lib/rrf.js'
+import { rerankCandidates } from '../lib/reranker.js'
+import { fetchTemporalCandidates } from '../lib/temporal-recall.js'
 
 interface RecallOptions {
   type?: string
   limit?: string
   project?: string
   all?: boolean
+  assembledContext?: boolean
+}
+
+// Candidate-pool widening for RRF fusion (PLAN.md Task 1): the hybrid
+// search's underlying RPC calls now request more rows than the user's
+// requested --limit, so RRF has a wider pool to fuse over before the final
+// slice(0, limit). Tunable without a code change via
+// TAGES_RECALL_CANDIDATE_POOL, mirroring the TAGES_RECALL_THRESHOLD override
+// pattern above.
+function getRecallCandidatePool(): number {
+  const raw = process.env.TAGES_RECALL_CANDIDATE_POOL
+  if (raw === undefined || raw === '') return 50
+  const parsed = parseInt(raw, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return 50
+  return parsed
+}
+
+// Top-N window of the fused/deduped candidate list that gets sent to the
+// cross-encoder reranker (PLAN.md Task 2). Rows beyond this window keep
+// their RRF order and are appended after the reranked subset.
+const RERANK_WINDOW = 20
+
+// Character-per-token heuristic for the assembled-context token budget
+// (PLAN.md Task 4), matching the char/4 estimate already established by
+// packages/server/src/search/token-budget.ts and the chunking helpers —
+// duplicated locally per the CLI/server per-package convention rather than
+// imported across packages.
+function estimateTokenCount(text: string): number {
+  return Math.ceil(text.length / 4)
+}
+
+function getAssembledContextTokenBudget(): number {
+  const raw = process.env.TAGES_ASSEMBLED_CONTEXT_TOKEN_BUDGET
+  if (raw === undefined || raw === '') return 4000
+  const parsed = parseInt(raw, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) return 4000
+  return parsed
+}
+
+function resolveRowDate(row: Record<string, unknown>): string | undefined {
+  return (
+    (row.referenced_date as string | undefined) ??
+    (row.relative_date as string | undefined) ??
+    (row.created_at as string | undefined)
+  )
+}
+
+// Budget-fitted, chronologically-ordered assembled-context output (PLAN.md
+// Task 4). Groups `rows` into two tiers — the top `topTierCount` (the
+// fused/reranked/temporally-sorted results that would normally be printed)
+// vs. everything else that survived the wider candidate pool but got cut —
+// sorts each tier chronologically, dedupes (a no-op safety net; upstream
+// callers already ran dedupeNearDuplicateContent), and trims to a
+// character-based token-budget estimate.
+function printAssembledContext(rows: Record<string, unknown>[], topTierCount: number): void {
+  if (rows.length === 0) {
+    console.log(chalk.dim('No memories found.'))
+    return
+  }
+
+  const deduped = dedupeNearDuplicateContent(rows)
+  const topTier = deduped.slice(0, topTierCount)
+  const fallbackTier = deduped.slice(topTierCount)
+
+  const sortChronological = (list: Record<string, unknown>[]) =>
+    [...list].sort((a, b) => {
+      const aDate = resolveRowDate(a)
+      const bDate = resolveRowDate(b)
+      const aTime = aDate ? new Date(aDate).getTime() : 0
+      const bTime = bDate ? new Date(bDate).getTime() : 0
+      return aTime - bTime
+    })
+
+  const ordered = [...sortChronological(topTier), ...sortChronological(fallbackTier)]
+
+  const budget = getAssembledContextTokenBudget()
+  let usedTokens = 0
+  const entries: string[] = []
+  for (const row of ordered) {
+    const dateStr = resolveRowDate(row)
+    const datePrefix = dateStr ? `[${dateStr.slice(0, 10)}] ` : ''
+    const line = `${datePrefix}${row.key as string}: ${row.value as string}`
+    const tokens = estimateTokenCount(line)
+    if (usedTokens + tokens > budget && entries.length > 0) break
+    entries.push(line)
+    usedTokens += tokens
+  }
+
+  console.log(chalk.bold('Assembled context:') + '\n')
+  console.log(entries.join('\n\n'))
 }
 
 // Vector similarity threshold for semantic_recall, tunable without a code
@@ -87,6 +180,11 @@ export async function recallCommand(query: string | undefined, options: RecallOp
 
     let data: Record<string, unknown>[] | null = null
     let searchMethod = 'trigram'
+    // Wider candidate pool for the --assembled-context output mode (Task 4):
+    // the two-tier grouping needs access to rows beyond the final
+    // slice(0, limit) that `data` gets trimmed to below. Populated in both
+    // branches; falls back to `data` itself if somehow left unset.
+    let assembledPool: Record<string, unknown>[] | null = null
 
     if (listAll) {
       // List all memories — no similarity filtering
@@ -111,16 +209,22 @@ export async function recallCommand(query: string | undefined, options: RecallOp
       }
 
       data = allData
+      assembledPool = allData
       searchMethod = 'all'
     } else {
-      // Hybrid search: run trigram + semantic in parallel, merge & deduplicate
+      // Hybrid search: run trigram + semantic + temporal-channel candidates in
+      // parallel over a widened candidate pool (Task 1), fuse via Reciprocal
+      // Rank Fusion, dedupe, rerank the fused pool's top window via a
+      // cross-encoder (Task 2), then layer temporal-proximity reordering on
+      // top (migration 0060, unchanged).
+      const candidatePool = getRecallCandidatePool()
 
       // Trigram search
       const trigramPromise = supabase.rpc('recall_memories', {
         p_project_id: config.projectId,
         p_query: query,
         p_type: options.type || null,
-        p_limit: limit,
+        p_limit: candidatePool,
       })
 
       // Semantic search. Uses Ollama only by default: if the local embedder is
@@ -129,6 +233,12 @@ export async function recallCommand(query: string | undefined, options: RecallOp
       // The OpenAI fallback is opt-in via TAGES_OPENAI_EMBED (see lib/embedding).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let semanticPromise: any = Promise.resolve({ data: null, error: null })
+      // Chunk-level semantic channel (PLAN.md Task 11): matches per-chunk
+      // embeddings (migration 0064) and rolls up to the parent memory with
+      // the winning chunk's identity. This is the channel that finds long
+      // memories whose mean-pooled vector misses the threshold entirely.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let chunkPromise: any = Promise.resolve({ data: null, error: null })
       const embedding = await generateEmbedding(query!)
       if (embedding) {
         const embeddingStr = `[${embedding.join(',')}]`
@@ -137,51 +247,94 @@ export async function recallCommand(query: string | undefined, options: RecallOp
           p_project_id: config.projectId,
           p_embedding: embeddingStr,
           p_type: options.type || null,
-          p_limit: limit,
+          p_limit: candidatePool,
           p_threshold: getRecallThreshold(),
         })
-        searchMethod = 'hybrid (trigram + semantic)'
+        chunkPromise = supabase.rpc('chunk_semantic_recall', {
+          p_project_id: config.projectId,
+          p_embedding: embeddingStr,
+          p_type: options.type || null,
+          p_limit: candidatePool,
+          p_threshold: getRecallThreshold(),
+        })
+        searchMethod = 'hybrid (trigram + semantic + chunk)'
       }
 
-      const [trigramResult, semanticResult] = await Promise.all([trigramPromise, semanticPromise])
+      // Temporal date-range channel (Task 3): zero-cost (no query issued) for
+      // non-temporal queries or queries with no resolvable concrete date.
+      const temporalPromise = fetchTemporalCandidates(supabase, config.projectId, query!, candidatePool)
+
+      const [trigramResult, semanticResult, temporalRows, chunkResult] = await Promise.all([
+        trigramPromise,
+        semanticPromise,
+        temporalPromise,
+        chunkPromise,
+      ])
 
       if (trigramResult.error) {
         console.error(chalk.red(`Recall failed: ${trigramResult.error.message}`))
         process.exit(1)
       }
 
-      // Merge and deduplicate: semantic results first (usually more relevant), then trigram
-      const seen = new Set<string>()
-      const merged: Record<string, unknown>[] = []
+      // Reciprocal Rank Fusion across the three candidate lists. Semantic
+      // listed first, matching the previous merge's "semantic results first"
+      // tie-break for row-data preference when the same id ranks equally.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const semanticRows = (semanticResult.data || []).map((r: any) => ({ ...r, match_type: 'semantic' }))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const trigramRows = (trigramResult.data || []).map((r: any) => ({ ...r, match_type: 'trigram' }))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const temporalTagged = (temporalRows || []).map((r: any) => ({ ...r, match_type: 'temporal' }))
+      // Chunk rows carry chunk_index/chunk_text (the winning passage) in
+      // addition to the parent memory's columns — preserved through fusion
+      // for citation. Same id as the parent memory, so RRF sums its rank
+      // contributions with the other channels' rather than duplicating rows.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const chunkRows = (chunkResult.data || []).map((r: any) => ({ ...r, match_type: 'chunk' }))
 
-      for (const r of (semanticResult.data || [])) {
-        const id = r.id as string
-        if (!seen.has(id)) {
-          seen.add(id)
-          merged.push({ ...r, match_type: 'semantic' })
-        }
-      }
-      for (const r of (trigramResult.data || [])) {
-        const id = r.id as string
-        if (!seen.has(id)) {
-          seen.add(id)
-          merged.push({ ...r, match_type: 'trigram' })
-        }
-      }
+      const merged = reciprocalRankFusion<Record<string, unknown> & { id: string }>([
+        semanticRows,
+        chunkRows,
+        trigramRows,
+        temporalTagged,
+      ])
 
-      // Sort by similarity desc, take top N
-      merged.sort((a, b) => ((b.similarity as number) || 0) - ((a.similarity as number) || 0))
       // Drop near-duplicate content (e.g. two overlapping long-session chunks
       // that both cleared threshold), keeping the higher-ranked occurrence.
-      // Runs after the by-id dedup/sort above and before temporal reordering.
+      // Runs after RRF fusion and before rerank/temporal reordering.
       const contentDeduped = dedupeNearDuplicateContent(merged)
+
+      // Cross-encoder rerank pass (Task 2): only the top RERANK_WINDOW rows
+      // are sent to the reranker; rows beyond that window keep their RRF
+      // order, appended after the reranked subset.
+      let reranked = contentDeduped
+      if (contentDeduped.length > 0) {
+        const window = contentDeduped.slice(0, RERANK_WINDOW)
+        const rest = contentDeduped.slice(RERANK_WINDOW)
+        const rerankedIds = await rerankCandidates(
+          query!,
+          window.map((row) => ({ id: row.id as string, text: (row.value as string) || '' })),
+          window.length,
+        )
+        const byId = new Map(window.map((row) => [row.id as string, row]))
+        const rerankedWindow = rerankedIds
+          .map((id) => byId.get(id))
+          .filter((row): row is Record<string, unknown> => row !== undefined)
+        // Fail-safe: if the reranker returned an unexpected id set (fewer ids
+        // than the window it was given), fall back to the original RRF order
+        // rather than silently dropping rows.
+        reranked = rerankedWindow.length === window.length ? [...rerankedWindow, ...rest] : contentDeduped
+      }
+
       // Temporal anchoring (migration 0060): when the query is asking about
       // timing rather than content, reorder by date proximity/recency on top
-      // of the similarity ordering above. Only semantic_recall rows carry
-      // referenced_date/relative_date (recall_memories/trigram rows fall back
-      // to created_at, which every row has) — see 0060's migration header for
-      // why only hybrid_recall/semantic_recall were updated.
-      const temporallySorted = sortByTemporalProximity(contentDeduped, query!)
+      // of the fused/reranked ordering above. Only semantic_recall/temporal
+      // rows carry referenced_date/relative_date (recall_memories/trigram
+      // rows fall back to created_at, which every row has) — see 0060's
+      // migration header for why only hybrid_recall/semantic_recall were
+      // updated.
+      const temporallySorted = sortByTemporalProximity(reranked, query!)
+      assembledPool = temporallySorted
       data = temporallySorted.slice(0, limit)
 
       if (semanticResult.data === null) searchMethod = 'trigram'
@@ -189,6 +342,15 @@ export async function recallCommand(query: string | undefined, options: RecallOp
 
     if (!data || data.length === 0) {
       console.log(chalk.dim(`No memories found matching "${query}".`))
+      return
+    }
+
+    // Budget-fitted, chronologically-ordered assembled-context output
+    // (Task 4), opt-in via --assembled-context. The default (flag-absent)
+    // path below this branch is completely unchanged, so the harness's
+    // default-mode `tages recall` output (and parseRecallKeys) is untouched.
+    if (options.assembledContext) {
+      printAssembledContext(assembledPool ?? data, limit)
       return
     }
 

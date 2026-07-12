@@ -165,6 +165,11 @@ export class SupabaseSync {
   }
 
   private async _flush(): Promise<void> {
+    await this._flushMemories()
+    await this._flushDirtyChunks()
+  }
+
+  private async _flushMemories(): Promise<void> {
     const dirty = this.cache.getDirty()
     if (dirty.length === 0) return
 
@@ -199,6 +204,40 @@ export class SupabaseSync {
       }
     } catch (err) {
       console.error('[tages] Sync error:', (err as Error).message)
+    }
+  }
+
+  /**
+   * Push any locally-dirty chunk sets (Task 9) to Supabase. This is what
+   * makes the CLI's durable, awaited write path actually reach the remote
+   * `memory_chunks` table: `remember.ts` only has `cache` + `flush()`, not a
+   * direct `SupabaseSync` reference, so chunk rows ride the same dirty-flag +
+   * flush() mechanism the pooled embedding/memory row already uses rather
+   * than a separate remote call site.
+   */
+  private async _flushDirtyChunks(): Promise<void> {
+    const groups = this.cache.getDirtyChunkGroups()
+    for (const { memoryId, projectId } of groups) {
+      // Resolve the local row's (project_id, key) — remoteUpsertChunks is
+      // keyed on the business key, not the (divergent) local id.
+      const local = this.cache.getKeyById(memoryId)
+      if (!local) {
+        // Fix F(b): the parent memory is gone locally (forgotten/deleted), so
+        // these chunk rows are orphans that will never resolve. Delete them
+        // instead of skipping forever (which left them dirty=1 and re-scanned
+        // every flush, wasting work and storage).
+        this.cache.deleteChunksForMemory(memoryId)
+        continue
+      }
+      // Fix C: capture the SPECIFIC dirty chunk row ids at flush time and clear
+      // dirty only for those after the round-trip. A concurrent v2 chunk write
+      // (upsertChunks delete-then-insert => fresh ids, dirty=1) landing during
+      // the network await below keeps its own dirty flag and syncs next cycle,
+      // instead of being clobbered by a memory-wide markChunksSynced(memoryId).
+      const dirtyRows = this.cache.getDirtyChunkRows(memoryId)
+      const chunks = dirtyRows.map((r) => ({ text: r.text, embedding: r.embedding }))
+      const ok = await this.remoteUpsertChunks(projectId, local.key, chunks)
+      if (ok) this.cache.markChunksSynced(dirtyRows.map((r) => r.id))
     }
   }
 
@@ -273,6 +312,98 @@ export class SupabaseSync {
     }
   }
 
+  /**
+   * Replace all remote chunk rows for a memory (delete-then-insert by
+   * memory_id, mirroring SqliteCache.upsertChunks's local semantics). Not
+   * routed through `enqueue` — it's called either directly from a
+   * fire-and-forget embedding job (server write path) or from inside
+   * `_flushDirtyChunks`, which already runs inside `enqueue`'s serialized
+   * queue via `flush()`.
+   *
+   * Race guard (Task 9 pre-mortem): this can resolve seconds after the
+   * original write (fire-and-forget), or run during a later flush cycle, so
+   * the parent memory may have been `forget`-deleted in the meantime.
+   * Deleting the old chunk set and blindly re-inserting a fresh one against a
+   * `memory_id` that no longer exists would violate the `memory_id` foreign
+   * key (loud failure) — or, if that id were ever reused by an unrelated row,
+   * would silently attach chunks to the WRONG memory (a much worse, silent
+   * failure). So the parent's existence is re-checked immediately before the
+   * insert half rather than relied upon via the FK: on a torn-down parent,
+   * this returns false (nothing inserted, chunks stay deleted) instead of
+   * surfacing an FK error or risking a misattached row.
+   *
+   * Known limitation, not fixed here (out of this task's file ownership):
+   * `remoteInsert` above always excludes `id` from the upsert payload, so a
+   * memory's authoritative Supabase row id can differ from the locally
+   * generated `memory.id` a caller passes in here — see this task's PR notes.
+   * When that happens, the parent-exists check below simply finds no match
+   * and this fails open (logged, no chunks written) rather than corrupting
+   * data; the caller's pooled-embedding write is entirely unaffected either
+   * way.
+   */
+  async remoteUpsertChunks(
+    projectId: string,
+    key: string,
+    chunks: Array<{ text: string; embedding: number[] }>,
+  ): Promise<boolean> {
+    try {
+      // Keyed on (project_id, key), NOT a memory id: remote memory upserts
+      // strip the local id (Supabase keeps/assigns its own), so a locally
+      // generated uuid routinely differs from the remote row's real id for
+      // every CLI-written memory. Keying the delete/insert on a local id
+      // silently no-ops (delete matches nothing, parent check finds
+      // nothing), stranding all chunks locally: caught live on the dev
+      // eval, 42 local chunk rows / 0 remote. Same id-divergence class as
+      // PR #70's embedding-update bug; same fix (resolve via project+key).
+      // This resolution doubles as the concurrent-parent-delete race guard.
+      const { data: parent, error: parentError } = await this.supabase
+        .from('memories')
+        .select('id')
+        .eq('project_id', projectId)
+        .eq('key', key)
+        .maybeSingle()
+      if (parentError) {
+        console.error('[tages] Remote chunk parent resolve failed:', parentError.message)
+        return false
+      }
+      if (!parent) {
+        console.error(`[tages] Remote chunk sync skipped: parent memory "${key}" not on remote yet (or deleted)`)
+        return false
+      }
+      const remoteMemoryId = (parent as { id: string }).id
+
+      const { error: deleteError } = await this.supabase
+        .from('memory_chunks')
+        .delete()
+        .eq('memory_id', remoteMemoryId)
+      if (deleteError) {
+        console.error('[tages] Remote chunk delete failed:', deleteError.message)
+        return false
+      }
+
+      if (chunks.length === 0) return true
+
+      const rows = chunks.map((chunk, index) => ({
+        memory_id: remoteMemoryId,
+        project_id: projectId,
+        chunk_index: index,
+        chunk_text: chunk.text,
+        embedding: embeddingToPgVector(chunk.embedding),
+      }))
+      const { error: insertError } = await Promise.resolve(
+        this.supabase.from('memory_chunks').insert(rows),
+      )
+      if (insertError) {
+        console.error('[tages] Remote chunk insert failed:', insertError.message)
+        return false
+      }
+      return true
+    } catch (err) {
+      console.error('[tages] Remote chunk upsert error:', (err as Error).message)
+      return false
+    }
+  }
+
   async remoteDelete(projectId: string, key: string): Promise<boolean> {
     return this.enqueue(() => this._remoteDelete(projectId, key))
   }
@@ -337,6 +468,39 @@ export class SupabaseSync {
 
       if (error) {
         console.error('[tages] Hybrid recall failed:', error.message)
+        return null
+      }
+
+      return (data || []).map(dbRowToMemory)
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Chunk-level semantic recall (PLAN.md Task 11): calls the
+   * `chunk_semantic_recall` RPC (migration 0064), which matches against
+   * per-chunk embeddings and rolls up to one row per parent memory (its
+   * best-matching chunk). Mirrors `remoteHybridRecall`'s shape; the RPC's
+   * extra chunk_index/chunk_text columns are dropped by dbRowToMemory —
+   * the parent memory's full value is what the MCP tool returns.
+   */
+  async remoteChunkSemanticRecall(
+    embedding: number[],
+    type?: string,
+    limit = 5,
+  ): Promise<Memory[] | null> {
+    try {
+      const embeddingStr = embeddingToPgVector(embedding)
+      const { data, error } = await this.supabase.rpc('chunk_semantic_recall', {
+        p_project_id: this.projectId,
+        p_embedding: embeddingStr,
+        p_type: type || null,
+        p_limit: limit,
+      })
+
+      if (error) {
+        console.error('[tages] Chunk semantic recall failed:', error.message)
         return null
       }
 

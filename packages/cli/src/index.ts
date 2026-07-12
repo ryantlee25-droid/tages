@@ -86,6 +86,7 @@ program
   .option('-l, --limit <n>', 'Max results', '5')
   .option('-p, --project <slug>', 'Project slug')
   .option('-a, --all', 'List all memories (no search filter)')
+  .option('--assembled-context', 'Output one deduped, chronologically-ordered, budget-fitted context block')
   .action(recallCommand)
 
 program

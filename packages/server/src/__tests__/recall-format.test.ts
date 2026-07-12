@@ -8,13 +8,16 @@
  * crossSystemRefs, executionFlow, examples, tags).
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { SqliteCache } from '../cache/sqlite'
 import { handleRemember } from '../tools/remember'
 import { handleRecall } from '../tools/recall'
+import * as embeddingsModule from '../embeddings'
+import * as rerankerModule from '../search/reranker'
+import * as temporalChannelModule from '../search/temporal-channel'
 
 const TEST_PROJECT = 'test-recall-format-project'
 
@@ -117,6 +120,7 @@ describe('Task 13: recall output shaping', () => {
     const sync = {
       remoteRecall: async () => [legacyRow],
       remoteHybridRecall: async () => null,
+      remoteChunkSemanticRecall: async () => null,
     } as unknown as import('../sync/supabase-sync').SupabaseSync
 
     // Local cache is empty for this project, so handleRecall falls through to
@@ -127,5 +131,210 @@ describe('Task 13: recall output shaping', () => {
     expect(text).toContain('legacy-key')
     expect(text).toContain('updated: unknown')
     expect(text).toContain('source: unknown')
+  })
+})
+
+describe('PLAN.md Task 4 (server half): assembled-context output', () => {
+  let cache: SqliteCache
+  let dbPath: string
+  const PROJECT = 'test-assembled-context-project'
+
+  beforeEach(() => {
+    dbPath = path.join(os.tmpdir(), `tages-assembled-context-test-${Date.now()}-${Math.random()}.db`)
+    cache = new SqliteCache(dbPath)
+  })
+
+  afterEach(() => {
+    cache.close()
+    try { fs.unlinkSync(dbPath) } catch { /* ignore */ }
+  })
+
+  it('assembledContext: true produces one grouped/dated block instead of numbered passages', async () => {
+    await handleRemember(
+      { key: 'ac-a', value: 'first memory', type: 'convention' },
+      PROJECT, cache, null,
+    )
+    await handleRemember(
+      { key: 'ac-b', value: 'second memory', type: 'decision' },
+      PROJECT, cache, null,
+    )
+
+    const result = await handleRecall(
+      { query: 'memory', limit: 10, assembledContext: true },
+      PROJECT, cache, null,
+    )
+    const text = result.content[0].text
+
+    expect(text).toContain('Assembled context for "memory"')
+    expect(text).not.toMatch(/\[1\]\s*\[/) // no numbered-passage header
+    expect(text).toContain('ac-a')
+    expect(text).toContain('ac-b')
+  })
+
+  it('assembledContext unset/false produces the existing numbered-passage format, unchanged', async () => {
+    await handleRemember(
+      { key: 'ac-c', value: 'plain memory', type: 'convention' },
+      PROJECT, cache, null,
+    )
+
+    const result = await handleRecall({ query: 'ac-c' }, PROJECT, cache, null)
+    const text = result.content[0].text
+
+    expect(text).toMatch(/^Found 1 memories for "ac-c"/)
+    expect(text).toContain('[1] [convention] ac-c')
+  })
+
+  it('returns the same "no memories found" message in assembled-context mode', async () => {
+    const result = await handleRecall(
+      { query: 'nonexistent-xyz', assembledContext: true },
+      PROJECT, cache, null,
+    )
+    expect(result.content[0].text).toBe('No memories found matching "nonexistent-xyz".')
+  })
+})
+
+describe('PLAN.md Tasks 6/7 (server): rerank + temporal channel on the remote-hybrid path', () => {
+  let cache: SqliteCache
+  let dbPath: string
+  const PROJECT = 'test-hybrid-rerank-project'
+  let embedSpy: ReturnType<typeof vi.spyOn>
+  let rerankSpy: ReturnType<typeof vi.spyOn>
+
+  function makeRemoteMemory(id: string): import('@tages/shared').Memory {
+    return {
+      id,
+      projectId: PROJECT,
+      key: `key-${id}`,
+      value: `value ${id}`,
+      type: 'convention',
+      source: 'agent',
+      status: 'live',
+      confidence: 1,
+      filePaths: [],
+      tags: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+  }
+
+  beforeEach(() => {
+    dbPath = path.join(os.tmpdir(), `tages-hybrid-rerank-test-${Date.now()}-${Math.random()}.db`)
+    cache = new SqliteCache(dbPath)
+    embedSpy = vi.spyOn(embeddingsModule, 'generateEmbedding').mockResolvedValue([0.1, 0.2, 0.3])
+    // Rerank itself is unit-tested against a mocked transformers pipeline in
+    // reranker.test.ts — here it's stubbed to identity so these integration
+    // tests never attempt to load the real ONNX model (per Task 6's "never
+    // download the real model" testing rule).
+    rerankSpy = vi.spyOn(rerankerModule, 'rerankMemories').mockImplementation(async (m) => m)
+  })
+
+  afterEach(() => {
+    cache.close()
+    try { fs.unlinkSync(dbPath) } catch { /* ignore */ }
+    vi.restoreAllMocks()
+  })
+
+  it('widens the candidate-pool limit passed to remoteHybridRecall beyond the user-requested limit', async () => {
+    const remoteHybridRecall = vi.fn(async (..._args: unknown[]) => [makeRemoteMemory('r1')])
+    const sync = {
+      remoteHybridRecall,
+      remoteRecall: async () => null,
+      remoteChunkSemanticRecall: async () => null,
+    } as unknown as import('../sync/supabase-sync').SupabaseSync
+
+    await handleRecall({ query: 'anything', limit: 3 }, PROJECT, cache, sync)
+
+    expect(remoteHybridRecall).toHaveBeenCalled()
+    const calledLimit = remoteHybridRecall.mock.calls[0][3]
+    expect(calledLimit).toBeGreaterThanOrEqual(50)
+    expect(calledLimit).toBeGreaterThan(3)
+  })
+
+  it('runs rerank on the remote-hybrid candidate pool, before returning results', async () => {
+    const remoteHybridRecall = vi.fn(async (..._args: unknown[]) => [makeRemoteMemory('r1'), makeRemoteMemory('r2')])
+    const sync = {
+      remoteHybridRecall,
+      remoteRecall: async () => null,
+      remoteChunkSemanticRecall: async () => null,
+    } as unknown as import('../sync/supabase-sync').SupabaseSync
+
+    await handleRecall({ query: 'anything', limit: 5 }, PROJECT, cache, sync)
+
+    expect(rerankSpy).toHaveBeenCalled()
+  })
+
+  it('fuses a memory found only via the temporal channel into the final output when a supabaseClient is passed', async () => {
+    const remoteHybridRecall = vi.fn(async (..._args: unknown[]) => [makeRemoteMemory('hybrid-only')])
+    const sync = {
+      remoteHybridRecall,
+      remoteRecall: async () => null,
+      remoteChunkSemanticRecall: async () => null,
+    } as unknown as import('../sync/supabase-sync').SupabaseSync
+
+    const temporalOnly = makeRemoteMemory('temporal-only')
+    vi.spyOn(temporalChannelModule, 'fetchTemporalCandidates').mockResolvedValue([temporalOnly])
+
+    const fakeSupabaseClient = {} as unknown as import('@supabase/supabase-js').SupabaseClient
+
+    const result = await handleRecall(
+      { query: 'when did this happen', limit: 5 },
+      PROJECT, cache, sync, fakeSupabaseClient,
+    )
+    const text = result.content[0].text
+
+    expect(text).toContain('key-temporal-only')
+  })
+
+  it('contributes zero temporal candidates (channel is a no-op) when no supabaseClient is passed', async () => {
+    const remoteHybridRecall = vi.fn(async (..._args: unknown[]) => [makeRemoteMemory('hybrid-only')])
+    const sync = {
+      remoteHybridRecall,
+      remoteRecall: async () => null,
+      remoteChunkSemanticRecall: async () => null,
+    } as unknown as import('../sync/supabase-sync').SupabaseSync
+
+    const fetchSpy = vi.spyOn(temporalChannelModule, 'fetchTemporalCandidates')
+
+    await handleRecall({ query: 'when did this happen', limit: 5 }, PROJECT, cache, sync)
+
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('assembledContext: true on the remote-hybrid path produces the grouped/dated block', async () => {
+    const remoteHybridRecall = vi.fn(async (..._args: unknown[]) => [makeRemoteMemory('r1')])
+    const sync = {
+      remoteHybridRecall,
+      remoteRecall: async () => null,
+      remoteChunkSemanticRecall: async () => null,
+    } as unknown as import('../sync/supabase-sync').SupabaseSync
+
+    const result = await handleRecall(
+      { query: 'anything', limit: 5, assembledContext: true },
+      PROJECT, cache, sync,
+    )
+    const text = result.content[0].text
+
+    expect(text).toContain('Assembled context for "anything"')
+  })
+
+  it('surfaces a memory found only via chunk_semantic_recall when hybrid returns nothing (PLAN.md Task 11)', async () => {
+    // The Phase 2 zero-hit case: a long memory whose mean-pooled vector
+    // misses the hybrid threshold entirely is findable only at chunk level.
+    const remoteHybridRecall = vi.fn(async (..._args: unknown[]) => [])
+    const remoteChunkSemanticRecall = vi.fn(async (..._args: unknown[]) => [makeRemoteMemory('chunk-only')])
+    const sync = {
+      remoteHybridRecall,
+      remoteRecall: async () => null,
+      remoteChunkSemanticRecall,
+    } as unknown as import('../sync/supabase-sync').SupabaseSync
+
+    const result = await handleRecall({ query: 'anything', limit: 5 }, PROJECT, cache, sync)
+    const text = result.content[0].text
+
+    expect(remoteChunkSemanticRecall).toHaveBeenCalled()
+    // Same widened candidate pool as the hybrid call (limit is arg index 2)
+    const calledLimit = remoteChunkSemanticRecall.mock.calls[0][2]
+    expect(calledLimit).toBeGreaterThanOrEqual(50)
+    expect(text).toContain('key-chunk-only')
   })
 })
