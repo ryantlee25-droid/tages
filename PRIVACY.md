@@ -64,6 +64,8 @@ If you enable it:
 
 You can disable the harness and stop capture at any time by running `tages harness disable`.
 
+**Known limitation: redaction is pattern-based, not entropy-based.** Our redaction logic recognizes secrets by matching known patterns, and for several categories — generic API keys, passwords, tokens, and AWS secret access keys — it looks for the value to appear next to a marker word (like `api_key=`, `password:`, or `secret_access_key`). A bare high-entropy secret pasted into a tool call with no adjacent marker word can be indistinguishable from an ordinary hash or base64 blob, and may not be caught. This is a known, disclosed gap, not a hidden one: entropy-based detection (to catch markerless secrets) is a future improvement we have not yet built. Until it ships, treat harness redaction as best-effort rather than a guarantee, and avoid pasting raw secrets, credentials, or tokens directly into your AI coding agent's tool calls on any machine where the harness is enabled — the same caution you'd apply to shell history or a terminal log.
+
 ---
 
 ## 3. How Data Is Stored
