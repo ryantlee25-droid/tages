@@ -47,12 +47,11 @@ const SUPABASE_ANON_KEY = process.env.TAGES_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUz
 export interface LinkOptions {
   projectId?: string
   slug?: string
-  supabaseUrl?: string
 }
 
 export async function linkCommand(slug?: string, options: LinkOptions = {}) {
   if (options.projectId) {
-    await linkByProjectId(options.projectId, options.slug || slug, options.supabaseUrl)
+    await linkByProjectId(options.projectId, options.slug || slug)
     return
   }
 
@@ -106,8 +105,13 @@ export async function linkCommand(slug?: string, options: LinkOptions = {}) {
  *  3. Write the local project config + `.tages/config.json` marker, same
  *     shape/location `createCloudProject`/`tages init` already produce.
  */
-async function linkByProjectId(projectId: string, slugOverride: string | undefined, supabaseUrlOverride: string | undefined) {
-  const supabaseUrl = supabaseUrlOverride || SUPABASE_URL
+async function linkByProjectId(projectId: string, slugOverride: string | undefined) {
+  // A self-hosted instance is configured via TAGES_SUPABASE_URL +
+  // TAGES_SUPABASE_ANON_KEY (both together — see the constants above); we do
+  // NOT accept a per-invocation --supabase-url, which would pair a custom URL
+  // with the default cloud anon key and produce a mismatched, non-working
+  // client config.
+  const supabaseUrl = SUPABASE_URL
   const supabaseAnonKey = SUPABASE_ANON_KEY
 
   const spinner = ora()
@@ -144,6 +148,25 @@ async function linkByProjectId(projectId: string, slugOverride: string | undefin
 
   spinner.start(`Looking up project ${projectId}...`)
   const supabase = await createAuthenticatedClient(supabaseUrl, supabaseAnonKey)
+
+  // Distinguish an expired/absent session from a genuine non-membership.
+  // createAuthenticatedClient returns an UNAUTHENTICATED client when the
+  // stored refresh token has also expired; findMemberProjectById would then
+  // return null under RLS and we'd wrongly tell an actual member "you aren't
+  // a member — ask for an invite." Detect the missing session up front and
+  // send them to re-auth instead. (Skipped under TAGES_SERVICE_KEY, which has
+  // no user session by design; its membership is enforced by the explicit
+  // check inside findMemberProjectById.)
+  if (!process.env.TAGES_SERVICE_KEY) {
+    const { data: userData } = await supabase.auth.getUser()
+    if (!userData?.user) {
+      spinner.fail('Session expired')
+      console.error(chalk.red('  Your session has expired or could not be established.'))
+      console.error(chalk.dim('  Run `tages init` to re-authenticate, then try again.'))
+      process.exit(1)
+    }
+  }
+
   const findMemberProjectById = await loadFindMemberProjectById()
 
   const project = await findMemberProjectById(projectId, userId, supabase)
@@ -175,6 +198,29 @@ async function linkByProjectId(projectId: string, slugOverride: string | undefin
   }
 
   const configPath = path.join(projectsDir, `${targetSlug}.json`)
+
+  // Don't silently clobber an existing local link that points at a DIFFERENT
+  // project — that would orphan the previous binding (and every directory
+  // marker referencing this slug). Idempotent re-join of the same project is
+  // fine; only a genuine collision is refused. The exit stays OUTSIDE the
+  // read try/catch so it can't be swallowed by the unreadable-config handler.
+  let existingProjectId: string | undefined
+  if (fs.existsSync(configPath)) {
+    try {
+      const existing = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      if (typeof existing.projectId === 'string') existingProjectId = existing.projectId
+    } catch {
+      // Unreadable existing config — it's already broken, safe to replace.
+    }
+  }
+
+  if (existingProjectId && existingProjectId !== project.projectId) {
+    console.error(chalk.red(`  A project named '${targetSlug}' is already linked locally to a different project (${existingProjectId}).`))
+    console.error(chalk.dim(`  Re-run with --slug <name> to bind under a different name, or remove`))
+    console.error(chalk.dim(`  ${configPath} first.`))
+    process.exit(1)
+  }
+
   fs.writeFileSync(configPath, JSON.stringify(projectConfig, null, 2) + '\n', { mode: 0o600 })
 
   writeDirMarker(targetSlug)

@@ -63,7 +63,15 @@ export class OpenAIJudgeReranker implements Reranker {
       const content = data.choices?.[0]?.message?.content
       if (!content) return window.map((c) => c.id)
 
-      const parsed: unknown = JSON.parse(content)
+      // Extract the JSON array even when the model wraps it in a ```json fence
+      // or a leading sentence (common despite "JSON only" prompts). A bare
+      // JSON.parse(content) would throw on any such wrapping and silently
+      // no-op the rerank; slice from the first '[' to the last ']' instead.
+      // Mirrors the CLI copy's array-extraction guard.
+      const start = content.indexOf('[')
+      const end = content.lastIndexOf(']')
+      if (start === -1 || end === -1 || end < start) return window.map((c) => c.id)
+      const parsed: unknown = JSON.parse(content.slice(start, end + 1))
       if (!Array.isArray(parsed)) return window.map((c) => c.id)
 
       const validIds = new Set(window.map((c) => c.id))
@@ -81,8 +89,21 @@ export class OpenAIJudgeReranker implements Reranker {
 }
 
 /**
+ * The OpenAI-judge rerank pass is opt-in: it runs only when BOTH
+ * `OPENAI_API_KEY` and `TAGES_OPENAI_EMBED` are set. `OPENAI_API_KEY` alone is
+ * routinely present for embeddings, so gating on it would fire a live
+ * `gpt-4o-mini` call (latency + token cost) on every recall — and rerank
+ * measured net-neutral on the eval, so it is not worth paying for by default.
+ * Kept in parity with the CLI copy's `openAiJudgeAvailable()`.
+ */
+function openAiJudgeAvailable(): boolean {
+  return Boolean(process.env.OPENAI_API_KEY) && Boolean(process.env.TAGES_OPENAI_EMBED)
+}
+
+/**
  * Run the OpenAI-judge reranker, failing open (input order unchanged, no
- * throw) when no API key is configured or the judge call itself fails.
+ * throw) when the pass is not opted in, no API key is configured, or the
+ * judge call itself fails.
  */
 export async function rerank(
   query: string,
@@ -90,6 +111,7 @@ export async function rerank(
   topK: number,
 ): Promise<string[]> {
   if (candidates.length === 0) return []
+  if (!openAiJudgeAvailable()) return candidates.slice(0, topK).map((c) => c.id)
   try {
     return await new OpenAIJudgeReranker().rerank(query, candidates, topK)
   } catch {

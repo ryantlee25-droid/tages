@@ -17,10 +17,12 @@ describe('rerank() selection + fallback', () => {
   afterEach(() => {
     global.fetch = originalFetch
     delete process.env.OPENAI_API_KEY
+    delete process.env.TAGES_OPENAI_EMBED
   })
 
-  it('uses OpenAIJudgeReranker when an API key is configured', async () => {
+  it('uses OpenAIJudgeReranker when opted in (OPENAI_API_KEY + TAGES_OPENAI_EMBED)', async () => {
     process.env.OPENAI_API_KEY = 'test-key'
+    process.env.TAGES_OPENAI_EMBED = '1'
 
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -38,6 +40,25 @@ describe('rerank() selection + fallback', () => {
     const result = await rerank('q', candidates, 20)
     expect(result).toEqual(['b', 'a'])
     expect(fetchMock).toHaveBeenCalled()
+  })
+
+  it('is a no-op (no API call) when OPENAI_API_KEY is set but TAGES_OPENAI_EMBED is not — rerank is opt-in', async () => {
+    process.env.OPENAI_API_KEY = 'test-key'
+    delete process.env.TAGES_OPENAI_EMBED
+
+    const fetchMock = vi.fn()
+    global.fetch = fetchMock as unknown as typeof fetch
+
+    const candidates: RerankCandidate[] = [
+      { id: 'a', text: 'first' },
+      { id: 'b', text: 'second' },
+    ]
+
+    const result = await rerank('q', candidates, 20)
+    // Input order preserved and, critically, no live gpt-4o-mini call fired on
+    // the hot recall path just because an embedding key happens to be present.
+    expect(result).toEqual(['a', 'b'])
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('fails open (input order unchanged, no throw) when no API key is configured', async () => {
@@ -115,10 +136,12 @@ describe('rerankMemories', () => {
   afterEach(() => {
     global.fetch = originalFetch
     delete process.env.OPENAI_API_KEY
+    delete process.env.TAGES_OPENAI_EMBED
   })
 
   it('re-splices the reranked top-K to the front, appending the rest in original order', async () => {
     process.env.OPENAI_API_KEY = 'test-key'
+    process.env.TAGES_OPENAI_EMBED = '1'
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({

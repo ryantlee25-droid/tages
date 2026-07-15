@@ -48,6 +48,12 @@ export class OpenAIJudgeReranker implements Reranker {
         messages: [{ role: 'user', content: prompt }],
         temperature: 0,
       }),
+      // Bound the request so a stalled endpoint can't hang recall indefinitely.
+      // Matches the server copy (packages/server/src/search/reranker.ts); a
+      // timeout aborts the fetch, which the rerankCandidates() catch turns
+      // into a fail-open input-order return. Replaces the hang-protection the
+      // dropped local model's MODEL_LOAD_TIMEOUT_MS used to provide.
+      signal: AbortSignal.timeout(15_000),
     })
 
     if (!response.ok) {
