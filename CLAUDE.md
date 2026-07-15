@@ -13,14 +13,14 @@ Tages is an open-source MCP server + CLI + dashboard that gives AI coding agents
 ```
 packages/
   server/     # MCP server (@modelcontextprotocol/sdk, stdio transport)
-              # 56 MCP tools, 16 server modules, 37 test suites (445 tests)
-  cli/        # tages CLI (commander.js, 52 commands)
+              # 56 MCP tools, 22 server modules, 74 test suites (818 tests: 805 passing, 13 skipped)
+  cli/        # tages CLI (commander.js, 42 top-level commands, 71 incl. subcommands)
   shared/     # Shared types + Supabase client factory
 apps/
   dashboard/  # Next.js 16 + Supabase Auth + Tailwind + shadcn/ui
               # Auth, project list, memory browser, stats, conflicts, graph
 supabase/
-  migrations/ # 42 Postgres migrations (schema, RLS, RPCs, indexes)
+  migrations/ # 64 Postgres migrations (schema, RLS, RPCs, indexes)
 ```
 
 ### Key Design Decisions
@@ -50,7 +50,7 @@ supabase/
 pnpm install          # install all workspace deps
 pnpm build            # build all packages (server + cli + dashboard)
 pnpm dev              # start dashboard dev server (localhost:3000)
-pnpm test             # run all tests (521 vitest tests)
+pnpm test             # run all tests (1,212 vitest tests passing across all packages)
 pnpm typecheck        # tsc --noEmit across all packages
 pnpm --filter server test  # server tests only
 ```
@@ -83,4 +83,4 @@ When working on this repo, use the staging workflow to avoid noisy live-memory p
 - CLI output uses chalk for color, ora for spinners
 - Supabase `.from().insert()` returns PromiseLike not Promise — wrap with `Promise.resolve()` for `.catch()`
 - Cross-package CLI imports use `@ts-ignore` with expanded rootDir (`../../`)
-- Migrations use sequential numbers (0001-0042), cast TEXT params to `::uuid` for uuid columns
+- Migrations use sequential numbers (0001-0064, one archived), cast TEXT params to `::uuid` for uuid columns
