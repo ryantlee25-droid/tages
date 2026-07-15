@@ -1,15 +1,28 @@
 # Changelog
 
-## Unreleased (2026-04-18)
+## 2026-07-14 — `@tages/cli` 0.3.0 · `@tages/server` 0.2.0 · `@tages/shared` 0.1.2
 
-### Features
-- **Stripe billing end-to-end** — Pro ($14/mo) and Team ($29/seat/mo, 1–20 seats) checkout flows live. Webhook handles `subscription.updated` for plan changes and seat count sync. Customer portal linked from upgrade page.
-- **Seat picker** — Team checkout includes a 1–20 seat selector with live monthly total.
-- **Marketing pricing CTAs** — "Coming soon" / mailto links replaced with real checkout.
-- **Memory authorship + conflict attribution** — all memory writes now record `created_by` (agent/user who first stored the entry) and `last_edited_by` (agent/user of the most recent update). New `get_memory_authors` RPC surfaces per-memory attribution. Conflict resolver UI shows author names for each conflicting version. Existing rows retain NULL attribution and display as "Unknown" in the UI — no backfill attempted.
+First npm release since 0.1.0 (2026-04-10). Rolls up three months of retrieval-quality, memory-correctness, and team/harness work. See `README.md` "Release Notes" for the full per-change detail.
 
-### Fixes
-- Plan propagation: webhook now syncs `user_profiles.plan` → all owned `projects.plan` rows so MCP tier gate and seat-limit function see the upgraded tier (previously a no-op sync left projects on 'free').
+### Retrieval quality
+- **Two-stage retrieval** — Reciprocal Rank Fusion (k=60) across trigram, semantic, temporal, and per-chunk channels replacing raw-score merge; multi-vector `memory_chunks` child table + HNSW with winning-chunk citations; a date-range temporal channel; opt-in `--assembled-context` budget-fitted output. Migrations `0062`–`0064`. (LongMemEval 50q dev: overall 72%→80%, recall@k 90%→94%, temporal 38.5%→61.5%; 500q run pending as the headline number.)
+- **Cross-encoder rerank is now opt-in and net-neutral.** The local ONNX model (`@huggingface/transformers`, ~90MB) is **dropped** — rerank runs only when `OPENAI_API_KEY` **and** `TAGES_OPENAI_EMBED` are set (OpenAI-judge, fail-open to fused order), on both the CLI and MCP-server paths. Off by default it fires no per-recall API call; it measured net-neutral on the eval since retrieval already surfaces the gold memory into top-k.
+- **Long-input embedding silent-drop fixed** — memories over ~8192 tokens previously got no embedding (a swallowed OpenAI 400) and were invisible to semantic search; now token-aware chunked + mean-pooled, HTTP errors logged, 429s bounded so recall can't hang. Plus 3-date temporal anchoring (`referenced_date`/`relative_date`, migration `0060`) and `word_similarity()` recall widening (migration `0061`).
+- **Document embeddings were never written (the #1 bug)** — `remember` never populated the pgvector column, so semantic search had been silently trigram-only since launch; now generated and synced on write (CLI and server), serialized against concurrent writes so a late upsert can't revert/resurrect a value. Ollama-primary with the OpenAI fallback made opt-in (`TAGES_OPENAI_EMBED`).
+
+### Team + onboarding
+- **`tages link --project-id <uuid>`** — an invited team member can now bind their machine to an existing shared project without ever having run `tages init` against it. Membership is enforced by the `is_project_member` SECURITY DEFINER check (fail-closed); refuses to clobber a local link pointing at a different project; routes an expired session to re-auth.
+
+### Instrumented harness (Milestone 1)
+- **`packages/harness-claude-code`** — opt-in, local-first Claude Code hook capturing tool-call events, redacting secrets before persistence, fail-closed (a broken hook never blocks an agent). CLI `tages harness enable|disable|status|sync` (per-developer opt-in). Migration `0059_harness_tool_events`. `PRIVACY.md` discloses the harness, its 90-day retention, and the marker-gated-redaction limitation. (Milestone 2 — wiring events into `tages drift` — is deferred.)
+
+### Billing + attribution
+- **Stripe billing end-to-end** — Pro and Team checkout, seat picker (1–20), webhook plan/seat sync, customer portal; plan propagation to owned `projects` rows.
+- **Memory authorship + conflict attribution** — writes record `created_by`/`last_edited_by`; `get_memory_authors` RPC; conflict UI shows author names (legacy rows show "Unknown", no backfill).
+
+### Packaging
+- `@tages/cursor-plugin`, `@tages/codex-plugin`, `@tages/gemini-plugin` publish for the first time (0.1.0).
+- `@huggingface/transformers` removed from `@tages/cli` and `@tages/server` dependencies (see rerank note above) — lighter `npx`/global-install footprint.
 
 ## 0.1.0 (2026-04-06)
 

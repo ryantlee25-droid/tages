@@ -1,6 +1,6 @@
 {
   "name": "@tages/cli",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "CLI for Tages AI agent memory",
   "type": "module",
   "bin": {
@@ -37,7 +37,13 @@
     "url": "https://github.com/ryantlee25-droid/tages.git",
     "directory": "packages/cli"
   },
-  "keywords": ["mcp", "ai", "memory", "anthropic", "claude"],
+  "keywords": [
+    "mcp",
+    "ai",
+    "memory",
+    "anthropic",
+    "claude"
+  ],
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.19.0",

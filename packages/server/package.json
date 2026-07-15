@@ -1,6 +1,6 @@
 {
   "name": "@tages/server",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "MCP server for persistent AI agent memory",
   "main": "./dist/index.js",
   "bin": {
@@ -31,7 +31,13 @@
     "url": "https://github.com/ryantlee25-droid/tages.git",
     "directory": "packages/server"
   },
-  "keywords": ["mcp", "ai", "memory", "anthropic", "claude"],
+  "keywords": [
+    "mcp",
+    "ai",
+    "memory",
+    "anthropic",
+    "claude"
+  ],
   "author": "Ryan Lee <ryantlee25@gmail.com>",
   "homepage": "https://tages.ai",
   "bugs": {

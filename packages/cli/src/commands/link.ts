@@ -100,8 +100,9 @@ export async function linkCommand(slug?: string, options: LinkOptions = {}) {
  *  1. Authenticate the caller (reuse the same GitHub OAuth flow `tages init`
  *     uses; skip it if a session is already saved).
  *  2. Verify the project exists AND the authenticated user is a member,
- *     via `findMemberProjectById` — which delegates that check entirely to
- *     Postgres RLS, never trusting the client-supplied ID on its own.
+ *     via `findMemberProjectById` — which decides membership with the
+ *     `is_project_member` SECURITY DEFINER RPC (fail-closed), authoritative
+ *     under both normal-auth and service-role clients.
  *  3. Write the local project config + `.tages/config.json` marker, same
  *     shape/location `createCloudProject`/`tages init` already produce.
  */
