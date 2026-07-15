@@ -119,6 +119,17 @@ async function linkByProjectId(projectId: string, slugOverride: string | undefin
   let userId: string
   const authPath = getAuthPath()
 
+  // `link` identifies the joining user from their stored session; the userId
+  // is required for the membership check. TAGES_SERVICE_KEY (an RLS-bypass for
+  // headless data access) can't identify a user, so fail clearly rather than
+  // opening a browser we can't drive in a headless/CI context.
+  if (process.env.TAGES_SERVICE_KEY && !fs.existsSync(authPath)) {
+    console.error(chalk.red('  `tages link --project-id` needs an authenticated user session.'))
+    console.error(chalk.dim('  TAGES_SERVICE_KEY alone cannot identify which user is joining —'))
+    console.error(chalk.dim('  run `tages init` on this machine first, then retry.'))
+    process.exit(1)
+  }
+
   if (fs.existsSync(authPath)) {
     try {
       const auth = JSON.parse(fs.readFileSync(authPath, 'utf-8'))
@@ -158,8 +169,13 @@ async function linkByProjectId(projectId: string, slugOverride: string | undefin
   // no user session by design; its membership is enforced by the explicit
   // check inside findMemberProjectById.)
   if (!process.env.TAGES_SERVICE_KEY) {
-    const { data: userData } = await supabase.auth.getUser()
-    if (!userData?.user) {
+    const { data: userData, error: userError } = await supabase.auth.getUser()
+    // Only treat this as expired when we get a CLEAN "no user" answer. This
+    // getUser() round-trip is redundant with createAuthenticatedClient (which
+    // already validated/refreshed the session); a transient network error on
+    // it must NOT turn away a member whose session is actually fine, so we
+    // proceed on error and let the membership check be the real gate.
+    if (!userError && !userData?.user) {
       spinner.fail('Session expired')
       console.error(chalk.red('  Your session has expired or could not be established.'))
       console.error(chalk.dim('  Run `tages init` to re-authenticate, then try again.'))

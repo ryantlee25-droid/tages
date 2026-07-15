@@ -78,64 +78,46 @@ export interface MemberProject {
 }
 
 /**
- * Find a project by ID, but ONLY if the given user is actually allowed to
- * see it — i.e. they are the owner or an active `team_members` row exists
- * for (userId, projectId).
+ * Find a project by ID, but ONLY if the given user is the owner or an active
+ * `team_members` row exists for (userId, projectId).
  *
- * Two independent layers enforce that, so a bug or bypass in either one
- * alone can't leak a non-member into a project:
+ * Membership is decided by the `is_project_member(uid, pid)` RPC
+ * (supabase/migrations/0053), which is `SECURITY DEFINER` and checks
+ * "active team member OR project owner". Because it is SECURITY DEFINER it
+ * returns the same authoritative answer under BOTH a normal authenticated
+ * client (RLS applies elsewhere) and an RLS-bypassing service-role client
+ * (`TAGES_SERVICE_KEY`) — so this check is NOT defeated when RLS is off, and
+ * it has no false-negatives from `team_members` read-RLS. The gate FAILS
+ * CLOSED: any RPC error or a non-`true` result → treated as "not a member".
  *
- *  1. RLS. The `projects` table's policy (supabase/migrations/0002 +
- *     `is_project_member` hardened in 0051/0053 to require `status='active'`)
- *     filters the row when `supabase` carries a real user session. Under a
- *     normal authenticated client this alone already gates the read.
- *
- *  2. An explicit owner-or-active-member assertion in JS, keyed on the
- *     caller-supplied `userId`. This is the belt to RLS's suspenders: when
- *     `createAuthenticatedClient` is running under `TAGES_SERVICE_KEY` (its
- *     documented CI/headless escape hatch) the client is service-role and
- *     RLS is bypassed entirely, so the projects row comes back for ANY id.
- *     The explicit check below re-imposes the membership boundary in that
- *     case. (Under normal auth it's redundant-but-harmless.)
- *
- * A non-member — whether the project is real-but-not-theirs or the UUID
- * doesn't exist at all — gets an indistinguishable `null`, which never
- * discloses whether a given UUID belongs to someone else's project.
+ * Note this is a convenience gate (it decides whether to write a local
+ * project config), not the security boundary — server-side RLS on the
+ * memory tables, evaluated against the session's real `auth.uid()`, is what
+ * actually protects project data. A non-member — whether the project is
+ * real-but-not-theirs or the UUID doesn't exist — gets an indistinguishable
+ * `null`, which never discloses whether a UUID belongs to someone else.
  */
 export async function findMemberProjectById(
   projectId: string,
   userId: string,
   supabase: SupabaseClient,
 ): Promise<MemberProject | null> {
+  const { data: isMember, error: memberError } = await Promise.resolve(
+    supabase.rpc('is_project_member', { uid: userId, pid: projectId })
+  )
+
+  // Fail closed: a transient RPC error or any non-true result is a reject,
+  // never an admit. (A legit member on a transient error simply re-runs.)
+  if (memberError || isMember !== true) {
+    return null
+  }
+
   const { data, error } = await Promise.resolve(
-    supabase.from('projects').select('id, slug, plan, owner_id').eq('id', projectId).single()
+    supabase.from('projects').select('id, slug, plan').eq('id', projectId).single()
   )
 
   if (error || !data) {
     return null
-  }
-
-  // Layer 2: explicit membership assertion (defense-in-depth against an
-  // RLS-bypassing service-role client). Owner always qualifies.
-  if ((data.owner_id as string) !== userId) {
-    const { data: membership, error: membershipError } = await Promise.resolve(
-      supabase
-        .from('team_members')
-        .select('user_id')
-        .eq('project_id', projectId)
-        .eq('user_id', userId)
-        .eq('status', 'active')
-        .maybeSingle()
-    )
-
-    // If the membership read succeeded and returned no active row, the caller
-    // is definitively NOT a member — reject. If it ERRORED (e.g. a normal
-    // authenticated client whose RLS restricts reading team_members), fall
-    // back to trusting layer 1: the projects row only came back because RLS
-    // already vetted this caller, so a legit member isn't falsely rejected.
-    if (!membershipError && !membership) {
-      return null
-    }
   }
 
   return {

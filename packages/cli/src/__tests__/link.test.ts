@@ -428,4 +428,53 @@ describe('link command', () => {
       expect(console_.logs.join('\n')).toContain("Joined project 'team-project'")
     })
   })
+
+  // -------------------------------------------------------------------
+  // (f) Session / headless edge cases
+  // -------------------------------------------------------------------
+  describe('session + headless handling', () => {
+    it('proceeds (does not falsely expire) when getUser() has a transient error but the session is fine', async () => {
+      writeAuthConfig(tempConfigDir, TEST_AUTH)
+      // getUser() errors transiently; createAuthenticatedClient already
+      // validated the session, so link must NOT bail out to re-auth.
+      mocks.createAuthenticatedClient.mockResolvedValue({
+        __fake: 'client',
+        auth: {
+          getUser: vi
+            .fn()
+            .mockResolvedValue({ data: { user: null }, error: { message: 'network blip' } }),
+        },
+      })
+      mocks.findMemberProjectById.mockResolvedValue({
+        projectId: 'shared-proj-uuid',
+        slug: 'team-project',
+        plan: 'team',
+      })
+
+      await linkCommand(undefined, { projectId: 'shared-proj-uuid' })
+
+      // It reached the membership check and joined despite the getUser error.
+      expect(mocks.findMemberProjectById).toHaveBeenCalled()
+      expect(console_.logs.join('\n')).toContain("Joined project 'team-project'")
+    })
+
+    it('errors clearly (no browser) when TAGES_SERVICE_KEY is set but no local session exists', async () => {
+      process.env.TAGES_SERVICE_KEY = 'svc-role-key'
+      // No auth.json written — headless machine with only the service key.
+
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+        throw new Error('process.exit called')
+      })
+
+      await expect(
+        linkCommand(undefined, { projectId: 'shared-proj-uuid' }),
+      ).rejects.toThrow('process.exit called')
+
+      expect(exitSpy).toHaveBeenCalledWith(1)
+      expect(console_.errors.join('\n')).toContain('needs an authenticated user session')
+      // Must not open an interactive browser flow in headless.
+      expect(mocks.runGithubOAuth).not.toHaveBeenCalled()
+      expect(mocks.findMemberProjectById).not.toHaveBeenCalled()
+    })
+  })
 })
