@@ -3,7 +3,7 @@
 **Team memory for AI coding agents.**
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1212%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1228%20passing-brightgreen.svg)]()
 
 Your AI agents forget everything between sessions. Every decision re-litigated. Every convention re-explained. Every past mistake repeated by the next agent that touches the same code.
 

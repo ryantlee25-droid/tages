@@ -13,7 +13,7 @@ Tages is an open-source MCP server + CLI + dashboard that gives AI coding agents
 ```
 packages/
   server/     # MCP server (@modelcontextprotocol/sdk, stdio transport)
-              # 56 MCP tools, 22 server modules, 74 test suites (818 tests: 805 passing, 13 skipped)
+              # 56 MCP tools, 22 server modules, 74 test suites (817 tests: 804 passing, 13 skipped)
   cli/        # tages CLI (commander.js, 42 top-level commands, 71 incl. subcommands)
   shared/     # Shared types + Supabase client factory
 apps/
@@ -50,7 +50,7 @@ supabase/
 pnpm install          # install all workspace deps
 pnpm build            # build all packages (server + cli + dashboard)
 pnpm dev              # start dashboard dev server (localhost:3000)
-pnpm test             # run all tests (1,212 vitest tests passing across all packages)
+pnpm test             # run all tests (1,228 vitest tests passing across all packages)
 pnpm typecheck        # tsc --noEmit across all packages
 pnpm --filter server test  # server tests only
 ```
