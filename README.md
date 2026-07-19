@@ -147,6 +147,15 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-07-19 — Team-readiness release (`@tages/cli` 0.3.0 · `@tages/server` 0.2.0 · `@tages/shared` 0.1.2)
+
+First npm release since April; ships the three months of merged retrieval/harness work to users and adds the team-join path. See `CHANGELOG.md` for the rolled-up detail.
+
+- **`tages link --project-id <uuid>`** — an invited teammate can bind their machine to an existing shared project without having created it (the gap that previously made "team memory" impossible for anyone but the project owner). Membership enforced by the `is_project_member` SECURITY DEFINER RPC (fail-closed); refuses to clobber a local link on a slug collision; expired sessions route to re-auth. New `docs/team-onboarding.md` walks the full install → auth → join → harness-opt-in path.
+- **Cross-encoder rerank is now opt-in.** The local `@huggingface/transformers` ONNX model (~90MB) is dropped as a runtime dependency; rerank runs only with `OPENAI_API_KEY` + `TAGES_OPENAI_EMBED` (OpenAI-judge, fail-open), on both CLI and server, so default recall fires no per-query API call. It measured net-neutral on the eval. Lighter `npx`/global-install footprint.
+- **Quality gate:** White + Gray + two high-effort `/code-review` passes on the combined diff caught 12 defects that 1,100+ passing tests and standard review cleared — silent config-clobber (data loss), an untimed CLI fetch (multi-minute hang), a server-side rerank firing on every recall, a service-role membership bypass, and an expired-session misroute among them. All fixed and re-verified READY. Final: 1,228 tests passing, typecheck clean.
+- **Harness (Milestone 1)** and PRIVACY disclosure of its marker-gated redaction limitation ship for the Mersive dogfood; drift wiring (M2) is deferred.
+
 ### 2026-07-10 — Two-stage retrieval: RRF fusion, cross-encoder rerank, multi-vector chunk storage (Tier 1 + Tier 2)
 
 - **Phase 1 (Tier 1)**: candidate-pool widening + Reciprocal Rank Fusion (k=60) replacing raw-score merge across trigram, semantic, and temporal channels (CLI merge path + SQL `hybrid_recall`, migration `0062`); local cross-encoder rerank (`Xenova/ms-marco-MiniLM-L-6-v2`, ONNX/CPU) with an OpenAI-judge fallback; new temporal date-range retrieval channel; opt-in `--assembled-context` / `assembledContext` budget-fitted output.
