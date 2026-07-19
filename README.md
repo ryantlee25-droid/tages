@@ -3,7 +3,7 @@
 **Team memory for AI coding agents.**
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-768%20passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1212%20passing-brightgreen.svg)]()
 
 Your AI agents forget everything between sessions. Every decision re-litigated. Every convention re-explained. Every past mistake repeated by the next agent that touches the same code.
 
@@ -99,6 +99,7 @@ Reproducible LongMemEval and coding-memory benchmark results are published under
 ## Setup Guides
 
 - [Quickstart](docs/quickstart.md)
+- [Team Onboarding](docs/team-onboarding.md)
 - [Claude Code](docs/claude-code-setup.md)
 - [Cursor](docs/cursor-setup.md)
 - [Codex](docs/codex-setup.md)
@@ -110,13 +111,13 @@ Reproducible LongMemEval and coding-memory benchmark results are published under
 
 ```
 packages/
-  server/     MCP server (56 tools, stdio transport, 605 tests)
-  cli/        CLI (53 commands, npm global install, 163 tests)
+  server/     MCP server (56 tools, stdio transport, 818 tests: 805 passing, 13 skipped)
+  cli/        CLI (42 top-level commands, npm global install, 331 tests)
   shared/     TypeScript types + Supabase client
 apps/
   dashboard/  Next.js 16, Supabase Auth, Tailwind, shadcn/ui
 supabase/
-  migrations/ 56 migrations (tables, RLS, pgvector, RBAC, encryption)
+  migrations/ 64 migrations (tables, RLS, pgvector, RBAC, encryption)
 ```
 
 ## Security
@@ -152,7 +153,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 - **Phase 2 (Tier 2)**: new `memory_chunks` child table + HNSW index (migration `0063`); per-chunk embedding write path; `chunk_semantic_recall` RPC returning winning-chunk citations (migration `0064`); chunk channel wired in as a 4th RRF list; single-project backfill script for existing memories.
 - **Measured results (LongMemEval 50q, seed 42, dev project)** vs. the pre-Phase-1/2 baseline (migration 0061): overall accuracy 72%→80% (+8), recall@k 90%→94% (+4), temporal-reasoning 38.5%→61.5% (+23), single-session-preference 33%→67% (+34), zero-hit questions 5/50→3/50. All targets from the plan's recalibrated expectations were met. The gains come from the chunk + temporal channels; the cross-encoder rerank is net-neutral on this 50q sample since retrieval already surfaces the gold memory into top-k (consistent with the reader-is-the-bottleneck finding). A 500q run is pending as the headline number.
 - **Quality gate**: White + Gray + a high-effort `/code-review` pass on the combined diff found 10 confirmed defects that 1,191 passing tests and a medium review both cleared — all fixed and White-re-verified (0 blockers). Notable catches: the cross-encoder rerank was a silent no-op (text-classification pipeline saturated every score to 1.0; fixed to raw logits); an embedding-space mismatch between OpenAI-only chunks and Ollama-first queries; unencrypted `chunk_text` defeating at-rest encryption; the reranker scoring ciphertext; a flush/write concurrency clobber of dirty flags; and chunk sync keyed on local ids that never match remote (would have shipped Phase 2 as a silent no-op).
-- **Requires reviewer decision**: new runtime dependency `@huggingface/transformers` (ONNX cross-encoder, ~90MB model cached on first use) added to CLI + server — first break from the no-new-runtime-deps convention; the OpenAI-judge fallback works without it. Migrations `0062`–`0064` are applied to **dev only**; prod stays at `0060` pending explicit sign-off (would also drag the held `0061`).
+- **Reviewer decision (resolved)**: the local `@huggingface/transformers` cross-encoder (ONNX, ~90MB model cached on first use) that this phase originally added to CLI + server has since been dropped as a runtime dependency; cross-encoder rerank is now opt-in and requires `OPENAI_API_KEY` + `TAGES_OPENAI_EMBED` rather than shipping a bundled local model. Migrations `0062`–`0064` are now applied to prod (prod is current through `0064`).
 - **Known scope boundaries**: MCP rerank only fires on the remote-hybrid fallback path (warm local cache returns early); temporal channel only helps regex-resolvable dates and its nearest-date guarantee is heuristic above ~1000 date-carrying memories/project; a pre-existing transient double-insert window on concurrent chunk writes self-heals (follow-up: route through the flush mutex or add a `(memory_id, chunk_index)` unique constraint). Phase 3 (ingestion-time observation distillation + knowledge-update supersedence relations) is deferred, not in this change.
 
 ### 2026-07-10 (precision + recall)
