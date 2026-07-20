@@ -1,3 +1,5 @@
+_Superseded by `PLAN-TEAM-READINESS.md` (2026-07-14); kept for history._
+
 # Tages Execution — Remaining Work
 
 _Companion to `PLAN.md`. Lists what is NOT yet done, what is blocked on whom, and the suggested next-up order. Updated 2026-04-20._

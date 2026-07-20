@@ -65,6 +65,8 @@ program
 program
   .command('link [slug]')
   .description('Link this directory to a registered project (writes .tages/config.json)')
+  .option('--project-id <uuid>', 'Join an existing shared cloud project by ID (for invited team members who have no local registry entry yet)')
+  .option('--slug <slug>', 'Local slug to register the joined project under (only used with --project-id; defaults to the project\'s own slug)')
   .action(linkCommand)
 
 program
