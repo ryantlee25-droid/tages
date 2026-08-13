@@ -28,7 +28,20 @@ function decryptMemories(memories: Memory[]): Memory[] {
         // Memory is marked as encrypted but no key is available — fail loudly
         return { ...m, value: '[ERROR: memory is encrypted but TAGES_ENCRYPTION_KEY is not set]' }
       }
-      return { ...m, value: decryptValue(m.value, encKey) }
+      // Per-row failure isolation: decryptValue throws (decipher.final(), see
+      // crypto/encryption.ts) whenever this key cannot open THIS row's
+      // ciphertext — the routine case once two developers share a project with
+      // different TAGES_ENCRYPTION_KEY values, since there is no key
+      // distribution mechanism. Without this catch, one undecryptable row
+      // threw away the ENTIRE recall response, including every row that
+      // decrypted fine. Substitute a per-row placeholder in the same style as
+      // the no-key-set branch above and let the other rows through, so the
+      // response still carries the same number of rows.
+      try {
+        return { ...m, value: decryptValue(m.value, encKey) }
+      } catch {
+        return { ...m, value: '[ERROR: memory could not be decrypted with the configured TAGES_ENCRYPTION_KEY]' }
+      }
     }
     // Not encrypted — return as-is regardless of whether a key is configured
     return m
