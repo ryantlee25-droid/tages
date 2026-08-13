@@ -33,7 +33,7 @@ jobs:
             exit 1
           fi
           echo "Token is present (length ${#NODE_AUTH_TOKEN}). Checking identity..."
-          who=$(npm whoami 2>&1) || {
+          who=$(npm whoami 2>/dev/null) || {
             echo "::error::npm whoami failed: $who"
             echo "A Classic *Publish* token will fail here with E403 — it needs to be"
             echo "a Granular Access Token (read+write on @tages) or a Classic *Automation* token."
@@ -41,4 +41,7 @@ jobs:
           }
           echo "Authenticated as: $who"
           echo "--- write access to the @tages scope ---"
-          npm access list packages "$who" 2>&1 | head -20 || echo "(scope listing unavailable; whoami succeeded, which is the gate)"
+          # whoami only proves the token is VALID. These prove it can WRITE,
+          # which is the permission publish.yml actually needs.
+          echo "--- packages the token can see in the @tages scope ---"
+          npm access list packages @tages 2>&1 | head -20 || true
