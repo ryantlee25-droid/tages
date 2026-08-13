@@ -145,6 +145,43 @@ describe('init command', () => {
     )
   })
 
+  // `injectMcpConfig` does not inherit its npx args default once a custom
+  // serverCommand is supplied, so init must always pass BOTH — passing only
+  // the command would write `{command: 'node', args: []}` and start nothing.
+  it('passes serverCommand and serverArgs together to injectMcpConfig (--local)', async () => {
+    await initCommand({ local: true, slug: 'wired-app' })
+
+    const opts = mockInjectMcpConfig.mock.calls[0][0] as {
+      serverCommand: string
+      serverArgs: string[]
+    }
+    expect(opts.serverCommand).toBeTruthy()
+    expect(Array.isArray(opts.serverArgs)).toBe(true)
+    expect(opts.serverArgs.length).toBeGreaterThan(0)
+
+    if (opts.serverCommand === 'node') {
+      expect(opts.serverArgs).toHaveLength(1)
+      expect(path.isAbsolute(opts.serverArgs[0])).toBe(true)
+      expect(fs.existsSync(opts.serverArgs[0])).toBe(true)
+    } else {
+      expect(opts.serverCommand).toBe('npx')
+      expect(opts.serverArgs).toEqual(['-y', '@tages/server'])
+    }
+  })
+
+  it('passes the same server invocation on the cloud path', async () => {
+    await initCommand({ cloud: true, slug: 'cloud-wired' })
+
+    const opts = mockInjectMcpConfig.mock.calls[0][0] as {
+      serverCommand: string
+      serverArgs: string[]
+      projectId: string
+    }
+    expect(opts.projectId).toBe('mock-project-uuid')
+    expect(opts.serverCommand).toBeTruthy()
+    expect(opts.serverArgs.length).toBeGreaterThan(0)
+  })
+
   it('does NOT run OAuth when --local flag is set', async () => {
     const { runGithubOAuth } = await import('../auth/github-oauth.js')
 
