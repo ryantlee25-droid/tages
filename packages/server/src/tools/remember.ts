@@ -136,10 +136,42 @@ export async function handleRemember(
     cache.indexMemoryTokens(memory.id, projectId, tokens)
   }
 
-  // Try remote write immediately; cache is dirty if this fails
+  // Try remote write immediately; cache is dirty if this fails.
+  //
+  // Durability detection (see remoteFailureReason usage below): SupabaseSync
+  // .remoteInsert already reports failure as a `false` RETURN VALUE — on a
+  // Supabase error it logs and `return false`, and its own catch also returns
+  // false (packages/server/src/sync/supabase-sync.ts). It is therefore NOT
+  // like SupabaseSync.flush(), which returns void and leaves the caller with
+  // no signal at all. So the boolean is the authoritative durability signal
+  // here and a try/catch alone would catch nothing.
+  //
+  // The try/catch below is still required for one narrow case: remoteInsert
+  // calls `memoryToDbRow(memory)` + `wal.logPending(...)` OUTSIDE its own try
+  // block, so a WAL/serialisation failure escapes as a real throw. That throw
+  // also means the row never reached Supabase, so it is folded into the same
+  // local-only outcome rather than being allowed to fail the whole tool call.
+  let remoteDurable = false
+  let remoteFailureReason: string | null = null
   if (sync) {
-    const ok = await sync.remoteInsert(memory)
-    if (ok) cache.markSynced([memory.id])
+    const captured = beginRemoteErrorCapture()
+    try {
+      remoteDurable = await sync.remoteInsert(memory)
+    } catch (err) {
+      remoteDurable = false
+      remoteFailureReason = (err as Error).message
+    } finally {
+      endRemoteErrorCapture(captured)
+    }
+
+    if (remoteDurable) {
+      cache.markSynced([memory.id])
+    } else {
+      remoteFailureReason =
+        remoteFailureReason ||
+        captured[0] ||
+        'the cloud write was rejected or the database was unreachable'
+    }
   }
 
   // T8 (Task 8): generate + store + sync the document embedding for semantic
@@ -157,12 +189,86 @@ export async function handleRemember(
   const extraNote = extras.length ? ` [${extras.join(', ')}]` : ''
   const safetyNote = formatSafetyWarnings(warnings)
 
+  const label = `"${args.key}" (${args.type})${extraNote}`
+
+  // Fully durable: local cache AND the shared cloud database both confirmed.
+  // Unchanged wording — this is the only path that may read as plain success.
+  if (remoteDurable) {
+    return {
+      content: [{
+        type: 'text',
+        text: `${action} memory: ${label}${safetyNote}`,
+      }],
+    }
+  }
+
+  // Local only. Deliberately NOT a thrown error: the memory IS durably saved
+  // in local SQLite and still marked dirty, so the 60s background flush (or
+  // the next CLI sync) can push it later. But this text is read by an LLM
+  // that will otherwise tell the developer their memory was saved for the
+  // team, so it states the limitation in plain language rather than a status
+  // code, and never in the plain `${action} memory: ...` success form.
+  const localOnly =
+    sync === null
+      ? `${action} memory in the local cache only: ${label}. Cloud sync is not configured for this project, ` +
+        `so this memory was never sent to a shared database and teammates will NOT see it. ` +
+        `It is durably saved on this machine only.`
+      : `${action} memory in the local cache only: ${label}. The write to the shared cloud database FAILED ` +
+        `(${remoteFailureReason}), so teammates will NOT see this memory. It is durably saved on this machine ` +
+        `and is still marked unsynced, so the background sync will retry it automatically — do not re-send it. ` +
+        `Tell the user this memory is local-only until that sync succeeds.`
+
   return {
     content: [{
       type: 'text',
-      text: `${action} memory: "${args.key}" (${args.type})${extraNote}${safetyNote}`,
+      text: `${localOnly}${safetyNote}`,
     }],
   }
+}
+
+/**
+ * Recover the reason `SupabaseSync.remoteInsert` swallowed.
+ *
+ * remoteInsert reports failure as `false` but discards WHY: it logs
+ * `[tages] Remote insert failed: <message>` and returns. We cannot change
+ * supabase-sync.ts, so console.error is TEED (never replaced) to keep a copy
+ * of that line for the tool response.
+ *
+ * Unlike the CLI's one-shot equivalent (packages/cli/src/sync/cli-sync.ts),
+ * this runs inside a long-lived MCP server that can be handling overlapping
+ * remember calls. A save-then-restore of console.error would race there: two
+ * interleaved calls can restore each other's shim and strand one permanently.
+ * So the tee is installed at most once, is never uninstalled, and simply fans
+ * out to a set of per-call collectors that register/deregister around their
+ * own await. Every message is still forwarded to the real console.error
+ * untouched. Remove this shim once remoteInsert reports a reason of its own.
+ */
+const remoteErrorCollectors = new Set<string[]>()
+let remoteErrorTeeInstalled = false
+
+function beginRemoteErrorCapture(): string[] {
+  if (!remoteErrorTeeInstalled) {
+    const realConsoleError = console.error.bind(console)
+    console.error = (...args: unknown[]) => {
+      realConsoleError(...args)
+      if (remoteErrorCollectors.size === 0) return
+      const line = args.map((a) => (a instanceof Error ? a.message : String(a))).join(' ')
+      if (!line.includes('Remote insert failed')) return
+      const reason = line
+        .replace(/^\[tages\]\s*/, '')
+        .replace(/^Remote insert failed:\s*/, '')
+        .trim()
+      if (reason) for (const collector of remoteErrorCollectors) collector.push(reason)
+    }
+    remoteErrorTeeInstalled = true
+  }
+  const collector: string[] = []
+  remoteErrorCollectors.add(collector)
+  return collector
+}
+
+function endRemoteErrorCapture(collector: string[]): void {
+  remoteErrorCollectors.delete(collector)
 }
 
 /**
