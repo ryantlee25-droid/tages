@@ -17,12 +17,31 @@ export async function teamInviteCommand(email: string, options: TeamOptions) {
     process.exit(1)
   }
 
-  // M1: Validate and normalise role; default to 'member'
-  const validRoles = ['owner', 'admin', 'member'] as const
+  // Validate and normalise role; default to 'member'.
+  //
+  // 'owner' is deliberately NOT invitable. It contradicted this command's own
+  // help text ("Role: member or admin") and the dashboard invite route, which
+  // rejects any role other than member/admin and additionally restricts
+  // granting 'admin' to project owners. Accepting it here let any active admin
+  // mint a second owner.
+  //
+  // This check is defense in depth only — it produces a fast, readable error.
+  // The authoritative guard is the enforce_role_grant_authority trigger added
+  // in supabase/migrations/0067_invite_role_guard.sql, because anyone can skip
+  // the CLI and POST to PostgREST directly.
+  const validRoles = ['admin', 'member'] as const
   type ValidRole = typeof validRoles[number]
   const rawRole = options.role?.toLowerCase() ?? 'member'
   if (!validRoles.includes(rawRole as ValidRole)) {
-    console.error(chalk.red(`  Invalid role '${options.role}'. Must be one of: owner, admin, member`))
+    const hint =
+      rawRole === 'owner'
+        ? ' Ownership cannot be granted through an invite.'
+        : ''
+    console.error(
+      chalk.red(
+        `  Invalid role '${options.role}'. Must be one of: member, admin.${hint}`,
+      ),
+    )
     process.exit(1)
   }
   const role = rawRole as ValidRole
