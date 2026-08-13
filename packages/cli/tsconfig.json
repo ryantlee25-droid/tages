@@ -4,14 +4,22 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
-    "declaration": true,
-    "outDir": "./dist",
-    "rootDir": "../../",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+
+    // Type-checking only. Emit is tsup's job (see tsup.config.ts) — which is
+    // what let `rootDir: '../../'` go away. That setting existed solely so tsc
+    // had a legal output location for the cross-package `../../../server/src`
+    // imports, and it was the direct cause of the unusable npm tarball: it
+    // emitted CommonJS sibling packages into an ESM package and pushed the
+    // real entrypoint down to dist/packages/cli/src/index.js.
+    //
+    // With no emit there is no rootDir constraint, so files outside this
+    // package can still be part of the program and get type-checked.
+    "noEmit": true
   },
   "include": ["src/**/*"]
 }

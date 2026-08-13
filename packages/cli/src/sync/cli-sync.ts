@@ -1,50 +1,47 @@
 import * as fs from 'fs'
-import * as path from 'path'
-import { fileURLToPath } from 'url'
-import { createRequire } from 'module'
 import chalk from 'chalk'
 import { getCacheDir, getAuthPath } from '../config/paths.js'
 import { createAuthenticatedClient } from '../auth/session.js'
 
-// Cross-package imports: server is CJS, CLI is ESM
-// Resolve to the server package's own dist/ (not the CLI's compiled copy)
+/**
+ * The two `@tages/server` modules the CLI needs to read and push the local
+ * cache. They are imported FROM SOURCE and compiled into the CLI bundle by
+ * tsup, which is the only form that works in all three environments the CLI
+ * runs in:
+ *
+ *   - published npm install — there is no sibling `packages/server` on disk
+ *   - monorepo clone + `pnpm link --global` — there is, but it need not be built
+ *   - `tsx` / vitest running straight off `src/`
+ *
+ * This replaces a filesystem walk that looked for
+ * `packages/server/dist/cache/sqlite.js` up to ten directories above this
+ * file. That path only ever exists in a monorepo checkout, so every command
+ * that syncs (`remember`, `forget`, `import`, `import-memories`, `index`)
+ * threw `Failed to load server modules` for anyone who installed from npm.
+ * The walk also made the CJS server `dist/` the thing being loaded, which is
+ * why the loader needed `createRequire` interop at all; bundling from source
+ * removes the module-format mismatch instead of bridging it.
+ *
+ * Kept as a lazy `await import()` rather than a top-level import so the
+ * SQLite-backed module body is not evaluated by commands that never sync.
+ */
 let SqliteCache: any
 let SupabaseSync: any
 
 async function loadServerModules() {
-  if (!SqliteCache) {
-    try {
-      // Resolve server dist: walk up from this file until we find packages/server/dist
-      const __filename = fileURLToPath(import.meta.url)
-      let dir = path.dirname(__filename)
-      let serverDist = ''
-      for (let i = 0; i < 10; i++) {
-        const candidate = path.join(dir, 'packages', 'server', 'dist')
-        if (fs.existsSync(path.join(candidate, 'cache', 'sqlite.js'))) {
-          serverDist = candidate
-          break
-        }
-        dir = path.dirname(dir)
-      }
-      if (!serverDist) throw new Error('Could not find packages/server/dist')
-      const require = createRequire(import.meta.url)
-
-      if (fs.existsSync(path.join(serverDist, 'cache', 'sqlite.js'))) {
-        // Load CJS server dist from ESM CLI
-        SqliteCache = require(path.join(serverDist, 'cache', 'sqlite.js')).SqliteCache
-        SupabaseSync = require(path.join(serverDist, 'sync', 'supabase-sync.js')).SupabaseSync
-      } else {
-        // tsx source execution: dynamic import from source
-        // @ts-ignore — cross-package import
-        const sqliteModule = await import('../../../server/src/cache/sqlite.js')
-        SqliteCache = sqliteModule.SqliteCache
-        // @ts-ignore — cross-package import
-        const syncModule = await import('../../../server/src/sync/supabase-sync.js')
-        SupabaseSync = syncModule.SupabaseSync
-      }
-    } catch (e) {
-      throw new Error(`Failed to load server modules: ${(e as Error).message}`)
+  if (SqliteCache) return
+  try {
+    // @ts-ignore — cross-package source import, inlined by tsup
+    const sqliteModule = await import('../../../server/src/cache/sqlite.js')
+    SqliteCache = sqliteModule.SqliteCache
+    // @ts-ignore — cross-package source import, inlined by tsup
+    const syncModule = await import('../../../server/src/sync/supabase-sync.js')
+    SupabaseSync = syncModule.SupabaseSync
+    if (!SqliteCache || !SupabaseSync) {
+      throw new Error('server modules loaded but did not export SqliteCache/SupabaseSync')
     }
+  } catch (e) {
+    throw new Error(`Failed to load server modules: ${(e as Error).message}`)
   }
 }
 
