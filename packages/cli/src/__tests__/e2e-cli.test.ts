@@ -11,23 +11,37 @@ const PROJECT_ROOT = path.resolve(__dirname, '../../../../')
 // Fixture path for import-claude-md test
 const FIXTURE_PATH = path.resolve(__dirname, 'fixtures', 'sample-claude-md.md')
 
+// `tages init` writes a project-scoped .mcp.json into its *current* directory,
+// so it must not run against the live checkout — doing so rewrites this repo's
+// own tracked .mcp.json. Those runs get an explicit temp cwd, which `pnpm exec`
+// cannot resolve tsx from, so invoke the tsx binary by absolute path instead.
+const TSX_BIN = path.join(PROJECT_ROOT, 'packages', 'cli', 'node_modules', '.bin', 'tsx')
+const CLI_ENTRY = path.join(PROJECT_ROOT, 'packages', 'cli', 'src', 'index.ts')
+
 describe('E2E: CLI commands', () => {
   let tmpHome: string
   let tmpCachePath: string
+  let tmpWorkDir: string
 
   beforeAll(() => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tages-cli-test-'))
     tmpCachePath = path.join(tmpHome, 'tages-test-cache.db')
+    // Throwaway, non-git working directory for project-mutating commands.
+    tmpWorkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tages-cli-work-'))
   })
 
   afterAll(() => {
     fs.rmSync(tmpHome, { recursive: true, force: true })
+    fs.rmSync(tmpWorkDir, { recursive: true, force: true })
   })
 
-  function run(args: string, opts: { allowFail?: boolean } = {}): { stdout: string; code: number } {
+  function run(args: string, opts: { allowFail?: boolean; cwd?: string } = {}): { stdout: string; code: number } {
+    const command = opts.cwd
+      ? `"${TSX_BIN}" "${CLI_ENTRY}" ${args}`
+      : `pnpm exec tsx packages/cli/src/index.ts ${args}`
     try {
-      const stdout = execSync(`pnpm exec tsx packages/cli/src/index.ts ${args}`, {
-        cwd: PROJECT_ROOT,
+      const stdout = execSync(command, {
+        cwd: opts.cwd ?? PROJECT_ROOT,
         env: {
           ...process.env,
           HOME: tmpHome,
@@ -44,8 +58,10 @@ describe('E2E: CLI commands', () => {
   }
 
   it('tages init creates project config in local mode', () => {
-    const { code } = run('init --local --slug tages-e2e-test')
+    const { code } = run('init --local --slug tages-e2e-test', { cwd: tmpWorkDir })
     expect(code).toBe(0)
+    // The MCP config lands in the directory init ran in, not the live checkout.
+    expect(fs.existsSync(path.join(tmpWorkDir, '.mcp.json'))).toBe(true)
     const configPath = path.join(tmpHome, '.config', 'tages', 'projects', 'tages-e2e-test.json')
     expect(fs.existsSync(configPath)).toBe(true)
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))

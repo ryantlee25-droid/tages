@@ -138,6 +138,7 @@ vi.mock('../config/paths.js', () => ({
   getCachePath: (slug: string) => path.join(tempConfigDir, 'cache', `${slug}.db`),
   getCacheDir: () => path.join(tempConfigDir, 'cache'),
   getClaudeDesktopConfigPath: () => path.join(tempConfigDir, 'claude_desktop_config.json'),
+  getClaudeCodeMcpConfigPath: () => path.join(tempConfigDir, '.mcp.json'),
   getProjectConfigPath: (slug: string) => path.join(tempConfigDir, 'projects', `${slug}.json`),
 }))
 
