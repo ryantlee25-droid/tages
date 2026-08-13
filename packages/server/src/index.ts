@@ -259,7 +259,11 @@ async function main() {
       force: RememberSchema.shape.force,
     },
     async (args) => {
-      const result = await handleRemember(args, projectId, cache, sync, plan, callerUserId)
+      // supabaseClient is threaded through so the fire-and-forget embedding
+      // calls in remember.ts can reach the hosted embed edge function with the
+      // caller's own JWT — same trailing-optional-param wiring handleRecall
+      // already uses below.
+      const result = await handleRemember(args, projectId, cache, sync, plan, callerUserId, supabaseClient || undefined)
       // Track the memory creation
       const mem = cache.getByKey(projectId, args.key)
       if (mem) await tracker.logCreate(mem.id)
