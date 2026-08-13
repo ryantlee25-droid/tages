@@ -146,7 +146,14 @@ describeIntegration('invite-flow @integration', () => {
 
     const { data: proj, error: projErr } = await admin
       .from('projects')
-      .insert({ name: 'invite-flow-test', owner_id: ownerId })
+      // slug is NOT NULL and globally unique across all owners
+      // (0001_initial_schema.sql), so it must be supplied and must not
+      // collide with a real project or with a concurrent run of this suite.
+      .insert({
+        name: 'invite-flow-test',
+        slug: `invite-flow-test-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+        owner_id: ownerId,
+      })
       .select('id')
       .single()
     if (projErr || !proj) throw projErr ?? new Error('no project')
