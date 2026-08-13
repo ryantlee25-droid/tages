@@ -639,7 +639,20 @@ async function fetchEmbeddingJson(
 
     if (res.ok) return res.json()
 
-    if (res.status === 429 && attempt < maxRetries && spentDelayMs < MAX_TOTAL_RETRY_DELAY_MS) {
+    // 546 is Supabase Edge Runtime's WORKER_RESOURCE_LIMIT: the isolate was
+    // killed mid-request. Measured during the dev backfill, it is transient and
+    // load-driven, NOT size-driven — a 6,795-char row failed while a 19,985-char
+    // row in the same run succeeded, which points at token density rather than
+    // payload size. It was previously non-retryable, so a single unlucky
+    // sub-batch failed the whole array and the backfill silently left those rows
+    // on their stale vectors. Each sub-batch is one fetch, so retrying here IS
+    // the per-sub-batch retry. The same bounded budget applies, which keeps the
+    // recall read path failing fast to trigram rather than hanging.
+    if (
+      (res.status === 429 || res.status === 546) &&
+      attempt < maxRetries &&
+      spentDelayMs < MAX_TOTAL_RETRY_DELAY_MS
+    ) {
       const delayMs = Math.min(retryDelayMs(res, attempt), MAX_TOTAL_RETRY_DELAY_MS - spentDelayMs)
       spentDelayMs += delayMs
       await new Promise((resolve) => setTimeout(resolve, delayMs))
