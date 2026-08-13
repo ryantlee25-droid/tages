@@ -27,6 +27,12 @@ export default defineConfig({
       '**/coverage/**',
       '**/.claude/worktrees/**',
       '**/.claude/parallel/**',
+      // `.claire/` is a leftover from an earlier tool name. It is untracked and
+      // holds stale, empty test stubs that fail with `ReferenceError: placeholder
+      // is not defined`. Verified present in the main checkout; it is invisible
+      // from inside a worktree, which is why the `.claude`-only exclude looked
+      // complete when it was not.
+      '**/.claire/**',
       'eval/**',
     ],
   },
