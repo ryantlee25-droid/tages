@@ -14,10 +14,9 @@ export async function GET(request: Request) {
     if (!error && data.session) {
       if (data.user?.email) {
         try {
-          await supabase.rpc('accept_pending_invites', {
-            user_email: data.user.email,
-            uid: data.user.id,
-          })
+          // Zero-arg by design (migration 0065): the RPC derives identity from
+          // the session JWT. Passing an email/uid was a privilege-escalation hole.
+          await supabase.rpc('accept_pending_invites')
         } catch (e) {
           console.error('[auth/callback] accept_pending_invites failed', e)
           // non-fatal

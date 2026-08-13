@@ -136,10 +136,9 @@ async function main() {
       const email = user?.email || user?.user_metadata?.email
       if (email && user?.id) {
         callerUserId = user.id
-        const { data: acceptCount } = await supabaseClient.rpc('accept_pending_invites', {
-          user_email: email,
-          uid: user.id,
-        })
+        // Zero-arg by design (migration 0065): the RPC derives identity from
+        // the session JWT set by setSession() above, not from these locals.
+        const { data: acceptCount } = await supabaseClient.rpc('accept_pending_invites')
         if (acceptCount && acceptCount > 0) {
           console.error(`[tages] Accepted ${acceptCount} pending team invite(s)`)
         }
