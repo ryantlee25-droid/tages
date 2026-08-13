@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import { execFileSync } from 'child_process'
 import {
   setupTempConfigDir,
   captureConsole,
@@ -57,7 +58,10 @@ vi.mock('../config/paths.js', () => ({
   getCachePath: (slug: string) => path.join(tempConfigDir, 'cache', `${slug}.db`),
   getCacheDir: () => path.join(tempConfigDir, 'cache'),
   getClaudeDesktopConfigPath: () => path.join(tempConfigDir, 'claude_desktop_config.json'),
-  getClaudeCodeMcpConfigPath: () => path.join(tempConfigDir, '.mcp.json'),
+  // Matches the real implementation (paths.ts resolves `.mcp.json` against
+  // process.cwd()), so the join path's MCP wiring lands in the test's cwd —
+  // the project directory — exactly as it does for a real teammate.
+  getClaudeCodeMcpConfigPath: () => path.join(process.cwd(), '.mcp.json'),
 }))
 
 import { linkCommand } from '../commands/link.js'
@@ -278,6 +282,113 @@ describe('link command', () => {
         fs.readFileSync(path.join(tempConfigDir, 'projects', 'team-project.json'), 'utf-8'),
       )
       expect(config.supabaseUrl).toBe(urlArg)
+    })
+  })
+
+  // -------------------------------------------------------------------
+  // (b2) A successful join must WIRE the agent, not just record the project.
+  //
+  // The join path used to stop after writing the project JSON + dir marker,
+  // so a teammate "joined" and their agent was still connected to nothing.
+  // These assert the two steps `tages init` also performs.
+  // -------------------------------------------------------------------
+  describe('--project-id agent wiring', () => {
+    function joinedProject() {
+      writeAuthConfig(tempConfigDir, TEST_AUTH)
+      mocks.createAuthenticatedClient.mockResolvedValue(fakeClient())
+      mocks.findMemberProjectById.mockResolvedValue({
+        projectId: 'shared-proj-uuid',
+        slug: 'team-project',
+        plan: 'team',
+      })
+    }
+
+    it('writes .mcp.json in the project directory carrying the joined projectId + slug', async () => {
+      joinedProject()
+
+      await linkCommand(undefined, { projectId: 'shared-proj-uuid' })
+
+      const mcpPath = path.join(workDir, '.mcp.json')
+      expect(fs.existsSync(mcpPath)).toBe(true)
+
+      const mcp = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'))
+      expect(mcp.mcpServers.tages).toBeDefined()
+      expect(mcp.mcpServers.tages.env.TAGES_PROJECT_ID).toBe('shared-proj-uuid')
+      expect(mcp.mcpServers.tages.env.TAGES_PROJECT_SLUG).toBe('team-project')
+      // Supabase creds must ride along, or the server has a project id it
+      // cannot reach.
+      expect(mcp.mcpServers.tages.env.TAGES_SUPABASE_URL).toContain('supabase.co')
+      expect(mcp.mcpServers.tages.env.TAGES_SUPABASE_ANON_KEY.length).toBeGreaterThan(0)
+
+      expect(console_.logs.join('\n')).toContain('MCP config:')
+    })
+
+    it('writes .mcp.json under the --slug alias when one is given', async () => {
+      joinedProject()
+
+      await linkCommand(undefined, { projectId: 'shared-proj-uuid', slug: 'my-local-alias' })
+
+      const mcp = JSON.parse(fs.readFileSync(path.join(workDir, '.mcp.json'), 'utf-8'))
+      expect(mcp.mcpServers.tages.env.TAGES_PROJECT_SLUG).toBe('my-local-alias')
+      expect(mcp.mcpServers.tages.env.TAGES_PROJECT_ID).toBe('shared-proj-uuid')
+    })
+
+    it('points the MCP server at a command that exists — local node build, else the npx fallback', async () => {
+      joinedProject()
+
+      await linkCommand(undefined, { projectId: 'shared-proj-uuid' })
+
+      const mcp = JSON.parse(fs.readFileSync(path.join(workDir, '.mcp.json'), 'utf-8'))
+      const { command, args } = mcp.mcpServers.tages
+
+      if (command === 'node') {
+        // Local monorepo build: the arg must be an absolute path that is
+        // really on disk. Writing a path that doesn't exist is the failure
+        // mode this guards — Claude Code would fail to start the server.
+        expect(args).toHaveLength(1)
+        expect(path.isAbsolute(args[0])).toBe(true)
+        expect(args[0].endsWith(path.join('packages', 'server', 'dist', 'index.js'))).toBe(true)
+        expect(fs.existsSync(args[0])).toBe(true)
+      } else {
+        // Fallback only — never a half-built custom command.
+        expect(command).toBe('npx')
+        expect(args).toEqual(['-y', '@tages/server'])
+      }
+    })
+
+    it('preserves a teammate\'s existing .mcp.json entries instead of clobbering them', async () => {
+      joinedProject()
+      fs.writeFileSync(
+        path.join(workDir, '.mcp.json'),
+        JSON.stringify({ mcpServers: { playwright: { command: 'npx', args: ['playwright-mcp'] } } }),
+      )
+
+      await linkCommand(undefined, { projectId: 'shared-proj-uuid' })
+
+      const mcp = JSON.parse(fs.readFileSync(path.join(workDir, '.mcp.json'), 'utf-8'))
+      expect(mcp.mcpServers.playwright).toEqual({ command: 'npx', args: ['playwright-mcp'] })
+      expect(mcp.mcpServers.tages).toBeDefined()
+      expect(console_.logs.join('\n')).toContain('(updated)')
+    })
+
+    it('installs the post-commit hook in the joined repo', async () => {
+      // installPostCommitHook resolves the repo from cwd, so the join has to
+      // happen inside a real git repo for the hook to have a home.
+      execFileSync('git', ['init', '-q'], { cwd: workDir })
+      joinedProject()
+
+      await linkCommand(undefined, { projectId: 'shared-proj-uuid' })
+
+      const hookPath = path.join(workDir, '.git', 'hooks', 'post-commit')
+      expect(fs.existsSync(hookPath)).toBe(true)
+      expect(fs.readFileSync(hookPath, 'utf-8')).toContain('tages index --last-commit')
+      expect(console_.logs.join('\n')).toContain('Git hook:')
+
+      // The written .mcp.json holds the project id + anon key, so it must be
+      // kept out of git via the repo-local excludes (never a shared
+      // .gitignore).
+      const excludePath = path.join(workDir, '.git', 'info', 'exclude')
+      expect(fs.readFileSync(excludePath, 'utf-8')).toContain('.mcp.json')
     })
   })
 

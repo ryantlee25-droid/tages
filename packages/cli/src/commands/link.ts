@@ -3,8 +3,14 @@ import * as path from 'path'
 import chalk from 'chalk'
 import ora from 'ora'
 import { getProjectsDir, getAuthPath } from '../config/paths.js'
+import { injectMcpConfig } from '../config/mcp-inject.js'
+import { installPostCommitHook } from '../indexer/install-hook.js'
 import { createAuthenticatedClient } from '../auth/session.js'
 import { runGithubOAuth } from '../auth/github-oauth.js'
+// `init` owns the server-resolution helper; `link` must wire an agent exactly
+// the way `init` does, so it reuses that one implementation rather than
+// carrying a second copy that could drift.
+import { resolveServerInvocation, printServerInvocation } from './init.js'
 
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 
@@ -242,10 +248,32 @@ async function linkByProjectId(projectId: string, slugOverride: string | undefin
 
   writeDirMarker(targetSlug)
 
+  // Writing the project config + dir marker is not enough: without these two
+  // steps the teammate "joins" successfully and their agent is still wired to
+  // nothing. `tages init` does both, and a join has to reach the same end
+  // state. Same order and same options as init's cloud path, using the joined
+  // project's own id/slug.
+  const server = resolveServerInvocation()
+  const { path: mcpPath, created } = injectMcpConfig({
+    supabaseUrl,
+    supabaseAnonKey,
+    projectId: project.projectId,
+    projectSlug: targetSlug,
+    serverCommand: server.command,
+    serverArgs: server.args,
+  })
+
+  const { installed: hookInstalled, path: hookPath } = installPostCommitHook()
+
   console.log()
   console.log(chalk.green(`  Joined project '${targetSlug}' (${project.projectId}).`))
   console.log(chalk.dim(`  Project config: ${configPath}`))
   console.log(chalk.dim(`  Wrote ${path.join(process.cwd(), '.tages', 'config.json')}`))
+  console.log(chalk.green('  MCP config:'), mcpPath, created ? '(created)' : '(updated)')
+  printServerInvocation(server)
+  if (hookInstalled) {
+    console.log(chalk.green('  Git hook:'), hookPath)
+  }
   console.log(chalk.dim(`  The MCP server will now auto-detect this project when started here.`))
 }
 
