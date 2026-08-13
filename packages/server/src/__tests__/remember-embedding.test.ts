@@ -137,7 +137,7 @@ describe('Task 8: embedding write path', () => {
 
     await flushMicrotasks()
 
-    expect(mockGenerateEmbedding).toHaveBeenCalledWith('some memory value')
+    expect(mockGenerateEmbedding).toHaveBeenCalledWith('some memory value', expect.objectContaining({ projectId: TEST_PROJECT }))
 
     const row = cache.getByKey(TEST_PROJECT, 'embed-key')
     expect(row).not.toBeNull()
@@ -174,7 +174,7 @@ describe('Task 8: embedding write path', () => {
 
     await flushMicrotasks()
 
-    expect(mockGenerateEmbedding).toHaveBeenCalledWith('plaintext secret value')
+    expect(mockGenerateEmbedding).toHaveBeenCalledWith('plaintext secret value', expect.objectContaining({ projectId: TEST_PROJECT }))
     // Sanity: the stored value itself is ciphertext, confirming encryption ran
     // before the embedding call inspected the plaintext copy separately.
     const stored = cache.getByKey(TEST_PROJECT, 'enc-embed-key')
@@ -215,6 +215,57 @@ describe('Task 8: embedding write path', () => {
     expect(JSON.parse(raw!.embedding!)).toEqual(fakeEmbedding)
   })
 
+  /**
+   * PLAN-HOSTED-EMBEDDING.md Task 2: the hosted provider needs a Supabase URL
+   * and a bearer token to reach `${supabaseUrl}/functions/v1/embed`, and
+   * SupabaseSync keeps its client private. handleRemember therefore takes a
+   * trailing OPTIONAL `supabaseClient`, mirroring handleRecall. These two
+   * tests pin both halves of that contract: the client reaches the embedding
+   * call when supplied, and omitting it still compiles and still works (every
+   * pre-existing call site in this file omits it).
+   */
+  it('threads a supplied supabaseClient through to the embedding call', async () => {
+    mockGenerateEmbedding.mockResolvedValue(new Array(1536).fill(0.02))
+    const fakeClient = { marker: 'the-caller-client' }
+
+    await handleRemember(
+      { key: 'client-thread-key', value: 'value to embed', type: 'convention' },
+      TEST_PROJECT,
+      cache,
+      null,
+      undefined,
+      undefined,
+      fakeClient as never,
+    )
+
+    await flushMicrotasks()
+
+    expect(mockGenerateEmbedding).toHaveBeenCalledWith('value to embed', {
+      supabaseClient: fakeClient,
+      projectId: TEST_PROJECT,
+    })
+  })
+
+  it('still embeds when no supabaseClient is passed (existing callers unchanged)', async () => {
+    mockGenerateEmbedding.mockResolvedValue(new Array(1536).fill(0.04))
+
+    await handleRemember(
+      { key: 'no-client-key', value: 'value to embed', type: 'convention' },
+      TEST_PROJECT,
+      cache,
+      null,
+    )
+
+    await flushMicrotasks()
+
+    expect(mockGenerateEmbedding).toHaveBeenCalledWith('value to embed', {
+      supabaseClient: undefined,
+      projectId: TEST_PROJECT,
+    })
+    const raw = readRow(dbPath, TEST_PROJECT, 'no-client-key')
+    expect(JSON.parse(raw!.embedding!)).toEqual(new Array(1536).fill(0.04))
+  })
+
   it('does not throw or crash the process when embedding generation fails', async () => {
     mockGenerateEmbedding.mockRejectedValue(new Error('network error'))
 
@@ -253,7 +304,7 @@ describe('Task 8: embedding write path', () => {
 
     await flushMicrotasks()
 
-    expect(mockGenerateEmbedding).toHaveBeenCalledWith(longValue)
+    expect(mockGenerateEmbedding).toHaveBeenCalledWith(longValue, expect.objectContaining({ projectId: TEST_PROJECT }))
     const raw = readRow(dbPath, TEST_PROJECT, 'long-embed-key')
     expect(raw).not.toBeUndefined()
     expect(JSON.parse(raw!.embedding!)).toEqual(fakeEmbedding)

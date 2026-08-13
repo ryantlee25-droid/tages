@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Memory, MemoryExample, ExecutionFlow } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
@@ -28,6 +29,15 @@ export async function handleRemember(
   sync: SupabaseSync | null,
   plan?: string,
   callerUserId?: string,
+  // Hosted embedding (PLAN-HOSTED-EMBEDDING.md Task 2): the hosted provider
+  // needs a Supabase URL + a bearer token to reach
+  // `${supabaseUrl}/functions/v1/embed`, and `SupabaseSync` keeps its client
+  // private. Threaded as a TRAILING OPTIONAL param — mirroring the identical
+  // pattern handleRecall already uses for its temporal channel (recall.ts:64,
+  // wired at index.ts:285) — so every existing caller and test keeps compiling
+  // unchanged. When omitted, the hosted path falls back to env config and, if
+  // that is absent too, simply yields no embedding (never throws).
+  supabaseClient?: SupabaseClient,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   // Check memory limit for free tier
   // Fast-path: check local SQLite count first (avoids network round-trip when clearly under limit)
@@ -178,7 +188,7 @@ export async function handleRemember(
   // search. Fire-and-forget — never block the tool response on this network
   // call. Generated from plaintextForIndex (pre-encryption plaintext), never
   // from ciphertext, so encrypted-at-rest memories still get correct vectors.
-  scheduleEmbeddingSync(memory, plaintextForIndex, cache, sync)
+  scheduleEmbeddingSync(memory, plaintextForIndex, cache, sync, supabaseClient)
 
   const action = existing ? 'Updated' : 'Stored'
   const extras: string[] = []
@@ -276,7 +286,8 @@ function endRemoteErrorCapture(collector: string[]): void {
  * cache and Supabase, without blocking the caller.
  *
  * Deliberately not awaited by handleRemember — embedding generation is a
- * network call (Ollama or OpenAI) that can take seconds, and the MCP tool
+ * network call (hosted edge function, Ollama, or OpenAI) that can take
+ * seconds, and the MCP tool
  * response must return immediately. Any failure here (no provider available,
  * network error) is logged and swallowed; the memory itself is already safely
  * stored by the time this runs.
@@ -303,9 +314,14 @@ function scheduleEmbeddingSync(
   plaintext: string,
   cache: SqliteCache,
   sync: SupabaseSync | null,
+  supabaseClient?: SupabaseClient,
 ): void {
   const { projectId, key } = memory
-  void generateEmbedding(plaintext)
+  // Both fire-and-forget chains get the SAME options object, so the pooled
+  // vector and the per-chunk vectors are produced by one provider against one
+  // project — they are compared to each other at recall time.
+  const embedOpts = { supabaseClient, projectId }
+  void generateEmbedding(plaintext, embedOpts)
     .then(async (embedding) => {
       if (!embedding) return
       // Local: embedding-only column update, keyed by (projectId, key).
@@ -337,7 +353,7 @@ function scheduleEmbeddingSync(
   // and crashing handleRemember's caller — consistent with this being a
   // fully fail-open path.
   void Promise.resolve()
-    .then(() => generateChunkEmbeddings(plaintext))
+    .then(() => generateChunkEmbeddings(plaintext, embedOpts))
     .then(async (result) => {
       if (!result) return
       // Fix B (finding 3): encrypt chunk_text at rest with the SAME field
