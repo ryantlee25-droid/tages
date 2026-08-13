@@ -2,7 +2,7 @@ import chalk from 'chalk'
 import type { Memory, MemoryType } from '@tages/shared'
 import { loadProjectConfig } from '../config/project.js'
 import { randomUUID } from 'crypto'
-import { openCliSync } from '../sync/cli-sync.js'
+import { openCliSync, type FlushResult } from '../sync/cli-sync.js'
 import { extractDatesFromMemory } from '../lib/date-extraction.js'
 import { generateEmbedding, generateChunkEmbeddings } from '../lib/embedding.js'
 
@@ -45,7 +45,8 @@ export async function rememberCommand(key: string, value: string, options: Remem
     updatedAt: now,
   }
 
-  const { cache, flush, close } = await openCliSync(config)
+  const { cache, flush, flushWithResult, close } = await openCliSync(config)
+  let syncResult: FlushResult | undefined
   try {
     // Generate a DURABLE embedding synchronously (await) before this one-shot
     // process exits. The long-lived MCP server can fire-and-forget embedding
@@ -126,12 +127,42 @@ export async function rememberCommand(key: string, value: string, options: Remem
       cache.upsertChunks(persisted?.id ?? memory.id, config.projectId, chunks)
     }
 
-    // Best-effort cloud sync — never fatal. Also carries any dirty chunk rows
-    // written above (SupabaseSync._flush pushes dirty chunks alongside dirty
-    // memories — see supabase-sync.ts's _flushDirtyChunks).
-    await flush()
+    // Cloud sync — never fatal, but never silent either. Also carries any
+    // dirty chunk rows written above (SupabaseSync._flush pushes dirty chunks
+    // alongside dirty memories — see supabase-sync.ts's _flushDirtyChunks).
+    //
+    // The outcome decides which line we print below. Reporting a green
+    // "Stored:" on a failed cloud write is how a memory ends up living only in
+    // this developer's local SQLite (dirty=1), invisible to every teammate,
+    // with nobody aware it never left the machine.
+    //
+    // flushWithResult is probed rather than called blind: a caller (unit tests
+    // mocking openCliSync) may supply a context that only has the older
+    // void-returning flush(). Absent outcome information is treated as success
+    // — the pre-existing behaviour — never as a spurious failure.
+    if (typeof flushWithResult === 'function') {
+      syncResult = await flushWithResult()
+    } else {
+      await flush()
+    }
   } finally {
     close()
+  }
+
+  if (syncResult && !syncResult.ok) {
+    // Deliberately NOT the green "Stored:" form, and deliberately not a
+    // non-zero exit: the memory IS durably written locally and a later sync
+    // (or `tages status`) can still push it, so failing the process would
+    // break agent hooks and scripts over a recoverable condition.
+    console.error(chalk.yellow('Stored locally only:'), `"${key}" (${options.type})`)
+    console.error(
+      chalk.yellow('  Cloud sync failed:'),
+      syncResult.error || 'unknown error',
+    )
+    console.error(
+      chalk.dim("  Teammates will not see this memory. Run 'tages status' to check sync state."),
+    )
+    return
   }
 
   console.log(chalk.green('Stored:'), `"${key}" (${options.type})`)
