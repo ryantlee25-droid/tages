@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import * as fs from 'fs'
+import * as path from 'path'
+import { fileURLToPath } from 'url'
 import { Command } from 'commander'
 import { initCommand } from './commands/init.js'
 import { rememberCommand } from './commands/remember.js'
@@ -46,12 +49,52 @@ import {
   harnessSyncCommand,
 } from './commands/harness.js'
 
+/**
+ * Reads the CLI version from `packages/cli/package.json` at runtime, so
+ * `tages --version` can never drift from the version that was published.
+ * (It did: the shipped 0.3.0 CLI reported a hardcoded 0.2.0.)
+ *
+ * Layout note — tsconfig sets `rootDir: '../../'`, so the built entrypoint lands
+ * at `packages/cli/dist/packages/cli/src/index.js` while package.json stays at
+ * `packages/cli/package.json`. Under `tsx` the entrypoint is
+ * `packages/cli/src/index.ts`. The walk-up absorbs both depths, and it works
+ * through a `pnpm link --global` symlink because Node resolves `import.meta.url`
+ * to the real path before this module runs.
+ *
+ * The `name` check matters: the repo root also has a package.json (name `tages`,
+ * independently versioned), and a bare "first package.json wins" walk could
+ * reach it. Only `@tages/cli` is accepted.
+ */
+function resolveCliVersion(): string {
+  try {
+    let dir = path.dirname(fileURLToPath(import.meta.url))
+    for (let i = 0; i < 10; i++) {
+      const candidate = path.join(dir, 'package.json')
+      if (fs.existsSync(candidate)) {
+        const pkg = JSON.parse(fs.readFileSync(candidate, 'utf-8')) as {
+          name?: string
+          version?: string
+        }
+        if (pkg.name === '@tages/cli' && pkg.version) return pkg.version
+      }
+      const parent = path.dirname(dir)
+      if (parent === dir) break
+      dir = parent
+    }
+  } catch {
+    // fall through to the sentinel below
+  }
+  // Deliberately not a plausible-looking version: a wrong number is worse than
+  // an obviously broken one, since `--version` is used to confirm a build.
+  return '0.0.0-unknown'
+}
+
 const program = new Command()
 
 program
   .name('tages')
   .description('Persistent codebase memory for AI coding agents')
-  .version('0.2.0')
+  .version(resolveCliVersion())
 
 program
   .command('init')
