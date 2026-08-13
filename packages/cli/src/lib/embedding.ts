@@ -94,11 +94,27 @@ const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434'
  * Hand-synced with packages/server/src/embeddings.ts — same names, same
  * values.
  */
-export const HOSTED_CHUNK_TARGET_CHARS = 1500
-export const HOSTED_CHUNK_OVERLAP_CHARS = 225 // 15% of HOSTED_CHUNK_TARGET_CHARS
+/**
+ * MEASURED, not a guess — and kept byte-identical to the server copy in
+ * packages/server/src/embeddings.ts (this file is a deliberate hand-synced
+ * mirror; drift here is the exact bug class the provider switch exists to
+ * prevent).
+ *
+ * gte-small does NOT error on oversized input. It returns HTTP 200 with a
+ * vector bit-identical to the one for the truncated prefix, so setting this
+ * too high degrades retrieval silently, with nothing to observe. A 32,000-char
+ * input measured identical to its first ~2,350 chars.
+ *
+ * Measured truncation boundaries by content type (first char offset already
+ * discarded): English prose 2350, TypeScript 1472, stack traces 1466,
+ * JSON records with paths 1107, hex/UUIDs 712. 800 sits ~28% under the
+ * realistic worst case (JSON-shaped memory records).
+ */
+export const HOSTED_CHUNK_TARGET_CHARS = 800
+export const HOSTED_CHUNK_OVERLAP_CHARS = 120 // 15% of HOSTED_CHUNK_TARGET_CHARS
 
 /** Max `texts[]` per hosted call — matches the edge function's own cap. */
-const HOSTED_MAX_BATCH = 128
+export const HOSTED_MAX_BATCH = 8
 
 const HOSTED_TIMEOUT_MS = 10000
 const HOSTED_BATCH_TIMEOUT_MS = 30000

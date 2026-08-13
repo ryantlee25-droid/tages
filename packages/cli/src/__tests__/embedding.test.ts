@@ -22,6 +22,7 @@ import {
   __resetEmbeddingProviderForTests,
   HOSTED_CHUNK_TARGET_CHARS,
   HOSTED_CHUNK_OVERLAP_CHARS,
+  HOSTED_MAX_BATCH,
 } from '../lib/embedding.js'
 import { chunkText } from '../lib/chunking.js'
 
@@ -494,7 +495,7 @@ describe('CLI generateEmbedding via the hosted endpoint', () => {
     errorSpy.mockRestore()
   })
 
-  it('chunks long text at HOSTED_CHUNK_TARGET_CHARS, sends ONE batched texts[] call, and pools the result', async () => {
+  it('chunks long text at HOSTED_CHUNK_TARGET_CHARS, batches rather than one call per chunk, and pools the result', async () => {
     const calls: Array<{ init: RequestInit }> = []
     let seed = 0
     globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
@@ -513,13 +514,20 @@ describe('CLI generateEmbedding via the hosted endpoint', () => {
 
     const result = await generateEmbedding(longText, HOSTED_OPTS)
 
-    // Batched: one HTTP call carrying every chunk, not one call per chunk.
-    expect(calls).toHaveLength(1)
-    const sent = JSON.parse(calls[0].init.body as string)
-    expect(sent.texts).toEqual(expectedChunks)
-    expect(sent.project_id).toBe('project-1')
-    expect(sent.text).toBeUndefined()
-    expect(sent.texts.every((t: string) => t.length <= HOSTED_CHUNK_TARGET_CHARS)).toBe(true)
+    // Batched, not one call per chunk. Derived from HOSTED_MAX_BATCH rather
+    // than pinned to 1, because the measured cap is 8 (batches >= 16 are
+    // killed with HTTP 546 WORKER_LIMIT), so long text spans several calls.
+    expect(calls).toHaveLength(Math.ceil(expectedChunks.length / HOSTED_MAX_BATCH))
+    expect(calls.length).toBeLessThan(expectedChunks.length)
+    const allSent = calls.flatMap((c) => {
+      const body = JSON.parse(c.init.body as string)
+      expect(body.project_id).toBe('project-1')
+      expect(body.text).toBeUndefined()
+      expect(body.texts.length).toBeLessThanOrEqual(HOSTED_MAX_BATCH)
+      return body.texts as string[]
+    })
+    expect(allSent).toEqual(expectedChunks)
+    expect(allSent.every((t: string) => t.length <= HOSTED_CHUNK_TARGET_CHARS)).toBe(true)
 
     expect(result).not.toBeNull()
     expect(result!.length).toBe(1536)
@@ -529,11 +537,14 @@ describe('CLI generateEmbedding via the hosted endpoint', () => {
 
   it('pins the hosted chunk constants to the values hand-synced with the server copy', () => {
     // gte-small's window is far smaller than OpenAI's, so chunking.ts's
-    // CHUNK_TARGET_CHARS (4000) must not be reused here. These two numbers are
-    // the one place the placeholder changes when Task 1's probe lands, and
-    // packages/server/src/embeddings.ts declares them identically.
-    expect(HOSTED_CHUNK_TARGET_CHARS).toBe(1500)
-    expect(HOSTED_CHUNK_OVERLAP_CHARS).toBe(225)
+    // CHUNK_TARGET_CHARS (4000) must not be reused here. These are the MEASURED
+    // values, not placeholders: gte-small truncates silently at ~512 tokens and
+    // still returns 200, and JSON-shaped memory records hit that at 1107 chars.
+    // packages/server/src/embeddings.ts must declare them identically — this
+    // test is the drift guard between the two hand-synced copies.
+    expect(HOSTED_CHUNK_TARGET_CHARS).toBe(800)
+    expect(HOSTED_CHUNK_OVERLAP_CHARS).toBe(120)
+    expect(HOSTED_MAX_BATCH).toBe(8)
   })
 
   it('rejects a short embeddings[] rather than pooling a partial answer', async () => {
