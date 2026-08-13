@@ -112,16 +112,22 @@ export async function handleObserve(
   // Immediate auto-save: if the just-stored memory already meets the threshold,
   // promote it to live without waiting for the next sweep.
   if (autoSaveThreshold != null && memory.confidence >= autoSaveThreshold) {
-    const now = new Date().toISOString()
-    cache.updateMemoryStatus(memory.id, 'live', now)
+    const promotedAt = new Date().toISOString()
+    // Local cache is correctly keyed by the local row id.
+    cache.updateMemoryStatus(memory.id, 'live', promotedAt)
     if (sync) {
-      // Best-effort remote update; sync.flush() will catch any remaining dirty records.
-      const supabase = (sync as unknown as { supabase: import('@supabase/supabase-js').SupabaseClient }).supabase
-      if (supabase) {
-        await Promise.resolve(
-          supabase.from('memories').update({ status: 'live', verified_at: now }).eq('id', memory.id)
-        ).catch(() => undefined)
-      }
+      // Best-effort remote promotion; sync.flush() will catch any remaining
+      // dirty records.
+      //
+      // Routed through remoteVerifyMemory, which keys the REMOTE update on
+      // (project_id, key) — the same conflict target remoteInsert upserts on.
+      // This previously reached into sync's private client and filtered by
+      // `.eq('id', memory.id)`, which matched zero rows for every memory:
+      // remoteInsert strips `id`, so Supabase's uuid never equals the local
+      // randomUUID(). The remote row stayed `pending` and no teammate's
+      // status='live' recall could ever see it, even though the local cache
+      // showed it promoted.
+      await sync.remoteVerifyMemory(projectId, key, promotedAt)
     }
     console.error(`[tages] Auto-saved observed memory "${key}" (confidence ${memory.confidence} >= threshold ${autoSaveThreshold})`)
     return {

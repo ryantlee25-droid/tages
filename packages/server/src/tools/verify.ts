@@ -22,10 +22,14 @@ export async function handleVerifyMemory(
   }
 
   const now = new Date().toISOString()
+  // Local cache is correctly keyed by the local row id.
   cache.updateMemoryStatus(memory.id, 'live', now)
 
   if (sync) {
-    await sync.remoteVerifyMemory(memory.id, now)
+    // The REMOTE row must be addressed by (project_id, key), not memory.id:
+    // remote upserts strip the local id, so Supabase's row id diverges from
+    // the local one and an id-keyed update matches nothing.
+    await sync.remoteVerifyMemory(projectId, memory.key, now)
   }
 
   return {
