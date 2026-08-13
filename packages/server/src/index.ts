@@ -817,20 +817,141 @@ async function main() {
   await server.connect(transport)
   console.error('[tages] Server ready — listening for MCP requests')
 
-  // Cleanup on exit
-  process.on('SIGINT', async () => {
-    clearInterval(decayTimer)
-    await tracker.endSession()
-    if (sync) {
-      await sync.flush()
-      sync.stopSync()
-    }
-    cache.close()
-    process.exit(0)
-  })
+  // Cleanup on exit — SIGINT, SIGTERM, and a silent event-loop drain.
+  registerShutdownHandlers(createShutdown({ decayTimer, tracker, sync, cache }))
 }
 
-main().catch((err) => {
-  console.error('[tages] Fatal error:', err)
-  process.exit(1)
-})
+/**
+ * Maximum time the shutdown drain (`endSession` + `sync.flush`) may take before
+ * we stop waiting and exit anyway.
+ *
+ * 5s is deliberately shorter than the SIGTERM->SIGKILL grace period of the
+ * process managers that run this server (Docker defaults to 10s, most MCP
+ * clients kill sooner), so we exit on our own terms rather than being killed
+ * mid-write. A healthy flush is one or two Supabase round trips and finishes in
+ * well under a second; 5s absorbs a slow network without making Ctrl-C feel
+ * hung. If the drain is genuinely stuck, a hung MCP server is worse than a lost
+ * embedding, so the timeout wins.
+ */
+export const SHUTDOWN_DRAIN_TIMEOUT_MS = 5_000
+
+/** Minimal structural deps so tests can drive shutdown with fakes. */
+export interface ShutdownDeps {
+  decayTimer?: ReturnType<typeof setInterval> | null
+  tracker?: { endSession(): Promise<void> } | null
+  sync?: { flush(): Promise<void>; stopSync(): void } | null
+  cache?: { close(): void } | null
+  /** Injectable for tests; defaults to terminating the process. */
+  exit?: (code: number) => void
+  /** Injectable for tests; defaults to {@link SHUTDOWN_DRAIN_TIMEOUT_MS}. */
+  timeoutMs?: number
+}
+
+/**
+ * Build the single, idempotent shutdown routine.
+ *
+ * Two signals arriving together (a client sending SIGTERM while the user hits
+ * Ctrl-C) must not run the drain twice or interleave two flushes against the
+ * same Supabase queue, so the first call latches the in-flight promise and
+ * every later call joins it instead of re-entering.
+ *
+ * The returned function never rejects — callers on a signal path have nowhere
+ * to put an error, and an escaping rejection during shutdown would surface as
+ * an unhandled rejection instead of an exit.
+ */
+export function createShutdown(deps: ShutdownDeps): (exitCode?: number) => Promise<void> {
+  const exit = deps.exit ?? ((code: number) => process.exit(code))
+  const timeoutMs = deps.timeoutMs ?? SHUTDOWN_DRAIN_TIMEOUT_MS
+  let inFlight: Promise<void> | null = null
+
+  const run = async (exitCode: number): Promise<void> => {
+    // Stop both timers first so neither the decay sweep nor the 60s sync
+    // interval can fire against a cache we are about to close. stopSync only
+    // clears the interval — it does not cancel the flush below.
+    if (deps.decayTimer) clearInterval(deps.decayTimer)
+    try {
+      deps.sync?.stopSync()
+    } catch (err) {
+      console.error('[tages] Shutdown: stopSync failed:', (err as Error).message)
+    }
+
+    // Drain: end the session row, then flush queued memories and dirty chunks.
+    // Folding the rejection into a resolved value here (rather than catching
+    // around the race) means the drain promise can never be left rejected and
+    // unobserved if the timeout wins the race below.
+    const drain: Promise<'drained' | 'failed'> = (async () => {
+      await deps.tracker?.endSession()
+      await deps.sync?.flush()
+    })().then(
+      () => 'drained' as const,
+      (err) => {
+        console.error('[tages] Shutdown drain failed:', (err as Error).message)
+        return 'failed' as const
+      },
+    )
+
+    // Bounded wait. The timer is intentionally ref'd — if the drain hangs it
+    // may be the only thing left holding the loop open, and it must fire — and
+    // it is always cleared, so it cannot outlive the shutdown.
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const deadline = new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), timeoutMs)
+      })
+      if (await Promise.race([drain, deadline]) === 'timeout') {
+        console.error(
+          `[tages] Shutdown drain exceeded ${timeoutMs}ms — exiting with pending writes possibly unflushed`,
+        )
+      }
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+
+    try {
+      deps.cache?.close()
+    } catch (err) {
+      console.error('[tages] Shutdown: cache close failed:', (err as Error).message)
+    }
+
+    exit(exitCode)
+  }
+
+  return (exitCode = 0): Promise<void> => {
+    if (inFlight) return inFlight
+    inFlight = run(exitCode)
+    return inFlight
+  }
+}
+
+/**
+ * Register the shutdown routine on every path that can end this process.
+ *
+ * SIGINT alone was not enough: MCP clients terminate stdio servers with
+ * SIGTERM, whose default action is immediate death. The memory row itself
+ * survives (its remote insert is awaited) but the fire-and-forget pooled
+ * embedding and chunk writes do not, leaving a memory that trigram search can
+ * find and semantic search cannot.
+ *
+ * Signal listeners do not hold the event loop open (Node unrefs the underlying
+ * handles), so registering these does not keep an idle server alive.
+ */
+export function registerShutdownHandlers(shutdown: (exitCode?: number) => Promise<void>): void {
+  process.on('SIGINT', () => { void shutdown(0) })
+  process.on('SIGTERM', () => { void shutdown(0) })
+  // Fires when the loop drains on its own — e.g. the stdio transport closed and
+  // nothing is left to do — which would otherwise exit silently without a
+  // flush. It does not fire after process.exit(), so it cannot re-enter the
+  // exit() at the end of the drain.
+  process.on('beforeExit', (code) => { void shutdown(code) })
+}
+
+// Entrypoint guard: the published bin (`dist/index.js`) and `tsx src/index.ts`
+// both run this file directly and must boot. Tests import it for the shutdown
+// helpers only, and set TAGES_NO_AUTOSTART=1 so the import does not open
+// SQLite, contact Supabase, or claim stdio.
+if (process.env.TAGES_NO_AUTOSTART !== '1') {
+  main().catch((err) => {
+    console.error('[tages] Fatal error:', err)
+    process.exit(1)
+  })
+}
