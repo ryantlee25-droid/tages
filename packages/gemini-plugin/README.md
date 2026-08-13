@@ -26,11 +26,18 @@ Writes `~/.gemini/settings.json` with a `tages` entry under `mcpServers`. If the
   "mcpServers": {
     "tages": {
       "command": "npx",
-      "args": ["-y", "@tages/server"]
+      "args": ["-y", "@tages/server"],
+      "env": {
+        "TAGES_SUPABASE_URL": "",
+        "TAGES_SUPABASE_ANON_KEY": "",
+        "TAGES_PROJECT_ID": ""
+      }
     }
   }
 }
 ```
+
+The `env` values are placeholders. Fill them in from your Tages project dashboard (`~/.config/tages/projects/<slug>.json` has the same values if you've already run `tages init`). Tages falls back to local-only mode when these are unset.
 
 ## Merge behavior
 

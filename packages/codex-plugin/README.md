@@ -16,7 +16,7 @@ Appends a `[mcp_servers.tages]` block to `~/.codex/config.toml`. Restart Codex; 
 |---|---|
 | (no flags) | Append to `~/.codex/config.toml` |
 | `--dry-run` | Print the TOML block to stdout instead of writing |
-| `--force` | Append even if a `[mcp_servers.tages]` block already exists (may create duplicate entries; manual cleanup needed) |
+| `--force` | Replace an existing `[mcp_servers.tages]` block in place. The old `[mcp_servers.tages]` and `[mcp_servers.tages.env]` tables are stripped before the new block is appended, so the file stays parseable; all other tables are preserved |
 | `--help` | Show usage |
 
 ## Alternative install (uses Codex's own MCP command)
