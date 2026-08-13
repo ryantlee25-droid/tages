@@ -56,6 +56,25 @@ const CLOUD_PROJECT = {
   supabaseAnonKey: 'test-anon-key',
 }
 
+/** Exactly what `createLocalProject` writes for `tages init --local`. */
+const LOCAL_PROJECT = {
+  projectId: 'local-shared-project',
+  slug: 'shared-project',
+  supabaseUrl: '',
+  supabaseAnonKey: '',
+}
+
+/**
+ * A server-issued uuid with the credentials stripped — a shape no tages
+ * version writes, and one that can neither sync nor work offline.
+ */
+const ORPHANED_CLOUD_PROJECT = {
+  projectId: PROJECT_ID,
+  slug: 'shared-project',
+  supabaseUrl: '',
+  supabaseAnonKey: '',
+}
+
 const TAGES_MCP_ENTRY = {
   mcpServers: {
     tages: {
@@ -88,6 +107,17 @@ function writeDesktopMcpJson(value: unknown = TAGES_MCP_ENTRY) {
   writeJson(desktopConfigPath, value)
 }
 
+/** A stored cloud session — only ever written by a cloud `init`/`link`. */
+function writeAuth() {
+  writeJson(path.join(tempConfigDir, 'auth.json'), { userId: 'u1', accessToken: 't' })
+}
+
+function writeCache(slug: string) {
+  const cachePath = path.join(tempConfigDir, 'cache', `${slug}.db`)
+  fs.mkdirSync(path.dirname(cachePath), { recursive: true })
+  fs.writeFileSync(cachePath, '')
+}
+
 // ---------------------------------------------------------------------------
 
 describe('doctor command', () => {
@@ -95,12 +125,17 @@ describe('doctor command', () => {
   let originalCwd: string
   let originalHome: string | undefined
   let originalUserProfile: string | undefined
+  let originalExitCode: typeof process.exitCode
   let sandbox: string
 
   beforeEach(() => {
     originalCwd = process.cwd()
     originalHome = process.env.HOME
     originalUserProfile = process.env.USERPROFILE
+    // doctor signals failures via `process.exitCode`. Left set, it would make
+    // the whole vitest run exit non-zero even with every test green.
+    originalExitCode = process.exitCode
+    process.exitCode = undefined
 
     sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'tages-doctor-'))
     // realpathSync: macOS puts tmpdir under /var -> /private/var, and doctor
@@ -134,6 +169,7 @@ describe('doctor command', () => {
     else process.env.HOME = originalHome
     if (originalUserProfile === undefined) delete process.env.USERPROFILE
     else process.env.USERPROFILE = originalUserProfile
+    process.exitCode = originalExitCode
     fs.rmSync(sandbox, { recursive: true, force: true })
   })
 
@@ -386,10 +422,13 @@ describe('doctor command', () => {
       expect(hookLine()).toContain('PASS')
     })
 
+    // Both no-hook branches WARN rather than FAIL: auto-indexing is optional,
+    // and running doctor outside a repo is not a defect at all. Neither should
+    // colour the exit code.
     it('reports "not a git repository" rather than "not installed" outside a repo', async () => {
       await doctorCommand({})
 
-      expect(hookLine()).toContain('FAIL')
+      expect(hookLine()).toContain('WARN')
       expect(hookLine()).toContain('not a git repository')
       expect(output()).not.toContain('tages index --install')
     })
@@ -399,9 +438,21 @@ describe('doctor command', () => {
 
       await doctorCommand({})
 
-      expect(hookLine()).toContain('FAIL')
+      expect(hookLine()).toContain('WARN')
       expect(hookLine()).toContain('not installed')
       expect(output()).toContain('tages index --install')
+    })
+
+    it('does not fail the command for a missing hook', async () => {
+      initRepo(workDir)
+      writeAuth()
+      writeProjectMcpJson()
+      writeCache('shared-project')
+
+      await doctorCommand({})
+
+      expect(hookLine()).toContain('WARN')
+      expect(process.exitCode).not.toBe(1)
     })
 
     it('does not advise re-running `tages init` for a missing hook', async () => {
@@ -416,6 +467,228 @@ describe('doctor command', () => {
       for (const line of hookAdvice) {
         expect(line).not.toContain('tages init')
       }
+    })
+  })
+
+  // ─── Cloud connection: the local-only false-green ────────────────────────
+
+  describe('cloud connection check', () => {
+    const cloudLine = () => console_.logs.find(l => l.includes('Supabase connection')) || ''
+
+    it('passes and names the url for a reachable cloud project', async () => {
+      writeProject()
+      writeLinkMarker('shared-project')
+      writeAuth()
+
+      await doctorCommand({})
+
+      expect(cloudLine()).toContain('PASS')
+      expect(cloudLine()).toContain('https://test.supabase.co')
+    })
+
+    it('fails when a cloud project is configured but unreachable', async () => {
+      writeProject()
+      writeLinkMarker('shared-project')
+      writeAuth()
+      mockSupabase.from.mockReturnValueOnce({
+        select: vi.fn().mockReturnValue({
+          limit: vi.fn().mockResolvedValue({ data: null, error: { message: 'network unreachable' } }),
+        }),
+      })
+
+      await doctorCommand({})
+
+      expect(cloudLine()).toContain('FAIL')
+      expect(cloudLine()).toContain('network unreachable')
+    })
+
+    // The discriminator: no cloud session anywhere means local-only was chosen,
+    // not fallen into.
+    it('passes local-only when there is no cloud session on the machine', async () => {
+      writeProject(LOCAL_PROJECT)
+      writeLinkMarker('shared-project')
+
+      await doctorCommand({})
+
+      expect(cloudLine()).toContain('PASS')
+      expect(cloudLine()).toContain('local-only mode')
+      expect(output()).toContain('deliberate local-only setup')
+    })
+
+    // The regression this task exists for.
+    it('WARNs, not PASSes, when a local-only project coexists with a cloud session', async () => {
+      writeProject(LOCAL_PROJECT)
+      writeLinkMarker('shared-project')
+      writeAuth()
+
+      await doctorCommand({})
+
+      expect(cloudLine()).toContain('WARN')
+      expect(cloudLine()).not.toContain('PASS')
+      expect(cloudLine()).toContain('local-only mode')
+    })
+
+    it('names both readings and how to tell them apart', async () => {
+      writeProject(LOCAL_PROJECT)
+      writeLinkMarker('shared-project')
+      writeAuth()
+
+      await doctorCommand({})
+
+      const out = output()
+      // Reading 1: deliberate.
+      expect(out).toContain('tages init --local')
+      // Reading 2: the failed join.
+      expect(out).toContain('slugs are globally unique')
+      expect(out).toContain('shadows the real project')
+      // The discriminator, and the fix.
+      expect(out).toContain('Tell them apart')
+      expect(out).toContain('tages link --project-id')
+      expect(out).toContain('NOT synced')
+    })
+
+    it('never suggests linking with the synthetic `local-` project id', async () => {
+      writeProject(LOCAL_PROJECT)
+      writeLinkMarker('shared-project')
+      writeAuth()
+
+      await doctorCommand({})
+
+      // `tages link --project-id local-shared-project` is guaranteed to fail —
+      // it is not a server-issued id.
+      expect(output()).not.toContain('--project-id local-')
+      expect(output()).toContain('--project-id <project-id>')
+    })
+
+    it('does not fail the command for a local-only warning', async () => {
+      writeProject(LOCAL_PROJECT)
+      writeLinkMarker('shared-project')
+      writeAuth()
+      writeProjectMcpJson()
+      writeCache('shared-project')
+
+      await doctorCommand({})
+
+      expect(cloudLine()).toContain('WARN')
+      expect(process.exitCode).not.toBe(1)
+    })
+
+    it('fails a server-issued project id that carries no credentials', async () => {
+      writeProject(ORPHANED_CLOUD_PROJECT)
+      writeLinkMarker('shared-project')
+      writeAuth()
+
+      await doctorCommand({})
+
+      expect(cloudLine()).toContain('FAIL')
+      expect(output()).toContain('no Supabase url or key')
+      // The uuid IS server-issued, so offering it to `link` is correct here.
+      expect(output()).toContain(`tages link --project-id ${PROJECT_ID}`)
+      expect(process.exitCode).toBe(1)
+    })
+
+    it('warns rather than guesses when the project id fits no known shape', async () => {
+      writeProject({ ...LOCAL_PROJECT, projectId: 'legacy-handwritten-id' })
+      writeLinkMarker('shared-project')
+
+      await doctorCommand({})
+
+      expect(cloudLine()).toContain('WARN')
+      expect(output()).toContain('cannot tell whether local-only was intended')
+    })
+  })
+
+  // ─── SQLite cache ────────────────────────────────────────────────────────
+
+  describe('SQLite cache check', () => {
+    const cacheLine = () => console_.logs.find(l => l.includes('SQLite cache')) || ''
+
+    beforeEach(() => {
+      writeProject()
+      writeLinkMarker('shared-project')
+      writeAuth()
+    })
+
+    it('passes when the cache file exists', async () => {
+      writeCache('shared-project')
+
+      await doctorCommand({})
+
+      expect(cacheLine()).toContain('PASS')
+    })
+
+    // A check whose own advice is "this happens by itself" is not a failure.
+    it('warns, not fails, when the cache has not been created yet', async () => {
+      await doctorCommand({})
+
+      expect(cacheLine()).toContain('WARN')
+      expect(cacheLine()).toContain('not created yet')
+      expect(output()).toContain('created on demand')
+    })
+  })
+
+  // ─── Summary line and exit code ──────────────────────────────────────────
+
+  describe('summary and exit code', () => {
+    const summaryLine = () => console_.logs.find(l => l.includes('passed,')) || ''
+
+    it('counts warnings alongside passes and failures', async () => {
+      writeProject()
+      writeLinkMarker('shared-project')
+      writeAuth()
+
+      await doctorCommand({})
+
+      expect(summaryLine()).toMatch(/\d+ passed, \d+ warnings?, \d+ failed/)
+    })
+
+    it('exits 0 and says so when there are warnings but no failures', async () => {
+      writeProject(LOCAL_PROJECT)
+      writeLinkMarker('shared-project')
+      writeProjectMcpJson()
+
+      await doctorCommand({})
+
+      expect(summaryLine()).toContain('0 failed')
+      expect(output()).toContain('No failures')
+      expect(process.exitCode).not.toBe(1)
+    })
+
+    it('exits 1 when any check fails', async () => {
+      // No MCP entry anywhere -> the MCP check fails.
+      writeProject()
+      writeLinkMarker('shared-project')
+      writeAuth()
+
+      await doctorCommand({})
+
+      expect(summaryLine()).not.toContain('0 failed')
+      expect(process.exitCode).toBe(1)
+      expect(output()).toContain('must be fixed')
+    })
+
+    it('exits 1 and still tallies when no project is configured', async () => {
+      await doctorCommand({})
+
+      expect(summaryLine()).toContain('warning')
+      expect(output()).toContain('no project')
+      expect(process.exitCode).toBe(1)
+    })
+
+    it('uses the singular "warning" for exactly one', async () => {
+      // Cloud project, auth, MCP and hook absent... pick a case with 1 warn:
+      // cache missing is the only warning when everything else is present.
+      writeProject()
+      writeLinkMarker('shared-project')
+      writeAuth()
+      writeProjectMcpJson()
+      execFileSync('git', ['init', '-q'], { cwd: workDir, stdio: 'ignore' })
+      fs.writeFileSync(path.join(workDir, '.git', 'hooks', 'post-commit'), '#!/bin/sh\nnpx tages index\n')
+
+      await doctorCommand({})
+
+      expect(summaryLine()).toContain('1 warning,')
+      expect(summaryLine()).not.toContain('1 warnings')
     })
   })
 
@@ -452,6 +725,30 @@ describe('doctor command', () => {
 
       const authLine = console_.logs.find(l => l.includes('Auth config')) || ''
       expect(authLine).toContain('PASS')
+    })
+
+    // A local-only project never signs anyone in, so a missing session is the
+    // expected state — not a broken one.
+    it('warns rather than fails when the project is local-only', async () => {
+      writeProject(LOCAL_PROJECT)
+      writeLinkMarker('shared-project')
+
+      await doctorCommand({})
+
+      const authLine = console_.logs.find(l => l.includes('Auth config')) || ''
+      expect(authLine).toContain('WARN')
+      expect(authLine).toContain('not required for a local-only project')
+      expect(output()).toContain('Local-only projects need no sign-in')
+    })
+
+    it('still fails a missing session for a cloud project', async () => {
+      writeProject()
+      writeLinkMarker('shared-project')
+
+      await doctorCommand({})
+
+      const authLine = console_.logs.find(l => l.includes('Auth config')) || ''
+      expect(authLine).toContain('FAIL')
     })
   })
 })
