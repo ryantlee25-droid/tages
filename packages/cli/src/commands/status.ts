@@ -61,6 +61,8 @@ export async function statusCommand(options: StatusOptions) {
 
   console.log(chalk.bold('\n  Tages Status\n'))
   console.log(`  ${chalk.dim('Project:')}  ${config.slug}`)
+  // Project ID is the join key: teammates need it for `tages link --project-id <id>`.
+  console.log(`  ${chalk.dim('ID:')}       ${config.projectId || chalk.yellow('not set')}`)
   console.log(`  ${chalk.dim('Mode:')}     ${config.supabaseUrl ? 'Cloud' : 'Local-only'}`)
   console.log(`  ${chalk.dim('Detected:')} ${detectedVia}`)
 

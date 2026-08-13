@@ -55,6 +55,20 @@ export default async function SettingsPage({
           <div className="mt-3 space-y-2 text-sm text-zinc-400">
             <p><span className="text-zinc-500">Slug:</span> {project.slug}</p>
             <p><span className="text-zinc-500">Created:</span> {new Date(project.created_at).toLocaleDateString()}</p>
+            <div className="space-y-1">
+              <p>
+                <span className="text-zinc-500">Project ID:</span>{' '}
+                <code className="select-all rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-zinc-200">
+                  {project.id}
+                </code>
+              </p>
+              <p className="text-xs text-zinc-500">
+                Share this with teammates so they can run{' '}
+                <code className="select-all rounded bg-zinc-800 px-1 py-0.5 font-mono text-xs text-zinc-400">
+                  tages link --project-id {project.id}
+                </code>
+              </p>
+            </div>
           </div>
         </div>
 
