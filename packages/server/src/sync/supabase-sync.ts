@@ -527,12 +527,31 @@ export class SupabaseSync {
     }
   }
 
-  async remoteVerifyMemory(id: string, verifiedAt: string): Promise<boolean> {
+  /**
+   * Promote a remote memory to `status='live'`, keyed by (project_id, key).
+   *
+   * NOT keyed by the memory's local id. `remoteInsert` / `_flushMemories`
+   * strip `id` from the upsert payload and conflict on `project_id,key`, so
+   * Supabase assigns its own uuid while the local SQLite row keeps the
+   * `randomUUID()` it was created with. For every memory written through this
+   * client those two ids differ, so `.eq('id', localId)` matched zero rows and
+   * this silently no-opped: the remote row stayed `pending`, and since every
+   * recall path filters `status='live'`, no teammate ever saw the promotion.
+   *
+   * Same id-divergence bug class as PR #70's embedding update and the chunk
+   * sync bug; same fix — resolve the row by its business key, which is exactly
+   * the upsert's conflict target.
+   *
+   * This is an `.update()`, never an `.upsert()`: a non-matching row is a
+   * no-op, so a `forget`-deleted memory is never resurrected.
+   */
+  async remoteVerifyMemory(projectId: string, key: string, verifiedAt: string): Promise<boolean> {
     try {
       const { error } = await this.supabase
         .from('memories')
         .update({ status: 'live', verified_at: verifiedAt })
-        .eq('id', id)
+        .eq('project_id', projectId)
+        .eq('key', key)
       if (error) {
         console.error('[tages] Remote verify failed:', error.message)
         return false
