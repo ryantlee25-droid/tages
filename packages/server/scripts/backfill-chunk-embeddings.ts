@@ -56,6 +56,7 @@ import {
   computeWatermark,
   createFileCheckpoint,
   createNullCheckpoint,
+  DEFAULT_RETRIES,
   formatDuration,
   formatProgressLine,
   loadProjectConfig,
@@ -69,6 +70,7 @@ interface CliOptions {
   minChars: number
   restart: boolean
   since: string | null
+  retries: number
 }
 
 interface MemoryRow {
@@ -103,6 +105,8 @@ export interface ChunkBackfillOptions {
   since?: string | null
   shouldStop?: () => boolean
   log?: (line: string) => void
+  /** Extra attempts per memory when chunk embedding returns nothing. */
+  retries?: number
   /** Injectable for tests; defaults to a real SupabaseSync over `supabase`. */
   sync?: { remoteUpsertChunks: SupabaseSync['remoteUpsertChunks'] }
 }
@@ -125,6 +129,7 @@ export async function backfillChunkEmbeddings(
 ): Promise<ChunkBackfillResult> {
   const pageSize = options.pageSize ?? 50
   const minChars = options.minChars ?? 0
+  const retries = options.retries ?? DEFAULT_RETRIES
   const checkpoint = options.checkpoint ?? createNullCheckpoint()
   const log = options.log ?? ((line: string) => console.error(`[backfill-chunks] ${line}`))
   const encKey = getEncryptionKey()
@@ -193,6 +198,9 @@ export async function backfillChunkEmbeddings(
   }
 
   const startedAt = Date.now()
+  // See backfill-embeddings.ts — once any memory fails, the checkpoint stops
+  // advancing for the rest of the run so a later page cannot step over it.
+  let watermarkFrozen = false
 
   for (;;) {
     if (options.shouldStop?.()) {
@@ -221,10 +229,18 @@ export async function backfillChunkEmbeddings(
       }
 
       try {
-        const chunkResult = await generateChunkEmbeddings(plaintext, {
-          supabaseClient: supabase,
-          projectId,
-        })
+        // Bounded retries for the same HTTP 546 WORKER_RESOURCE_LIMIT the
+        // pooled script hits — see embedWithRetry in backfill-embeddings.ts.
+        // Chunk sets are fail-closed, so a whole memory retries as a unit.
+        let chunkResult: Awaited<ReturnType<typeof generateChunkEmbeddings>> = null
+        for (let attempt = 0; attempt <= retries; attempt++) {
+          chunkResult = await generateChunkEmbeddings(plaintext, {
+            supabaseClient: supabase,
+            projectId,
+          })
+          if (chunkResult && chunkResult.chunks.length > 0) break
+          if (attempt < retries) await new Promise((r) => setTimeout(r, 500 * (attempt + 1)))
+        }
         if (!chunkResult || chunkResult.chunks.length === 0) {
           log(`Skipping ${row.id}: no chunk embeddings available`)
           result.failed++
@@ -247,13 +263,16 @@ export async function backfillChunkEmbeddings(
       }
     }
 
-    const pageWatermark = computeWatermark(
-      page.map((r) => r.id),
-      succeeded,
-    )
-    if (pageWatermark) {
-      result.watermark = pageWatermark
-      checkpoint.save(pageWatermark)
+    if (!watermarkFrozen) {
+      const pageWatermark = computeWatermark(
+        page.map((r) => r.id),
+        succeeded,
+      )
+      if (pageWatermark) {
+        result.watermark = pageWatermark
+        checkpoint.save(pageWatermark)
+      }
+      if (succeeded.size < page.length) watermarkFrozen = true
     }
 
     cursor = page[page.length - 1].id
@@ -315,6 +334,7 @@ function parseArgs(argv: string[]): CliOptions {
   let minChars = 0
   let restart = false
   let since: string | null = null
+  let retries = DEFAULT_RETRIES
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
@@ -324,18 +344,19 @@ function parseArgs(argv: string[]): CliOptions {
     else if (arg === '--min-chars') minChars = parseInt(argv[++i] || '0', 10)
     else if (arg === '--restart') restart = true
     else if (arg === '--since') since = argv[++i] || null
+    else if (arg === '--retries') retries = parseInt(argv[++i] || String(DEFAULT_RETRIES), 10)
   }
 
   if (!project) {
     throw new Error(
-      'Usage: backfill-chunk-embeddings.ts --project <slug> [--dry-run] [--page-size N] [--min-chars N] [--restart] [--since <id>]\n\n' +
+      'Usage: backfill-chunk-embeddings.ts --project <slug> [--dry-run] [--page-size N] [--min-chars N] [--restart] [--since <id>] [--retries N]\n\n' +
         'This script is intentionally scoped to a single named project. ' +
         'There is no default — pass --project explicitly.\n\n' +
         'Default behaviour is a FULL re-chunk + re-embed of every memory in the project.',
     )
   }
 
-  return { project, dryRun, pageSize, minChars, restart, since }
+  return { project, dryRun, pageSize, minChars, restart, since, retries }
 }
 
 async function buildAuthenticatedClient(supabaseUrl: string, supabaseAnonKey: string): Promise<SupabaseClient> {
@@ -412,6 +433,7 @@ async function main(): Promise<void> {
     minChars: options.minChars,
     checkpoint,
     since: options.since,
+    retries: options.retries,
     shouldStop: () => stop,
   })
 

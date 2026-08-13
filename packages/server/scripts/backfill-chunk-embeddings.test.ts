@@ -214,11 +214,26 @@ describe('backfillChunkEmbeddings — full re-chunk semantics', () => {
     const { supabase } = makeSupabaseMock([row('a')])
     const { sync, calls } = makeSyncMock()
 
-    const result = await backfillChunkEmbeddings(supabase, PROJECT, { sync })
+    const result = await backfillChunkEmbeddings(supabase, PROJECT, { sync, retries: 0 })
 
     expect(result.failed).toBe(1)
     expect(result.updated).toBe(0)
     expect(calls).toHaveLength(0)
+  })
+
+  it('retries a memory whose chunk embedding momentarily returns nothing', async () => {
+    mockGenerateChunks
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ pooled: [0.1, 0.2], chunks: [{ text: 'chunk', embedding: [0.1, 0.2] }] })
+    const { supabase } = makeSupabaseMock([row('a')])
+    const { sync, calls } = makeSyncMock()
+
+    const result = await backfillChunkEmbeddings(supabase, PROJECT, { sync, retries: 2 })
+
+    expect(result.updated).toBe(1)
+    expect(result.failed).toBe(0)
+    expect(mockGenerateChunks).toHaveBeenCalledTimes(2)
+    expect(calls).toHaveLength(1)
   })
 
   it('counts a memory as failed when the chunk write is rejected', async () => {
@@ -283,6 +298,20 @@ describe('backfillChunkEmbeddings — resumability', () => {
     const result = await backfillChunkEmbeddings(supabase, PROJECT, { sync, checkpoint, pageSize: 3 })
 
     expect(result.failed).toBe(1)
+    expect(checkpoint.value).toBe('id-0')
+  })
+
+  it('a failure in an earlier page freezes the checkpoint for the whole run', async () => {
+    // Same cross-page regression as backfill-embeddings.ts.
+    const rows = Array.from({ length: 6 }, (_, i) => row(`id-${i}`))
+    const { supabase } = makeSupabaseMock(rows)
+    const { sync } = makeSyncMock((key) => key === 'key-id-1')
+    const checkpoint = makeMemoryCheckpoint()
+
+    const result = await backfillChunkEmbeddings(supabase, PROJECT, { sync, checkpoint, pageSize: 2 })
+
+    expect(result.failed).toBe(1)
+    expect(result.updated).toBe(5)
     expect(checkpoint.value).toBe('id-0')
   })
 })

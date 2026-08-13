@@ -287,11 +287,27 @@ describe('backfillEmbeddings — hosted batching', () => {
     mockGenerateEmbedding.mockResolvedValue(null)
     const { supabase, updates } = makeSupabaseMock([row('a')])
 
-    const result = await backfillEmbeddings(supabase, PROJECT, {})
+    const result = await backfillEmbeddings(supabase, PROJECT, { retries: 0 })
 
     expect(result.failed).toBe(1)
     expect(result.updated).toBe(0)
     expect(updates).toHaveLength(0)
+  })
+
+  it('retries a row that momentarily returns no vector', async () => {
+    // The edge function returns HTTP 546 WORKER_RESOURCE_LIMIT under memory
+    // pressure (seen live on dev against long memories). It is a resource
+    // condition rather than a property of the input, so a retry clears it.
+    mockBatch.mockResolvedValue(null)
+    mockGenerateEmbedding.mockResolvedValueOnce(null).mockResolvedValue(VEC)
+    const { supabase, updates } = makeSupabaseMock([row('a')])
+
+    const result = await backfillEmbeddings(supabase, PROJECT, { retries: 2 })
+
+    expect(result.updated).toBe(1)
+    expect(result.failed).toBe(0)
+    expect(mockGenerateEmbedding).toHaveBeenCalledTimes(2)
+    expect(updates).toHaveLength(1)
   })
 })
 
@@ -329,13 +345,35 @@ describe('backfillEmbeddings — resumability', () => {
     const { supabase } = makeSupabaseMock([row('id-0'), row('id-1'), row('id-2')])
     const checkpoint = makeMemoryCheckpoint()
 
-    const result = await backfillEmbeddings(supabase, PROJECT, { pageSize: 3, checkpoint })
+    const result = await backfillEmbeddings(supabase, PROJECT, { pageSize: 3, checkpoint, retries: 0 })
 
     expect(result.failed).toBe(1)
     expect(result.updated).toBe(2)
     expect(checkpoint.value).toBe('id-0')
     // Not cleared — the run had a failure, so the checkpoint survives.
     expect(checkpoint.value).not.toBeNull()
+  })
+
+  it('a failure in an earlier page freezes the checkpoint for the whole run', async () => {
+    // Regression: the watermark used to be saved per page, so a later page's
+    // higher value overwrote an earlier page's lower one and the cursor
+    // stepped straight over the failed row — it would keep its stale vector
+    // forever and never be retried. Caught on a live dev run.
+    mockBatch.mockResolvedValue(null)
+    mockGenerateEmbedding.mockImplementation(async (text: string) =>
+      text === 'value-id-1' ? null : VEC,
+    )
+    const rows = Array.from({ length: 6 }, (_, i) => row(`id-${i}`))
+    const { supabase } = makeSupabaseMock(rows)
+    const checkpoint = makeMemoryCheckpoint()
+
+    const result = await backfillEmbeddings(supabase, PROJECT, { pageSize: 2, checkpoint, retries: 0 })
+
+    expect(result.failed).toBe(1)
+    expect(result.updated).toBe(5)
+    // id-1 failed in page 1. Pages 2 and 3 succeeded entirely, but the
+    // checkpoint must NOT have advanced past id-0.
+    expect(checkpoint.value).toBe('id-0')
   })
 
   it('an interrupted run resumes without duplicating or losing rows', async () => {

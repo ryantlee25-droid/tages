@@ -60,6 +60,7 @@ interface CliOptions {
   onlyMissing: boolean
   restart: boolean
   since: string | null
+  retries: number
 }
 
 interface MemoryRow {
@@ -230,6 +231,8 @@ export interface BackfillOptions {
   /** Cooperative cancellation — checked between pages (SIGINT in main()). */
   shouldStop?: () => boolean
   log?: (line: string) => void
+  /** Extra attempts per row when the endpoint returns no vector. */
+  retries?: number
 }
 
 /**
@@ -316,6 +319,9 @@ export async function backfillEmbeddings(
   }
 
   const startedAt = Date.now()
+  // Once ANY row has failed, the checkpoint must stop advancing for the rest
+  // of the run — see the freeze below.
+  let watermarkFrozen = false
 
   for (;;) {
     if (options.shouldStop?.()) {
@@ -334,7 +340,12 @@ export async function backfillEmbeddings(
       else plaintexts.set(row.id, plaintext)
     }
 
-    const embeddings = await embedPage(plaintexts, provider, { supabaseClient: supabase, projectId })
+    const embeddings = await embedPage(
+      plaintexts,
+      provider,
+      { supabaseClient: supabase, projectId },
+      options.retries ?? DEFAULT_RETRIES,
+    )
 
     const succeeded = new Set<string>()
     for (const row of page) {
@@ -362,13 +373,22 @@ export async function backfillEmbeddings(
       succeeded.add(row.id)
     }
 
-    const pageWatermark = computeWatermark(
-      page.map((r) => r.id),
-      succeeded,
-    )
-    if (pageWatermark) {
-      result.watermark = pageWatermark
-      checkpoint.save(pageWatermark)
+    // The watermark is a RUN-level high-water mark, not a per-page one. Saving
+    // each page's own watermark independently would let a later page's higher
+    // value overwrite an earlier page's lower one, stepping the cursor straight
+    // over a row that failed in an earlier page — it would keep its stale-model
+    // vector forever and never be retried. Caught on a live dev run, where a
+    // page-1 failure was masked by page 2's checkpoint save.
+    if (!watermarkFrozen) {
+      const pageWatermark = computeWatermark(
+        page.map((r) => r.id),
+        succeeded,
+      )
+      if (pageWatermark) {
+        result.watermark = pageWatermark
+        checkpoint.save(pageWatermark)
+      }
+      if (succeeded.size < page.length) watermarkFrozen = true
     }
 
     // The cursor advances past the whole page even when some rows failed, so
@@ -460,6 +480,7 @@ async function embedPage(
   plaintexts: Map<string, string>,
   provider: string,
   opts: { supabaseClient: SupabaseClient; projectId: string },
+  retries = DEFAULT_RETRIES,
 ): Promise<Map<string, number[]>> {
   const out = new Map<string, number[]>()
   const entries = [...plaintexts.entries()]
@@ -468,7 +489,7 @@ async function embedPage(
     // Explicit --provider ollama/openai override: one row at a time, exactly
     // as before. generateHostedEmbeddingsBatch must never be reached here.
     for (const [id, text] of entries) {
-      const embedding = await generateEmbedding(text, opts)
+      const embedding = await embedWithRetry(text, opts, retries)
       if (embedding) out.set(id, embedding)
     }
     return out
@@ -488,17 +509,52 @@ async function embedPage(
       continue
     }
     for (const [id, text] of slice) {
-      const embedding = await generateEmbedding(text, opts)
+      const embedding = await embedWithRetry(text, opts, retries)
       if (embedding) out.set(id, embedding)
     }
   }
 
   for (const [id, text] of long) {
-    const embedding = await generateEmbedding(text, opts)
+    const embedding = await embedWithRetry(text, opts, retries)
     if (embedding) out.set(id, embedding)
   }
 
   return out
+}
+
+/** Extra attempts per row before giving up. See `embedWithRetry`. */
+export const DEFAULT_RETRIES = 2
+
+/**
+ * `generateEmbedding` with bounded retries and linear backoff.
+ *
+ * The edge function returns HTTP 546 WORKER_RESOURCE_LIMIT under memory
+ * pressure — observed live on dev while re-embedding long memories, where a
+ * full batch of 800-char chunks is a much heavier request than the short-text
+ * batches HOSTED_MAX_BATCH was measured against. It is a resource condition,
+ * not a property of the input, so the same row usually succeeds on a second
+ * attempt. `fetchEmbeddingJson`'s own retry logic only covers 429, so 546 has
+ * to be handled here.
+ *
+ * Retrying the whole row (rather than the failing sub-batch) is deliberate:
+ * the sub-batching lives inside embeddings.ts, and a pooled vector is only
+ * valid if every one of its chunks embedded in the same pass.
+ */
+async function embedWithRetry(
+  text: string,
+  opts: { supabaseClient: SupabaseClient; projectId: string },
+  retries: number,
+): Promise<number[] | null> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const embedding = await generateEmbedding(text, opts)
+    if (embedding) return embedding
+    if (attempt < retries) await sleep(500 * (attempt + 1))
+  }
+  return null
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function parseArgs(argv: string[]): CliOptions {
@@ -508,6 +564,7 @@ function parseArgs(argv: string[]): CliOptions {
   let onlyMissing = false
   let restart = false
   let since: string | null = null
+  let retries = DEFAULT_RETRIES
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
@@ -519,11 +576,12 @@ function parseArgs(argv: string[]): CliOptions {
     else if (arg === '--only-missing') onlyMissing = true
     else if (arg === '--restart') restart = true
     else if (arg === '--since') since = argv[++i] || null
+    else if (arg === '--retries') retries = parseInt(argv[++i] || String(DEFAULT_RETRIES), 10)
   }
 
   if (!project) {
     throw new Error(
-      'Usage: backfill-embeddings.ts --project <slug> [--dry-run] [--page-size N] [--only-missing] [--restart] [--since <id>]\n\n' +
+      'Usage: backfill-embeddings.ts --project <slug> [--dry-run] [--page-size N] [--only-missing] [--restart] [--since <id>] [--retries N]\n\n' +
         'This script is intentionally scoped to a single named project. ' +
         'There is no default — pass --project explicitly.\n\n' +
         'Default behaviour is a FULL re-embed of every memory in the project. ' +
@@ -531,7 +589,7 @@ function parseArgs(argv: string[]): CliOptions {
     )
   }
 
-  return { project, dryRun, pageSize, onlyMissing, restart, since }
+  return { project, dryRun, pageSize, onlyMissing, restart, since, retries }
 }
 
 async function buildAuthenticatedClient(supabaseUrl: string, supabaseAnonKey: string): Promise<SupabaseClient> {
@@ -616,6 +674,7 @@ async function main(): Promise<void> {
     onlyMissing: options.onlyMissing,
     checkpoint,
     since: options.since,
+    retries: options.retries,
     shouldStop: () => stop,
   })
 
