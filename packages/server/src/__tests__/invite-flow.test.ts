@@ -109,6 +109,7 @@ describeIntegration('invite-flow @integration', () => {
   let projectId: string
   let ownerId: string
   let provisionedProject = false
+  let provisionedOwner = false
 
   /** Cleaned up in afterEach, in this order: rows first, then auth users. */
   const seededRowIds: string[] = []
@@ -143,6 +144,7 @@ describeIntegration('invite-flow @integration', () => {
     })
     if (userErr || !created?.user) throw userErr ?? new Error('no user')
     ownerId = created.user.id
+    provisionedOwner = true
 
     const { data: proj, error: projErr } = await admin
       .from('projects')
@@ -177,8 +179,14 @@ describeIntegration('invite-flow @integration', () => {
   })
 
   afterAll(async () => {
+    // Torn down independently: if beforeAll creates the owner and then the
+    // project insert throws, the owner would otherwise leak into a shared
+    // database on every failed run. Guard each on what was actually created,
+    // not on a single "did provisioning finish" flag.
     if (provisionedProject) {
       await admin.from('projects').delete().eq('id', projectId)
+    }
+    if (provisionedOwner) {
       await admin.auth.admin.deleteUser(ownerId)
     }
   })
