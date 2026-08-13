@@ -110,15 +110,18 @@ jobs:
         run: bash "$RUNNER_TEMP/publish-if-needed.sh" packages/server
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Publish @tages/cli
-        run: bash "$RUNNER_TEMP/publish-if-needed.sh" packages/cli
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      # `tages harness enable` resolves the hook binary through
-      # require.resolve('@tages/harness-claude-code'), so this package must be
-      # on the registry for that command to work outside the monorepo.
+      # MUST precede @tages/cli. `tages harness enable` resolves the hook binary
+      # through require.resolve('@tages/harness-claude-code') — it needs the real
+      # file on disk to point a Claude Code hook at, so bundling cannot satisfy
+      # it and the CLI now carries a genuine runtime dependency on this package.
+      # Publishing cli first would ship a manifest pinning a version that does
+      # not exist yet, and `npm install -g @tages/cli` would fail outright.
       - name: Publish @tages/harness-claude-code
         run: bash "$RUNNER_TEMP/publish-if-needed.sh" packages/harness-claude-code
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish @tages/cli
+        run: bash "$RUNNER_TEMP/publish-if-needed.sh" packages/cli
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       # The three editor plugins have no workspace dependencies, so their
