@@ -1,226 +1,315 @@
 /**
- * Tests for Task 12: sandbox-scoped one-time chunk-embedding backfill.
+ * Tests for the full hosted re-embed of `memory_chunks`
+ * (PLAN-HOSTED-EMBEDDING.md Task 4).
  *
- * Mirrors backfill-embeddings.test.ts's structure and mocking style, adapted
- * for backfillChunkEmbeddings' different candidate shape (a `memory_chunks`
- * existence check per row, rather than a single `embedding IS NULL` filter):
- *   - dry-run mode reports a count of long, not-yet-chunked memories and writes nothing
- *   - a real run generates + writes chunk rows for long candidate memories
- *   - a memory that already has chunk rows is skipped (idempotent)
- *   - a memory at/under the chunking threshold is left alone entirely
- *   - plaintext/ciphertext is never logged (only ids and error messages)
+ * The two behaviour changes this file pins down:
+ *   - memories that ALREADY have chunk rows are re-chunked, not skipped
+ *     (those chunks came from a different model, so they are stale, not done).
+ *     `remoteUpsertChunks` deletes-then-inserts per memory, so this is
+ *     idempotent without any new delete logic.
+ *   - every memory is in scope, not just ones over the OpenAI-sized
+ *     CHUNK_TARGET_CHARS. The write path (`remember.ts`) chunks every memory
+ *     unconditionally; a 4000-char floor here would leave everything between
+ *     the hosted chunk size and 4000 with chunk rows in one path and none in
+ *     the other.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { backfillChunkEmbeddings } from './backfill-chunk-embeddings'
+import type { BackfillCheckpoint } from './backfill-embeddings'
+
+vi.mock('../src/embeddings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/embeddings')>()
+  return {
+    ...actual,
+    generateChunkEmbeddings: vi.fn(),
+    resolveEmbeddingProvider: vi.fn(() => 'hosted'),
+  }
+})
+
+import { generateChunkEmbeddings, resolveEmbeddingProvider, HOSTED_CHUNK_TARGET_CHARS } from '../src/embeddings'
 import { CHUNK_TARGET_CHARS } from '../src/chunking'
 
-vi.mock('../src/embeddings', () => ({
-  generateChunkEmbeddings: vi.fn(),
-}))
+const mockGenerateChunks = vi.mocked(generateChunkEmbeddings)
+const mockResolveProvider = vi.mocked(resolveEmbeddingProvider)
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-import { generateChunkEmbeddings } from '../src/embeddings'
-const mockGenerateChunkEmbeddings = vi.mocked(generateChunkEmbeddings)
+const PROJECT = 'proj-1'
 
-interface FakeMemoryRow {
+interface FakeRow {
   id: string
-  key?: string
+  key: string
   value: string
   encrypted: boolean
 }
 
-const LONG_VALUE = 'lorem ipsum dolor sit amet '.repeat(300) // well over CHUNK_TARGET_CHARS
-const SHORT_VALUE = 'a short memory value'
+function row(id: string, opts: Partial<FakeRow> = {}): FakeRow {
+  return { id, key: `key-${id}`, value: `value-${id}`, encrypted: false, ...opts }
+}
 
-function makeSupabaseMock(memories: FakeMemoryRow[], chunkCounts: Record<string, number> = {}) {
-  const chunkDeletes: string[] = []
-  const chunkInserts: Array<{ memoryId: string; rows: unknown[] }> = []
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function memoriesTable(): any {
-    const filters: Array<[string, unknown]> = []
-    const builder = {
-      eq: vi.fn((col: string, val: unknown) => {
-        filters.push([col, val])
-        return builder
-      }),
-      order: vi.fn(() => builder),
-      range: vi.fn((start: number, end: number) => {
-        return Promise.resolve({ data: memories.slice(start, end + 1), error: null })
-      }),
-      maybeSingle: vi.fn(() => {
-        // remoteUpsertChunks resolves the parent by (project_id, key)
-        const keyFilter = filters.find(([c]) => c === 'key')
-        const idFilter = filters.find(([c]) => c === 'id')
-        const found = keyFilter
-          ? memories.find((m) => (m.key ?? m.id) === keyFilter[1])
-          : idFilter
-            ? memories.find((m) => m.id === idFilter[1])
-            : undefined
-        return Promise.resolve({ data: found ? { id: found.id } : null, error: null })
-      }),
-    }
-    return { select: vi.fn(() => builder) }
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function memoryChunksTable(): any {
-    return {
-      select: vi.fn(() => {
-        let matchedId = ''
+function makeSupabaseMock(initial: FakeRow[]) {
+  const rows = initial.map((r) => ({ ...r }))
+  const supabase = {
+    from: (table: string) => ({
+      select: (_cols: string, opts?: { count?: string; head?: boolean }) => {
+        let working = rows.filter(() => table === 'memories')
+        let limit: number | null = null
         const builder = {
-          eq: vi.fn((_col: string, id: string) => {
-            matchedId = id
+          eq: (col: string, val: unknown) => {
+            working = working.filter(() => col !== 'project_id' || val === PROJECT)
             return builder
-          }),
-          then: (resolve: (v: { count: number; error: null }) => void) => {
-            resolve({ count: chunkCounts[matchedId] ?? 0, error: null })
+          },
+          gt: (col: string, val: string) => {
+            if (col === 'id') working = working.filter((r) => r.id > val)
+            return builder
+          },
+          lte: (col: string, val: string) => {
+            if (col === 'id') working = working.filter((r) => r.id <= val)
+            return builder
+          },
+          order: (_col: string, o?: { ascending?: boolean }) => {
+            working = [...working].sort((a, b) =>
+              o?.ascending === false ? b.id.localeCompare(a.id) : a.id.localeCompare(b.id),
+            )
+            return builder
+          },
+          limit: (n: number) => {
+            limit = n
+            return builder
+          },
+          then: (resolve: (v: unknown) => void) => {
+            const sliced = limit === null ? working : working.slice(0, limit)
+            resolve(
+              opts?.head
+                ? { count: working.length, error: null }
+                : { data: sliced.map((r) => ({ ...r })), count: working.length, error: null },
+            )
           },
         }
         return builder
-      }),
-      delete: vi.fn(() => ({
-        eq: vi.fn((_col: string, id: string) => {
-          chunkDeletes.push(id)
-          return Promise.resolve({ error: null })
-        }),
-      })),
-      insert: vi.fn((rows: Array<{ memory_id: string }>) => {
-        chunkInserts.push({ memoryId: rows[0]?.memory_id, rows })
-        return Promise.resolve({ error: null })
-      }),
-    }
-  }
-
-  const supabase = {
-    from: vi.fn((table: string) => {
-      if (table === 'memories') return memoriesTable()
-      if (table === 'memory_chunks') return memoryChunksTable()
-      throw new Error(`Unexpected table: ${table}`)
+      },
     }),
   }
-
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return { supabase: supabase as any, chunkDeletes, chunkInserts }
+  return { supabase: supabase as any, rows }
 }
 
-describe('backfillChunkEmbeddings', () => {
-  beforeEach(() => {
-    mockGenerateChunkEmbeddings.mockReset()
+/** Records every remoteUpsertChunks call — the delete-then-insert boundary. */
+function makeSyncMock(fail: (key: string) => boolean = () => false) {
+  const calls: Array<{ projectId: string; key: string; chunkCount: number }> = []
+  return {
+    calls,
+    sync: {
+      remoteUpsertChunks: vi.fn(async (projectId: string, key: string, chunks: Array<{ text: string }>) => {
+        calls.push({ projectId, key, chunkCount: chunks.length })
+        return !fail(key)
+      }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any,
+  }
+}
+
+function makeMemoryCheckpoint(initial: string | null = null): BackfillCheckpoint & { value: string | null } {
+  const state = {
+    value: initial,
+    load: () => state.value,
+    save: (id: string) => {
+      state.value = id
+    },
+    clear: () => {
+      state.value = null
+    },
+  }
+  return state
+}
+
+beforeEach(() => {
+  mockGenerateChunks.mockReset()
+  mockResolveProvider.mockReset()
+  mockResolveProvider.mockReturnValue('hosted')
+  mockGenerateChunks.mockResolvedValue({
+    pooled: [0.1, 0.2],
+    chunks: [{ text: 'chunk', embedding: [0.1, 0.2] }],
+  })
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+describe('backfillChunkEmbeddings — full re-chunk semantics', () => {
+  it('re-chunks every memory, including ones that already have chunk rows', async () => {
+    // The old version issued a per-memory "does it already have chunks?"
+    // query and skipped on a hit. That check is gone; nothing here should
+    // consult memory_chunks at all before writing.
+    const { supabase } = makeSupabaseMock([row('a'), row('b'), row('c')])
+    const { sync, calls } = makeSyncMock()
+
+    const result = await backfillChunkEmbeddings(supabase, PROJECT, { sync })
+
+    expect(result.total).toBe(3)
+    expect(result.updated).toBe(3)
+    expect(result.failed).toBe(0)
+    expect(calls.map((c) => c.key)).toEqual(['key-a', 'key-b', 'key-c'])
   })
 
-  afterEach(() => {
-    vi.restoreAllMocks()
+  it('includes short memories that the old CHUNK_TARGET_CHARS floor excluded', async () => {
+    const shortValue = 'x'.repeat(HOSTED_CHUNK_TARGET_CHARS + 10)
+    expect(shortValue.length).toBeLessThan(CHUNK_TARGET_CHARS)
+
+    const { supabase } = makeSupabaseMock([row('a', { value: shortValue }), row('b', { value: 'tiny' })])
+    const { sync, calls } = makeSyncMock()
+
+    const result = await backfillChunkEmbeddings(supabase, PROJECT, { sync })
+
+    expect(result.updated).toBe(2)
+    expect(calls).toHaveLength(2)
   })
 
-  it('dry run reports the count of long, not-yet-chunked memories and writes nothing', async () => {
-    const { supabase, chunkInserts } = makeSupabaseMock([
-      { id: 'long-a', key: 'long-a', value: LONG_VALUE, encrypted: false },
-      { id: 'long-b', key: 'long-b', value: LONG_VALUE, encrypted: false },
-      { id: 'short-a', key: 'short-a', value: SHORT_VALUE, encrypted: false },
+  it('--min-chars restores an explicit floor without breaking resumability', async () => {
+    const { supabase } = makeSupabaseMock([
+      row('a', { value: 'tiny' }),
+      row('b', { value: 'x'.repeat(2000) }),
     ])
+    const { sync, calls } = makeSyncMock()
+    const checkpoint = makeMemoryCheckpoint()
 
-    const result = await backfillChunkEmbeddings(supabase, 'proj-1', { dryRun: true })
+    const result = await backfillChunkEmbeddings(supabase, PROJECT, { sync, minChars: 1000, checkpoint })
 
-    expect(result.dryRun).toBe(true)
-    expect(result.totalRemaining).toBe(2) // only the two long memories count
-    expect(result.updated).toBe(0)
-    expect(chunkInserts).toHaveLength(0)
-    expect(mockGenerateChunkEmbeddings).not.toHaveBeenCalled()
-  })
-
-  it('dry run excludes long memories that already have chunk rows', async () => {
-    const { supabase } = makeSupabaseMock(
-      [{ id: 'long-a', key: 'long-a', value: LONG_VALUE, encrypted: false }],
-      { 'long-a': 3 },
-    )
-
-    const result = await backfillChunkEmbeddings(supabase, 'proj-1', { dryRun: true })
-
-    expect(result.totalRemaining).toBe(0)
-  })
-
-  it('generates and writes chunk rows for long candidate memories', async () => {
-    const { supabase, chunkInserts, chunkDeletes } = makeSupabaseMock([
-      { id: 'long-a', key: 'long-a', value: LONG_VALUE, encrypted: false },
-    ])
-    mockGenerateChunkEmbeddings.mockResolvedValue({
-      pooled: new Array(1536).fill(0.1),
-      chunks: [
-        { text: 'chunk 1', embedding: new Array(1536).fill(0.1) },
-        { text: 'chunk 2', embedding: new Array(1536).fill(0.2) },
-      ],
-    })
-
-    const result = await backfillChunkEmbeddings(supabase, 'proj-1', { batchSize: 10 })
-
-    expect(result.processed).toBe(1)
+    expect(result.belowFloor).toBe(1)
     expect(result.updated).toBe(1)
     expect(result.failed).toBe(0)
-    expect(chunkDeletes).toEqual(['long-a'])
-    expect(chunkInserts).toHaveLength(1)
-    expect(chunkInserts[0].rows).toHaveLength(2)
+    expect(calls.map((c) => c.key)).toEqual(['key-b'])
+    // A below-floor row is out of scope, not a failure — it must not pin the
+    // watermark, or --min-chars would make the run unresumable.
+    expect(checkpoint.value).toBeNull()
   })
 
-  it('skips a memory that already has chunk rows (idempotent)', async () => {
-    const { supabase, chunkInserts } = makeSupabaseMock(
-      [{ id: 'long-a', key: 'long-a', value: LONG_VALUE, encrypted: false }],
-      { 'long-a': 2 },
-    )
+  it('passes the project id and memory key through to remoteUpsertChunks', async () => {
+    // remoteUpsertChunks keys on (project_id, key), not the local row id —
+    // that resolution is what makes the delete-then-insert hit the right rows.
+    const { supabase } = makeSupabaseMock([row('a')])
+    const { sync, calls } = makeSyncMock()
 
-    const result = await backfillChunkEmbeddings(supabase, 'proj-1')
+    await backfillChunkEmbeddings(supabase, PROJECT, { sync })
 
-    expect(result.processed).toBe(1)
-    expect(result.skipped).toBe(1)
-    expect(result.updated).toBe(0)
-    expect(chunkInserts).toHaveLength(0)
-    expect(mockGenerateChunkEmbeddings).not.toHaveBeenCalled()
+    expect(calls[0]).toEqual({ projectId: PROJECT, key: 'key-a', chunkCount: 1 })
   })
 
-  it('leaves short memories (at/under the chunking threshold) completely untouched', async () => {
-    const atThreshold = 'x'.repeat(CHUNK_TARGET_CHARS)
-    const { supabase, chunkInserts } = makeSupabaseMock([
-      { id: 'short-a', key: 'short-a', value: SHORT_VALUE, encrypted: false },
-      { id: 'at-threshold', value: atThreshold, encrypted: false },
-    ])
+  it('dry run estimates chunk rows and writes nothing', async () => {
+    const { supabase } = makeSupabaseMock([row('a', { value: 'x'.repeat(5000) }), row('b')])
+    const { sync, calls } = makeSyncMock()
 
-    const result = await backfillChunkEmbeddings(supabase, 'proj-1')
+    const result = await backfillChunkEmbeddings(supabase, PROJECT, { sync, dryRun: true })
 
-    expect(result.processed).toBe(0)
-    expect(result.skipped).toBe(0)
-    expect(result.updated).toBe(0)
-    expect(chunkInserts).toHaveLength(0)
-    expect(mockGenerateChunkEmbeddings).not.toHaveBeenCalled()
+    expect(result.dryRun).toBe(true)
+    expect(result.total).toBe(2)
+    expect(result.estimatedChunks).toBeGreaterThan(2)
+    expect(result.estimatedCalls).toBeGreaterThan(0)
+    expect(calls).toHaveLength(0)
+    expect(mockGenerateChunks).not.toHaveBeenCalled()
   })
 
-  it('marks a row failed (not crashing the batch) when chunk embedding generation is unavailable', async () => {
-    const { supabase, chunkInserts } = makeSupabaseMock([
-      { id: 'long-a', key: 'long-a', value: LONG_VALUE, encrypted: false },
-    ])
-    mockGenerateChunkEmbeddings.mockResolvedValue(null)
+  it('counts a memory as failed when chunk embedding is unavailable', async () => {
+    mockGenerateChunks.mockResolvedValue(null)
+    const { supabase } = makeSupabaseMock([row('a')])
+    const { sync, calls } = makeSyncMock()
 
-    const result = await backfillChunkEmbeddings(supabase, 'proj-1')
+    const result = await backfillChunkEmbeddings(supabase, PROJECT, { sync })
 
-    expect(result.processed).toBe(1)
-    expect(result.updated).toBe(0)
     expect(result.failed).toBe(1)
-    expect(chunkInserts).toHaveLength(0)
+    expect(result.updated).toBe(0)
+    expect(calls).toHaveLength(0)
   })
 
-  it('never logs plaintext or ciphertext, only ids and error messages', async () => {
-    const sensitiveValue = `super secret plaintext content ${'x'.repeat(CHUNK_TARGET_CHARS)}`
-    const { supabase } = makeSupabaseMock([
-      { id: 'sensitive-row-id', value: sensitiveValue, encrypted: false },
+  it('counts a memory as failed when the chunk write is rejected', async () => {
+    const { supabase } = makeSupabaseMock([row('a'), row('b')])
+    const { sync } = makeSyncMock((key) => key === 'key-a')
+
+    const result = await backfillChunkEmbeddings(supabase, PROJECT, { sync })
+
+    expect(result.failed).toBe(1)
+    expect(result.updated).toBe(1)
+  })
+})
+
+describe('backfillChunkEmbeddings — resumability', () => {
+  it('resumes after a stored checkpoint', async () => {
+    const rows = Array.from({ length: 5 }, (_, i) => row(`id-${i}`))
+    const { supabase } = makeSupabaseMock(rows)
+    const { sync, calls } = makeSyncMock()
+    const checkpoint = makeMemoryCheckpoint('id-1')
+
+    const result = await backfillChunkEmbeddings(supabase, PROJECT, { sync, checkpoint, pageSize: 2 })
+
+    expect(result.resumedPast).toBe(2)
+    expect(calls.map((c) => c.key)).toEqual(['key-id-2', 'key-id-3', 'key-id-4'])
+  })
+
+  it('an interrupted run resumes without duplicating or losing memories', async () => {
+    const rows = Array.from({ length: 6 }, (_, i) => row(`id-${i}`))
+    const { supabase } = makeSupabaseMock(rows)
+    const { sync, calls } = makeSyncMock()
+    const checkpoint = makeMemoryCheckpoint()
+
+    let pages = 0
+    const first = await backfillChunkEmbeddings(supabase, PROJECT, {
+      sync,
+      checkpoint,
+      pageSize: 2,
+      shouldStop: () => pages++ >= 1,
+    })
+    expect(first.updated).toBe(2)
+    expect(checkpoint.value).toBe('id-1')
+
+    const second = await backfillChunkEmbeddings(supabase, PROJECT, { sync, checkpoint, pageSize: 2 })
+
+    expect(second.resumedPast).toBe(2)
+    expect(second.updated).toBe(4)
+    expect(calls.map((c) => c.key)).toEqual([
+      'key-id-0',
+      'key-id-1',
+      'key-id-2',
+      'key-id-3',
+      'key-id-4',
+      'key-id-5',
     ])
-    mockGenerateChunkEmbeddings.mockRejectedValue(new Error('provider exploded'))
+  })
 
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    await backfillChunkEmbeddings(supabase, 'proj-1')
+  it('pins the checkpoint below a failed memory', async () => {
+    const { supabase } = makeSupabaseMock([row('id-0'), row('id-1'), row('id-2')])
+    const { sync } = makeSyncMock((key) => key === 'key-id-1')
+    const checkpoint = makeMemoryCheckpoint()
 
-    const loggedText = errorSpy.mock.calls.map((c) => c.join(' ')).join('\n')
-    expect(loggedText).toContain('sensitive-row-id')
-    expect(loggedText).not.toContain('super secret plaintext content')
-    errorSpy.mockRestore()
+    const result = await backfillChunkEmbeddings(supabase, PROJECT, { sync, checkpoint, pageSize: 3 })
+
+    expect(result.failed).toBe(1)
+    expect(checkpoint.value).toBe('id-0')
+  })
+})
+
+describe('backfillChunkEmbeddings — encryption and logging', () => {
+  it('fails an encrypted memory with no key, without logging its ciphertext', async () => {
+    const logged: string[] = []
+    const secret = 'SUPER-SECRET-CIPHERTEXT'
+    const { supabase } = makeSupabaseMock([row('a', { encrypted: true, value: secret })])
+    const { sync, calls } = makeSyncMock()
+
+    const result = await backfillChunkEmbeddings(supabase, PROJECT, { sync, log: (l) => logged.push(l) })
+
+    expect(result.failed).toBe(1)
+    expect(calls).toHaveLength(0)
+    const all = logged.join('\n')
+    expect(all).toContain('a')
+    expect(all).not.toContain(secret)
+  })
+
+  it('never logs plaintext on the happy path', async () => {
+    const logged: string[] = []
+    const { supabase } = makeSupabaseMock([row('a', { value: 'PLAINTEXT-SENTINEL' })])
+    const { sync } = makeSyncMock()
+
+    await backfillChunkEmbeddings(supabase, PROJECT, { sync, log: (l) => logged.push(l) })
+
+    expect(logged.join('\n')).not.toContain('PLAINTEXT-SENTINEL')
   })
 })
