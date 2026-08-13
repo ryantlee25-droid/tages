@@ -68,17 +68,39 @@ const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434'
  * OpenAI-sized `CHUNK_TARGET_CHARS = 4000` in chunking.ts must NOT be reused
  * for the hosted path.
  *
- * 1500 is a deliberately conservative PLACEHOLDER (PLAN-HOSTED-EMBEDDING.md
- * Open Question 2). Task 1 is empirically probing gte-small's actual limit
- * against the live dev endpoint. Both constants live here, in one clearly
- * named place, precisely so adopting that number is a one-line change and
- * cannot drift across the call sites that consume it.
+ * 800 is EMPIRICALLY DERIVED, not a guess. gte-small caps at ~512 tokens and
+ * — critically — it does NOT error on longer input. It returns HTTP 200 with a
+ * vector bit-identical to the one for the truncated prefix, so oversizing this
+ * constant degrades retrieval silently, with nothing to observe. A 32,000-char
+ * input measured identical to its first ~2,350 chars.
+ *
+ * The character budget moves with tokenization density, so the bound must hold
+ * for the worst realistic content, not for prose. Measured truncation
+ * boundaries (first char offset already discarded):
+ *
+ *   English prose        2350   (4.59 chars/token)
+ *   TypeScript source    1472   (2.87)
+ *   stack traces         1466   (2.86)
+ *   JSON records w/paths 1107   (2.16)   <-- the realistic worst case
+ *   hex digests / UUIDs   712   (1.39)   <-- carries no retrievable meaning
+ *
+ * 800 sits ~28% under JSON-shaped records. Only pure high-entropy strings
+ * truncate above it, and those are not semantically retrievable anyway.
+ * `chunkText()` treats this as a hard ceiling and never overshoots.
  */
-export const HOSTED_CHUNK_TARGET_CHARS = 1500
-export const HOSTED_CHUNK_OVERLAP_CHARS = 225 // 15% of HOSTED_CHUNK_TARGET_CHARS
+export const HOSTED_CHUNK_TARGET_CHARS = 800
+export const HOSTED_CHUNK_OVERLAP_CHARS = 120 // 15% of HOSTED_CHUNK_TARGET_CHARS
 
-/** Max `texts[]` per hosted call — matches the edge function's own cap. */
-const HOSTED_MAX_BATCH = 128
+/**
+ * Max `texts[]` per hosted call.
+ *
+ * 8, not the 128 the endpoint advertises — 128 was never achievable. Batches of
+ * 16 or more are killed with HTTP 546 (WORKER_LIMIT), reproduced 3/3; the hard
+ * ceiling measured 14. Cost is per model invocation rather than per input
+ * length (n=8 takes ~1.7s whether the texts are 1 char or 4000), so a smaller
+ * batch costs latency, not throughput.
+ */
+export const HOSTED_MAX_BATCH = 8
 
 const HOSTED_TIMEOUT_MS = 10000
 const HOSTED_BATCH_TIMEOUT_MS = 30000

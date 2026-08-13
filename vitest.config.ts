@@ -34,6 +34,11 @@ export default defineConfig({
       // complete when it was not.
       '**/.claire/**',
       'eval/**',
+      // Deno edge functions. A bare root `vitest` would collect
+      // supabase/functions/**/*.test.ts and fail on Deno globals. Those run
+      // under `deno test`, not vitest. (`pnpm test` is unaffected: it is
+      // `pnpm -r test`, and supabase/ is not a workspace package.)
+      'supabase/**',
     ],
   },
 })

@@ -18,6 +18,7 @@ import {
   embeddingProvidersUsedThisProcess,
   __resetEmbeddingProviderForTests,
   HOSTED_CHUNK_TARGET_CHARS,
+  HOSTED_MAX_BATCH,
 } from '../embeddings'
 import { chunkText } from '../chunking'
 
@@ -218,7 +219,7 @@ describe('hosted provider (PLAN-HOSTED-EMBEDDING Task 2)', () => {
     expect(result!.slice(384).every((v) => v === 0)).toBe(true)
   })
 
-  it('chunks long text at HOSTED_CHUNK_TARGET_CHARS and sends ONE batched texts[] call', async () => {
+  it('chunks long text at HOSTED_CHUNK_TARGET_CHARS and batches, never one call per chunk', async () => {
     const bodies: Array<Record<string, unknown>> = []
     globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       bodies.push(JSON.parse(String(init?.body ?? '{}')))
@@ -232,11 +233,21 @@ describe('hosted provider (PLAN-HOSTED-EMBEDDING Task 2)', () => {
 
     expect(result).not.toBeNull()
     expect(result!.length).toBe(1536)
-    // One HTTP call carrying every chunk, not one call per chunk.
-    expect(bodies.length).toBe(1)
-    expect(Array.isArray(bodies[0].texts)).toBe(true)
-    expect((bodies[0].texts as string[]).length).toBeGreaterThan(1)
-    for (const t of bodies[0].texts as string[]) {
+    // Chunks are batched, not sent one HTTP call each. Derived from the
+    // constants rather than hardcoded, because both moved once already when
+    // gte-small's real limits were measured (800 chars, 8 per batch).
+    const allTexts = bodies.flatMap((b) => b.texts as string[])
+    expect(allTexts.length).toBeGreaterThan(1)
+    expect(bodies.length).toBe(Math.ceil(allTexts.length / HOSTED_MAX_BATCH))
+    // The point of batching: far fewer calls than chunks.
+    expect(bodies.length).toBeLessThan(allTexts.length)
+    for (const b of bodies) {
+      expect(Array.isArray(b.texts)).toBe(true)
+      expect((b.texts as string[]).length).toBeLessThanOrEqual(HOSTED_MAX_BATCH)
+    }
+    for (const t of allTexts) {
+      // Oversizing this is invisible: gte-small truncates silently at ~512
+      // tokens and still returns HTTP 200.
       expect(t.length).toBeLessThanOrEqual(HOSTED_CHUNK_TARGET_CHARS)
     }
   })
@@ -299,7 +310,7 @@ describe('hosted provider (PLAN-HOSTED-EMBEDDING Task 2)', () => {
     errorSpy.mockRestore()
   })
 
-  it('generateHostedEmbeddingsBatch preserves order and splits above the 128-text cap', async () => {
+  it('generateHostedEmbeddingsBatch preserves order and splits above HOSTED_MAX_BATCH', async () => {
     const batchSizes: number[] = []
     globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? '{}'))
@@ -312,7 +323,12 @@ describe('hosted provider (PLAN-HOSTED-EMBEDDING Task 2)', () => {
 
     expect(result).not.toBeNull()
     expect(result!.length).toBe(300)
-    expect(batchSizes).toEqual([128, 128, 44])
+    const TOTAL = 300
+    const expectedSizes = Array.from(
+      { length: Math.ceil(TOTAL / HOSTED_MAX_BATCH) },
+      (_, i) => Math.min(HOSTED_MAX_BATCH, TOTAL - i * HOSTED_MAX_BATCH),
+    )
+    expect(batchSizes).toEqual(expectedSizes)
     expect(result!.every((v) => v.length === 1536)).toBe(true)
   })
 
@@ -732,7 +748,7 @@ describe('generateChunkEmbeddings (Task 9)', () => {
     expect(result!.chunks[0].embedding.slice(768)).toEqual(new Array(768).fill(0))
   })
 
-  it('under TAGES_EMBED_PROVIDER=hosted, chunks are hosted vectors from ONE batched call', async () => {
+  it('under TAGES_EMBED_PROVIDER=hosted, chunks are hosted vectors from batched calls', async () => {
     clearHostedEnv()
     useHostedEnv()
     useProvider('hosted')
@@ -749,9 +765,14 @@ describe('generateChunkEmbeddings (Task 9)', () => {
     const result = await generateChunkEmbeddings(longText)
 
     expect(result).not.toBeNull()
-    expect(hostedCalls).toBe(1)
     expect(result!.chunks.length).toBeGreaterThan(1)
+    // Batched, not one call per chunk. Derived from HOSTED_MAX_BATCH rather
+    // than hardcoded, because the batch cap moved from an advertised 128 to a
+    // measured 8 (batches >= 16 are killed with HTTP 546 WORKER_LIMIT).
+    expect(hostedCalls).toBe(Math.ceil(result!.chunks.length / HOSTED_MAX_BATCH))
+    expect(hostedCalls).toBeLessThan(result!.chunks.length)
     // Chunked at the hosted size, not the OpenAI-sized CHUNK_TARGET_CHARS.
+    // Oversizing is invisible: gte-small truncates silently and still 200s.
     for (const c of result!.chunks) {
       expect(c.text.length).toBeLessThanOrEqual(HOSTED_CHUNK_TARGET_CHARS)
     }
