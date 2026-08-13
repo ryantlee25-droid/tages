@@ -233,6 +233,8 @@ export interface BackfillOptions {
   log?: (line: string) => void
   /** Extra attempts per row when the endpoint returns no vector. */
   retries?: number
+  /** Base linear backoff between retries. 0 in tests to keep them timer-free. */
+  retryBackoffMs?: number
 }
 
 /**
@@ -345,6 +347,7 @@ export async function backfillEmbeddings(
       provider,
       { supabaseClient: supabase, projectId },
       options.retries ?? DEFAULT_RETRIES,
+      options.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS,
     )
 
     const succeeded = new Set<string>()
@@ -481,6 +484,7 @@ async function embedPage(
   provider: string,
   opts: { supabaseClient: SupabaseClient; projectId: string },
   retries = DEFAULT_RETRIES,
+  backoffMs = DEFAULT_RETRY_BACKOFF_MS,
 ): Promise<Map<string, number[]>> {
   const out = new Map<string, number[]>()
   const entries = [...plaintexts.entries()]
@@ -489,7 +493,7 @@ async function embedPage(
     // Explicit --provider ollama/openai override: one row at a time, exactly
     // as before. generateHostedEmbeddingsBatch must never be reached here.
     for (const [id, text] of entries) {
-      const embedding = await embedWithRetry(text, opts, retries)
+      const embedding = await embedWithRetry(text, opts, retries, backoffMs)
       if (embedding) out.set(id, embedding)
     }
     return out
@@ -509,13 +513,13 @@ async function embedPage(
       continue
     }
     for (const [id, text] of slice) {
-      const embedding = await embedWithRetry(text, opts, retries)
+      const embedding = await embedWithRetry(text, opts, retries, backoffMs)
       if (embedding) out.set(id, embedding)
     }
   }
 
   for (const [id, text] of long) {
-    const embedding = await embedWithRetry(text, opts, retries)
+    const embedding = await embedWithRetry(text, opts, retries, backoffMs)
     if (embedding) out.set(id, embedding)
   }
 
@@ -524,6 +528,9 @@ async function embedPage(
 
 /** Extra attempts per row before giving up. See `embedWithRetry`. */
 export const DEFAULT_RETRIES = 2
+
+/** Base linear backoff between retries. Tests pass 0 to stay timer-free. */
+export const DEFAULT_RETRY_BACKOFF_MS = 500
 
 /**
  * `generateEmbedding` with bounded retries and linear backoff.
@@ -544,11 +551,12 @@ async function embedWithRetry(
   text: string,
   opts: { supabaseClient: SupabaseClient; projectId: string },
   retries: number,
+  backoffMs: number = DEFAULT_RETRY_BACKOFF_MS,
 ): Promise<number[] | null> {
   for (let attempt = 0; attempt <= retries; attempt++) {
     const embedding = await generateEmbedding(text, opts)
     if (embedding) return embedding
-    if (attempt < retries) await sleep(500 * (attempt + 1))
+    if (attempt < retries && backoffMs > 0) await sleep(backoffMs * (attempt + 1))
   }
   return null
 }

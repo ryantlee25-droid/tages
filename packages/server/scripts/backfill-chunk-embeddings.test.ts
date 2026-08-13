@@ -228,7 +228,7 @@ describe('backfillChunkEmbeddings — full re-chunk semantics', () => {
     const { supabase } = makeSupabaseMock([row('a')])
     const { sync, calls } = makeSyncMock()
 
-    const result = await backfillChunkEmbeddings(supabase, PROJECT, { sync, retries: 2 })
+    const result = await backfillChunkEmbeddings(supabase, PROJECT, { sync, retries: 2, retryBackoffMs: 0 })
 
     expect(result.updated).toBe(1)
     expect(result.failed).toBe(0)

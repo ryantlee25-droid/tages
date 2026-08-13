@@ -57,6 +57,7 @@ import {
   createFileCheckpoint,
   createNullCheckpoint,
   DEFAULT_RETRIES,
+  DEFAULT_RETRY_BACKOFF_MS,
   formatDuration,
   formatProgressLine,
   loadProjectConfig,
@@ -107,6 +108,8 @@ export interface ChunkBackfillOptions {
   log?: (line: string) => void
   /** Extra attempts per memory when chunk embedding returns nothing. */
   retries?: number
+  /** Base linear backoff between retries. 0 in tests to keep them timer-free. */
+  retryBackoffMs?: number
   /** Injectable for tests; defaults to a real SupabaseSync over `supabase`. */
   sync?: { remoteUpsertChunks: SupabaseSync['remoteUpsertChunks'] }
 }
@@ -130,6 +133,7 @@ export async function backfillChunkEmbeddings(
   const pageSize = options.pageSize ?? 50
   const minChars = options.minChars ?? 0
   const retries = options.retries ?? DEFAULT_RETRIES
+  const retryBackoffMs = options.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS
   const checkpoint = options.checkpoint ?? createNullCheckpoint()
   const log = options.log ?? ((line: string) => console.error(`[backfill-chunks] ${line}`))
   const encKey = getEncryptionKey()
@@ -239,7 +243,9 @@ export async function backfillChunkEmbeddings(
             projectId,
           })
           if (chunkResult && chunkResult.chunks.length > 0) break
-          if (attempt < retries) await new Promise((r) => setTimeout(r, 500 * (attempt + 1)))
+          if (attempt < retries && retryBackoffMs > 0) {
+            await new Promise((r) => setTimeout(r, retryBackoffMs * (attempt + 1)))
+          }
         }
         if (!chunkResult || chunkResult.chunks.length === 0) {
           log(`Skipping ${row.id}: no chunk embeddings available`)

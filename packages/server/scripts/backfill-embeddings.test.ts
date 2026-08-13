@@ -302,7 +302,7 @@ describe('backfillEmbeddings — hosted batching', () => {
     mockGenerateEmbedding.mockResolvedValueOnce(null).mockResolvedValue(VEC)
     const { supabase, updates } = makeSupabaseMock([row('a')])
 
-    const result = await backfillEmbeddings(supabase, PROJECT, { retries: 2 })
+    const result = await backfillEmbeddings(supabase, PROJECT, { retries: 2, retryBackoffMs: 0 })
 
     expect(result.updated).toBe(1)
     expect(result.failed).toBe(0)
