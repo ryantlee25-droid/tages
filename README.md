@@ -147,6 +147,21 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-08-13 — Onboarding release: three security fixes, a working join path, and a bundled CLI
+
+A full-repo audit against the goal "a teammate signs up, joins, and recalls a colleague's memory" found the v0.3.0 tag was never distributed and the documented onboarding path did not work end to end. This release closes that. Verified by an automated end-to-end suite driving the real CLI as three distinct authenticated identities against production: **28/28**.
+
+- **Three security fixes, all found in this audit and applied to dev and prod (migrations `0065`-`0067`).**
+  - `accept_pending_invites` was `SECURITY DEFINER`, granted to `authenticated`, and took the email and user id as **caller-supplied parameters bound to nothing**. Any signed-in user could claim anyone's pending invite and read that project's memories. Now zero-argument, deriving identity from `auth.uid()` and the JWT email claim.
+  - **All four recall RPCs bypassed RLS** (`recall_memories`, `semantic_recall`, `hybrid_recall`, `chunk_semantic_recall`), filtering only on a caller-supplied `p_project_id`. The project UUID was effectively a bearer token for every memory in the project, while the documented join flow was sharing that UUID. Guarded with the same `owner OR is_project_member` pattern `0051` already applied to two other RPCs. The leak was reproduced on both databases before the fix and confirmed closed after; owner and active-member results are byte-identical.
+  - **`tages team invite --role owner` had no guard**, and the RLS policy checked only the caller's role, never the role being granted, so any admin could mint an owner. Closed at the CLI and with a `BEFORE INSERT OR UPDATE` trigger, which also covers the dashboard's service-role write path.
+- **The join path now works.** `tages link --project-id` previously bound a project and configured nothing. It now writes a Claude Code project-scoped `.mcp.json` (init and link both targeted **Claude Desktop's** config before this), installs the git hook, points the MCP config at the locally built server instead of the four-month-stale published package, and adds `.mcp.json` to the repo's local git excludes since it carries the project id and anon key.
+- **The CLI is bundled with tsup.** `rootDir: "../../"` emitted CJS copies of sibling packages into an ESM package, so the published tarball threw `exports is not defined`. This was **not** tarball-only, as first assumed: `link.ts` loaded the emitted copy rather than the real sibling `dist/`, so the join path crashed on source installs too. Tarball is now 3 files instead of 229, and `tages templates` works from an npm install for the first time.
+- **Silent failures made visible.** Both `tages remember` and the MCP `remember` tool reported success when the cloud write had failed, leaving memories local-only and invisible to teammates forever. `observe`/`verify` promoted remote rows by a local id that never matches, so promotions silently stayed `pending`. `tages doctor` reported a correct setup as broken and then advised the one command that wedges a joiner. Project resolution fell back to the alphabetically-first config, so a command run from a subdirectory could target the wrong project.
+- **Housekeeping:** SIGTERM handling (MCP clients send it; only SIGINT was handled, losing embeddings on shutdown), a runnable lint for the first time (the root `lint` script had no `eslint` dependency at all), vitest no longer globs into stale worktrees, and the invite integration tests re-plumbed onto real per-user JWTs — they could never have run before, since the fixture project omitted a `NOT NULL` slug.
+
+**Known limitation:** embeddings are opt-in. Without Ollama or `TAGES_OPENAI_EMBED`, memories store with a null embedding and recall silently degrades to trigram matching. See `docs/team-onboarding.md`.
+
 ### 2026-07-19 — Team-readiness release (`@tages/cli` 0.3.0 · `@tages/server` 0.2.0 · `@tages/shared` 0.1.2)
 
 First npm release since April; ships the three months of merged retrieval/harness work to users and adds the team-join path. See `CHANGELOG.md` for the rolled-up detail.

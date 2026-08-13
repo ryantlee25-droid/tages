@@ -28,9 +28,15 @@ Clone Tages somewhere you keep source checkouts. **This clone is a build artifac
 ```bash
 git clone https://github.com/ryantlee25-droid/tages.git ~/src/tages
 cd ~/src/tages
+git checkout release/2026-08-13-onboarding
 pnpm install --frozen-lockfile
 pnpm -r build
 ```
+
+> **The `git checkout` line is required until this branch merges to `main`.** The join path
+> (`tages link --project-id`) does not work on `main` — on that build it crashes with
+> `ReferenceError: exports is not defined in ES module scope`. Once the branch is merged,
+> drop the checkout line and clone `main` as usual.
 
 Then link the CLI globally. Run this from `packages/cli`, **not** from the repo root — the root package is private and exposes no `tages` binary:
 
