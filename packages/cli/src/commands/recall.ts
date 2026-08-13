@@ -54,6 +54,37 @@ function getAssembledContextTokenBudget(): number {
   return parsed
 }
 
+/**
+ * The signed-in user's JWT for the hosted embedding endpoint
+ * (PLAN-HOSTED-EMBEDDING.md Task 3).
+ *
+ * This fills the same slot as the server copy's
+ * `opts.supabaseClient.auth.getSession()` lookup — first in precedence, ahead
+ * of the TAGES_SERVICE_KEY / SUPABASE_SERVICE_ROLE_KEY / SUPABASE_ANON_KEY
+ * chain that lib/embedding.ts's resolveHostedConfig applies when this returns
+ * undefined. The CLI resolves it here rather than passing a client so
+ * lib/embedding.ts keeps no @supabase/supabase-js dependency.
+ *
+ * Never throws: a token we cannot resolve degrades recall to trigram, which is
+ * not a reason to fail the command.
+ *
+ * Duplicated (small, deliberate) in commands/remember.ts rather than shared
+ * from lib/embedding.ts: remember.ts's unit tests mock '../lib/embedding.js'
+ * with an explicit two-function factory, so any new import from that module
+ * would resolve to undefined at runtime under test.
+ */
+async function resolveHostedEmbedToken(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+): Promise<string | undefined> {
+  try {
+    const { data } = await supabase.auth.getSession()
+    return data?.session?.access_token ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
 function resolveRowDate(row: Record<string, unknown>): string | undefined {
   return (
     (row.referenced_date as string | undefined) ??
@@ -227,10 +258,11 @@ export async function recallCommand(query: string | undefined, options: RecallOp
         p_limit: candidatePool,
       })
 
-      // Semantic search. Uses Ollama only by default: if the local embedder is
-      // down, generateEmbedding returns null and we fail fast to trigram rather
-      // than making a blocking, billable OpenAI call on the recall hot path.
-      // The OpenAI fallback is opt-in via TAGES_OPENAI_EMBED (see lib/embedding).
+      // Semantic search. Uses the hosted embedding endpoint by default (no
+      // Ollama, no OpenAI key needed); TAGES_EMBED_PROVIDER selects otherwise.
+      // Whatever the provider, generateEmbedding returns null on any failure
+      // and we fail fast to trigram rather than erroring out the recall — that
+      // null-means-skip contract is unchanged by the hosted rollout.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let semanticPromise: any = Promise.resolve({ data: null, error: null })
       // Chunk-level semantic channel (PLAN.md Task 11): matches per-chunk
@@ -239,7 +271,11 @@ export async function recallCommand(query: string | undefined, options: RecallOp
       // memories whose mean-pooled vector misses the threshold entirely.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let chunkPromise: any = Promise.resolve({ data: null, error: null })
-      const embedding = await generateEmbedding(query!)
+      const embedding = await generateEmbedding(query!, {
+        supabaseUrl: config.supabaseUrl,
+        accessToken: await resolveHostedEmbedToken(supabase),
+        projectId: config.projectId,
+      })
       if (embedding) {
         const embeddingStr = `[${embedding.join(',')}]`
 

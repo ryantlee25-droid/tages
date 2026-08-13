@@ -7,15 +7,102 @@ import {
   TEST_PROJECT_CONFIG,
   TEST_LOCAL_CONFIG,
 } from './helpers.js'
+import { __resetEmbeddingProviderForTests } from '../lib/embedding.js'
 
-// Mock fetch globally (for Ollama embedding calls)
+/**
+ * PROVIDER MODEL IN THIS FILE
+ * ---------------------------
+ * `embedOne` no longer probes Ollama ambiently. It switches on ONE provider
+ * resolved per process from TAGES_EMBED_PROVIDER (hosted | ollama | openai,
+ * hosted by default) with no fallthrough. So a recall test that wants the
+ * semantic channel to fire has to say which provider produced the vector and
+ * mock THAT provider's response shape:
+ *
+ *   - hosted (the default, and what a real `tages recall` does): POST to
+ *     `<supabaseUrl>/functions/v1/embed`, response `{ embeddings: [[...]] }`.
+ *     Use `mockHostedEmbedFetch()`.
+ *   - ollama: POST to :11434/api/embeddings, response `{ embedding: [...] }`.
+ *     Requires TAGES_EMBED_PROVIDER=ollama — it is never reached otherwise.
+ *   - openai: POST to api.openai.com, response `{ data: [{ embedding }] }`.
+ *     Requires TAGES_EMBED_PROVIDER=openai (or the legacy TAGES_OPENAI_EMBED=1
+ *     alias) plus OPENAI_API_KEY.
+ *
+ * The default fetch mock below rejects everything, which is what keeps the
+ * trigram-only tests on the trigram path.
+ */
+
+/** Hosted embed endpoint derived from TEST_PROJECT_CONFIG.supabaseUrl. */
+const HOSTED_EMBED_URL = `${TEST_PROJECT_CONFIG.supabaseUrl}/functions/v1/embed`
+
+/**
+ * Answer only the hosted embed endpoint, and reject anything else loudly.
+ *
+ * Rejecting other hosts is the point, not defensive noise: if the recall path
+ * ever reaches for a second provider, these tests must go red rather than
+ * quietly embed with whatever else happens to answer.
+ *
+ * gte-small returns 384 dims; lib/embedding.ts zero-pads to 1536.
+ */
+function mockHostedEmbedFetch(): void {
+  globalThis.fetch = vi.fn().mockImplementation((url: unknown) => {
+    if (typeof url === 'string' && url.startsWith(HOSTED_EMBED_URL)) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ embeddings: [new Array(384).fill(0.1)] }),
+      })
+    }
+    return Promise.reject(new Error(`unexpected fetch to ${String(url)}`))
+  }) as unknown as typeof fetch
+}
+
+// Mock fetch globally. Default: no embedding provider answers, so recall
+// degrades to trigram (generateEmbedding's null-means-skip contract).
 const originalFetch = globalThis.fetch
 beforeEach(() => {
-  // Default: Ollama not available
   globalThis.fetch = vi.fn().mockRejectedValue(new Error('Connection refused'))
 })
 afterEach(() => {
   globalThis.fetch = originalFetch
+})
+
+/**
+ * Provider selection is read from process env and memoized for the life of the
+ * process — correct in production (one vector space per run), but it means one
+ * test's provider would otherwise leak into every test after it in this file,
+ * and a stray TAGES_EMBED_PROVIDER / SUPABASE_URL / OPENAI_API_KEY in the
+ * developer's shell would silently re-point the whole suite.
+ *
+ * So: snapshot and clear the provider-relevant env per test, restore after, and
+ * clear the memo on both sides via the module's test-only reset. The production
+ * memo itself is left exactly as it is.
+ */
+const PROVIDER_ENV_KEYS = [
+  'TAGES_EMBED_PROVIDER',
+  'TAGES_OPENAI_EMBED',
+  'OPENAI_API_KEY',
+  'TAGES_EMBED_URL',
+  'SUPABASE_URL',
+  'TAGES_SERVICE_KEY',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'SUPABASE_ANON_KEY',
+] as const
+let savedProviderEnv: Record<string, string | undefined> = {}
+
+beforeEach(() => {
+  savedProviderEnv = {}
+  for (const key of PROVIDER_ENV_KEYS) {
+    savedProviderEnv[key] = process.env[key]
+    delete process.env[key]
+  }
+  __resetEmbeddingProviderForTests()
+})
+afterEach(() => {
+  for (const key of PROVIDER_ENV_KEYS) {
+    const value = savedProviderEnv[key]
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
+  __resetEmbeddingProviderForTests()
 })
 
 // Mock Supabase
@@ -23,6 +110,17 @@ const mockRpc = vi.fn()
 const mockSupabase = {
   from: vi.fn(),
   rpc: mockRpc,
+  // The hosted embed endpoint is authenticated with the signed-in user's JWT,
+  // which recall.ts resolves via supabase.auth.getSession(). The real client
+  // always exposes this; without it every hosted test would resolve "hosted not
+  // configured" -> null -> trigram, and the semantic assertions below would be
+  // testing nothing.
+  auth: {
+    getSession: vi.fn(async () => ({
+      data: { session: { access_token: 'test-access-token' } },
+      error: null,
+    })),
+  },
 }
 vi.mock('@tages/shared', () => ({
   createSupabaseClient: vi.fn(() => mockSupabase),
@@ -258,11 +356,22 @@ describe('recall command', () => {
   it('deduplicates results from trigram and semantic searches', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
 
-    // Simulate Ollama being available
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
-    })
+    // Deliberately kept on Ollama, now EXPLICITLY selected rather than ambient.
+    // This is the one recall test that proves the fusion path works end to end
+    // under a non-default provider — if recall ever grew a hosted-only
+    // assumption, this case is what catches it. Every other semantic case in
+    // this file runs on the hosted default, matching a real `tages recall`.
+    process.env.TAGES_EMBED_PROVIDER = 'ollama'
+    globalThis.fetch = vi.fn().mockImplementation((url: unknown) => {
+      if (typeof url === 'string' && url.includes('11434')) {
+        // Ollama's own response shape: nomic-embed-text returns 768 dims.
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
+        })
+      }
+      return Promise.reject(new Error(`unexpected fetch to ${String(url)}`))
+    }) as unknown as typeof fetch
 
     // Trigram returns one result
     const trigramPromise = Promise.resolve({
@@ -298,8 +407,14 @@ describe('recall command', () => {
 
   it('fails fast to trigram (no blocking OpenAI call) when Ollama is down, even with OPENAI_API_KEY set (finding 6)', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    // Genuinely an Ollama-specific case, so it selects Ollama explicitly.
+    // Without this it would resolve to hosted and never touch Ollama at all —
+    // it would still pass, but for a reason unrelated to its name.
+    process.env.TAGES_EMBED_PROVIDER = 'ollama'
     process.env.OPENAI_API_KEY = 'test-openai-key'
-    // No TAGES_OPENAI_EMBED opt-in — the paid fallback must stay off.
+    // The selected provider is down. Under the no-fallthrough switch that must
+    // mean "no embedding" -> trigram, NOT "try the next provider" — a paid
+    // OpenAI call here would also be a second vector space in one index.
 
     let openAiCalls = 0
     globalThis.fetch = vi.fn().mockImplementation((url: string) => {
@@ -373,11 +488,10 @@ describe('recall command', () => {
   it('calls chunk_semantic_recall with the candidate-pool limit and surfaces a chunk-only memory (PLAN.md Task 11)', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
 
-    // Ollama available so the embedding-gated channels run.
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
-    })
+    // Hosted (the default provider) answers, so the embedding-gated channels
+    // run — same condition as before, expressed as the provider recall
+    // actually uses in production.
+    mockHostedEmbedFetch()
 
     mockRpc.mockImplementation((rpcName: string) => {
       if (rpcName === 'chunk_semantic_recall') {
@@ -397,6 +511,15 @@ describe('recall command', () => {
 
     await recallCommand('needle in a long session', {})
 
+    // The query vector came from the hosted endpoint, not from some other
+    // provider that happened to answer.
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      HOSTED_EMBED_URL,
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer test-access-token' }),
+      }),
+    )
     expect(mockRpc).toHaveBeenCalledWith('chunk_semantic_recall', expect.objectContaining({
       p_limit: 50,
     }))
@@ -407,11 +530,8 @@ describe('recall command', () => {
   it('drops a near-duplicate content result while keeping distinct results (Task 4 content dedup)', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
 
-    // Simulate Ollama being available so the semantic path runs.
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
-    })
+    // Hosted (default provider) answers so the semantic path runs.
+    mockHostedEmbedFetch()
 
     // Higher-ranked row is the fuller value; the lower-ranked near-duplicate is
     // a substring of it, so it adds no new content and is safe to drop.
@@ -453,10 +573,7 @@ describe('recall command', () => {
   it('keeps distinct short results that happen to share some words (no over-pruning)', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
 
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
-    })
+    mockHostedEmbedFetch()
 
     const trigramPromise = Promise.resolve({ data: [], error: null })
     const semanticPromise = Promise.resolve({
@@ -484,10 +601,7 @@ describe('recall command', () => {
   it('keeps a longer SUPERSET row ranked BELOW a shorter row (never drops unique content) (B1)', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
 
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
-    })
+    mockHostedEmbedFetch()
 
     // shorterValue is a substring of supersetValue. The shorter row is ranked
     // HIGHER (0.9), the longer superset row is ranked LOWER (0.7). The superset
@@ -525,10 +639,7 @@ describe('recall command', () => {
   it('drops a shorter row fully contained in a HIGHER-ranked row (adds nothing new) (B1)', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
 
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
-    })
+    mockHostedEmbedFetch()
 
     // The higher-ranked (0.9) row is the superset; the lower-ranked (0.7) row
     // is a substring of it, so it adds nothing new and IS dropped.
@@ -580,10 +691,7 @@ describe('recall command', () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
     process.env.TAGES_RECALL_THRESHOLD = '-1'
 
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
-    })
+    mockHostedEmbedFetch()
 
     mockRpc.mockResolvedValue({ data: [], error: null })
 
@@ -604,10 +712,7 @@ describe('recall command', () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
     process.env.TAGES_RECALL_THRESHOLD = '2'
 
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
-    })
+    mockHostedEmbedFetch()
 
     mockRpc.mockResolvedValue({ data: [], error: null })
 
@@ -627,10 +732,7 @@ describe('recall command', () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
     process.env.TAGES_RECALL_THRESHOLD = '0.25'
 
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
-    })
+    mockHostedEmbedFetch()
 
     mockRpc.mockResolvedValue({ data: [], error: null })
 
@@ -647,10 +749,7 @@ describe('recall command', () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
     delete process.env.TAGES_RECALL_THRESHOLD
 
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ embedding: new Array(768).fill(0.1) }),
-    })
+    mockHostedEmbedFetch()
 
     mockRpc.mockResolvedValue({ data: [], error: null })
 
@@ -664,7 +763,8 @@ describe('recall command', () => {
   it('fuses in a memory found only via the temporal channel, not trigram or semantic (Task 3)', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
 
-    // Trigram (and semantic, via Ollama-down fail-fast) return nothing.
+    // Trigram returns nothing, and no embedding provider answers (the default
+    // fetch mock rejects), so the semantic channels are skipped entirely.
     mockRpc.mockResolvedValue({ data: [], error: null })
 
     const temporalRow = {
