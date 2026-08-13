@@ -4,32 +4,75 @@ interface TemplatesOptions {
   project?: string
 }
 
-async function getTemplates() {
-  // Server compiles to CJS but CLI is ESM — use createRequire for CJS interop
-  // CLI dist is at packages/cli/dist/packages/cli/src/commands/
-  // Server dist is at packages/server/dist/templates/
-  // Navigate up to monorepo root then into server/dist
-  const { createRequire } = await import('module')
-  const { fileURLToPath } = await import('url')
-  const { dirname, resolve } = await import('path')
-  const __dirname = dirname(fileURLToPath(import.meta.url))
-  // From cli/dist/packages/cli/src/commands → go up 7 levels to monorepo root
-  const monorepoRoot = resolve(__dirname, '..', '..', '..', '..', '..', '..', '..')
-  const serverTemplates = resolve(monorepoRoot, 'packages', 'server', 'dist', 'templates', 'builtin-templates.js')
-  const require = createRequire(import.meta.url)
-  try {
-    const { BUILTIN_TEMPLATES } = require(serverTemplates)
-    return BUILTIN_TEMPLATES as Array<{ id: string; name: string; description: string; fields: Array<{ name: string; required: boolean; description: string }>; filePatterns: RegExp[] }>
-  } catch {
-    console.error(chalk.red('Failed to load templates. Run `pnpm build` first.'))
-    process.exit(1)
+interface TemplateField {
+  name: string
+  required: boolean
+  description: string
+}
+
+interface Template {
+  id: string
+  name: string
+  description: string
+  fields: TemplateField[]
+  filePatterns: RegExp[]
+}
+
+// ------------------------------------------------------------
+// Cross-package import from packages/server/src/templates/
+//
+// This replaces a runtime resolver that walked a FIXED number of `..` segments
+// from `import.meta.url` to find `packages/server/dist/templates/
+// builtin-templates.js` and `require`d it. That arithmetic was pinned to the
+// old `tsc` output depth (`dist/packages/cli/src/commands/`); once tsup
+// collapsed the build to a single `dist/index.js` the walk overshot the repo
+// root and every `tages templates` invocation died with "Failed to load
+// templates". Outside a monorepo checkout it had never worked at all, because
+// no sibling `packages/server/dist/` exists there to find.
+//
+// The specifier below is a static string, so tsup resolves it FROM SOURCE and
+// inlines the template data into the bundle at build time. No path resolution
+// happens at runtime, which is what makes `tages templates` work from an npm
+// install for the first time — and what keeps the next build-layout change
+// from breaking it again. Do not reintroduce a computed path here.
+//
+// This costs almost nothing: `builtin-templates.ts` is pure data whose only
+// import is a type-only `MemoryTemplate`, so it drags in no server runtime
+// code.
+//
+// Two details are load-bearing:
+//   - It is a DYNAMIC import, matching the lazy-load wrapper in
+//     `commands/agents-md.ts`. A top-level static import is evaluated when
+//     `index.ts` pulls this module in, so any failure here would take down
+//     EVERY command, not just `templates`.
+//   - The `.default` fallback handles CJS interop. `@tages/server` declares no
+//     `"type"`, so when the CLI runs from source under tsx these files are
+//     transpiled as CommonJS; Node's named-export detection does not see
+//     through that and exposes the module only as `default`. Under tsup and
+//     under vitest the same module arrives as ESM with a real named export.
+//     Both shapes have to work.
+// ------------------------------------------------------------
+async function loadTemplates(): Promise<Template[]> {
+  /* eslint-disable @typescript-eslint/ban-ts-comment */
+  // @ts-ignore
+  const mod = await import('../../../server/src/templates/builtin-templates.js')
+  const m = mod as unknown as {
+    BUILTIN_TEMPLATES?: Template[]
+    default?: { BUILTIN_TEMPLATES?: Template[] }
   }
+  const templates = m.BUILTIN_TEMPLATES ?? m.default?.BUILTIN_TEMPLATES
+  if (!templates) {
+    throw new Error(
+      'builtin-templates module loaded but exported no BUILTIN_TEMPLATES — the module shape changed.'
+    )
+  }
+  return templates
 }
 
 export async function templatesListCommand(_options: TemplatesOptions) {
-  const BUILTIN_TEMPLATES = await getTemplates()
+  const templates = await loadTemplates()
   console.log(chalk.bold('Available Memory Templates:\n'))
-  for (const t of BUILTIN_TEMPLATES) {
+  for (const t of templates) {
     console.log(`  ${chalk.cyan(`[${t.id}]`)} ${chalk.bold(t.name)}`)
     console.log(`  ${chalk.dim(t.description)}`)
     console.log(`  Fields: ${t.fields.map(f => `${f.name}${f.required ? '*' : ''}`).join(', ')}`)
@@ -39,9 +82,9 @@ export async function templatesListCommand(_options: TemplatesOptions) {
 }
 
 export async function templatesMatchCommand(filePath: string, _options: TemplatesOptions) {
-  const BUILTIN_TEMPLATES = await getTemplates()
+  const templates = await loadTemplates()
   console.log(chalk.bold(`Templates matching "${filePath}":\n`))
-  const matches = BUILTIN_TEMPLATES.filter(t =>
+  const matches = templates.filter(t =>
     t.filePatterns.some(p => p.test(filePath))
   )
   if (matches.length === 0) {
@@ -55,11 +98,11 @@ export async function templatesMatchCommand(filePath: string, _options: Template
 }
 
 export async function templatesApplyCommand(name: string, _options: TemplatesOptions) {
-  const BUILTIN_TEMPLATES = await getTemplates()
-  const template = BUILTIN_TEMPLATES.find(t => t.id === name)
+  const templates = await loadTemplates()
+  const template = templates.find(t => t.id === name)
   if (!template) {
     console.error(chalk.red(`Template "${name}" not found.`))
-    console.log(chalk.dim('Available templates: ' + BUILTIN_TEMPLATES.map(t => t.id).join(', ')))
+    console.log(chalk.dim('Available templates: ' + templates.map(t => t.id).join(', ')))
     process.exit(1)
   }
 
