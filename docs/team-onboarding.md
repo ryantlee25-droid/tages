@@ -240,4 +240,14 @@ The known weak spot is the **reader**, not retrieval: how the agent synthesizes 
 
 Cross-encoder reranking is opt-in (`OPENAI_API_KEY` + `TAGES_OPENAI_EMBED`) and measured net-neutral on the 50q sample, since retrieval already surfaces the gold memory into top-k. Do not expect it to change much day to day.
 
+### Embeddings: you need nothing, but the team must not mix providers
+
+Semantic search needs an embedding provider. **You do not need to set one up.** With no provider, `remember` stores the memory without a vector and `recall` falls back to trigram matching (literal word overlap). Everything works; you simply lose the ability to find a memory phrased differently from your query. The degradation is silent, so it is worth knowing about: if recall misses something you are sure exists, try the words the memory actually uses.
+
+The provider is needed on **both** sides to help at all. A memory written without one is stored with no vector and stays semantically invisible even to someone who has a provider; and a query made without one skips the semantic channel even against memories that do have vectors.
+
+**If your team does decide to enable it, everyone must use the same provider.** Ollama's `nomic-embed-text` produces 768 dimensions zero-padded to 1536; OpenAI's `text-embedding-3-small` is natively 1536. Those are different vector spaces, and similarity scores between them are meaningless rather than merely worse. `TAGES_OPENAI_EMBED` gates the write and read paths together for exactly this reason. A half-Ollama, half-OpenAI team builds an index that returns confident nonsense, which is worse than having no embeddings at all.
+
+Enabling a provider also only affects **newly written** memories. It does not backfill what is already stored.
+
 A 500-question run is pending and will be the headline number; the 50q figures above are a calibration set, not the final word.
