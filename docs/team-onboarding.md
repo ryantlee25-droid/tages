@@ -118,7 +118,7 @@ tages status
 
 Expect `Project:` with the team's slug, an `ID:` line carrying your project UUID, `Mode: Cloud`, a `Detected:` line, and a live memory count. Confirm the `ID:` matches the UUID the owner gave you — that is the check that actually proves you joined the right project.
 
-> **Run this from your repo root.** Slug resolution reads `.tages/config.json` in the *current* directory only; it deliberately does not walk up to a parent (`packages/cli/src/config/project.ts:11-23`). From a subdirectory it falls back to the directory name and then, failing that, to *the first project config alphabetically* — so `status`, `remember`, and `recall` can silently report or write to the wrong project. If `Project:` or `ID:` is not what you expect, check `pwd` first.
+> **Subdirectories resolve correctly.** Resolution walks up from the current directory looking for a `.tages/config.json` marker, stopping at the git root, so running `status`, `remember`, or `recall` from `src/` finds the same project as the repo root. If several projects are configured locally and no marker is found, it now fails with the candidate list rather than silently picking the first one alphabetically — which is what earlier builds did, and how commands ended up writing to the wrong project. If `Project:` or `ID:` is not what you expect, check `pwd`.
 
 Check the config landed in the right place — this is the step that catches a step-2 mistake:
 
@@ -147,7 +147,7 @@ Watch the output of `remember` carefully:
 
 Finally, **restart Claude Code** in your repo so it picks up the new `.mcp.json`, and approve the project-scoped server if prompted.
 
-> **Ignore `tages doctor`'s MCP verdict.** Its "MCP server config" check only looks at the two *Claude Desktop* config paths and never at the `.mcp.json` that `init`/`link` actually write. It will report `MCP server config — not found` on a perfectly correct setup, and then advise you to "Run `tages init`" — which is the single most destructive thing you can do here (see below). The other `doctor` checks are fine; `cat .mcp.json` is the real test.
+> **`tages doctor` is a useful check now.** It probes the project-scoped `.mcp.json` first and falls back to the Claude Desktop paths, and it reports which location satisfied the check. Earlier builds looked only at the Desktop paths, so they reported `not found` on a correct setup and then advised running `tages init` — the one genuinely destructive thing to do here. If you are on an older build and see that advice, ignore it and use `cat .mcp.json` instead.
 
 ---
 
