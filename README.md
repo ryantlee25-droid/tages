@@ -147,7 +147,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
-### 2026-08-13 — Onboarding release: three security fixes, a working join path, and a bundled CLI
+### 2026-08-13 — Onboarding release: three security fixes, a working join path, a bundled CLI, and zero-install semantic search (`@tages/cli` 0.4.0 · `@tages/server` 0.3.0 · `@tages/shared` 0.2.0 · `@tages/harness-claude-code` 0.1.0 · the three editor plugins 0.1.0)
 
 A full-repo audit against the goal "a teammate signs up, joins, and recalls a colleague's memory" found the v0.3.0 tag was never distributed and the documented onboarding path did not work end to end. This release closes that. Verified by an automated end-to-end suite driving the real CLI as three distinct authenticated identities against production: **28/28**.
 
@@ -160,7 +160,9 @@ A full-repo audit against the goal "a teammate signs up, joins, and recalls a co
 - **Silent failures made visible.** Both `tages remember` and the MCP `remember` tool reported success when the cloud write had failed, leaving memories local-only and invisible to teammates forever. `observe`/`verify` promoted remote rows by a local id that never matches, so promotions silently stayed `pending`. `tages doctor` reported a correct setup as broken and then advised the one command that wedges a joiner. Project resolution fell back to the alphabetically-first config, so a command run from a subdirectory could target the wrong project.
 - **Housekeeping:** SIGTERM handling (MCP clients send it; only SIGINT was handled, losing embeddings on shutdown), a runnable lint for the first time (the root `lint` script had no `eslint` dependency at all), vitest no longer globs into stale worktrees, and the invite integration tests re-plumbed onto real per-user JWTs — they could never have run before, since the fixture project omitted a `NOT NULL` slug.
 
-**Known limitation:** embeddings are opt-in. Without Ollama or `TAGES_OPENAI_EMBED`, memories store with a null embedding and recall silently degrades to trigram matching. See `docs/team-onboarding.md`.
+- **Semantic search now needs nothing installed.** Embedding used to run client-side, so every developer had to install Ollama or hold an OpenAI key — and `embedOne` probed Ollama *unconditionally*, so a teammate who happened to have it running for an unrelated project silently wrote vectors from a different model into the shared index. Similarity across models is meaningless, so those results looked confident and were noise. Embedding now runs through a hosted Supabase edge function (`gte-small`, JWT-gated, project-membership checked), and provider selection is a deterministic switch resolved once per process with no fallthrough. An unreachable endpoint degrades to trigram; it never silently switches model. All 135 existing prod memories were re-embedded onto the new provider.
+
+**Known limitation (superseded):** embeddings were previously opt-in. Without Ollama or `TAGES_OPENAI_EMBED`, memories store with a null embedding and recall silently degrades to trigram matching. See `docs/team-onboarding.md`.
 
 ### 2026-07-19 — Team-readiness release (`@tages/cli` 0.3.0 · `@tages/server` 0.2.0 · `@tages/shared` 0.1.2)
 

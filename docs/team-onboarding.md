@@ -49,10 +49,10 @@ Verify:
 
 ```bash
 tages --version
-# 0.3.0
+# 0.4.0
 ```
 
-If you get anything other than `0.3.0`, you are running a stale npm copy. Remove it (`npm uninstall -g @tages/cli`) and re-link.
+If you get anything other than `0.4.0`, you are running a stale npm copy. Remove it (`npm uninstall -g @tages/cli`) and re-link.
 
 **Already linked `tages` before? Re-link it.** The CLI now builds to a single bundled `dist/index.js`; it used to build to `dist/packages/cli/src/index.js`. An existing global link still points at the old path, so after you pull and rebuild, `tages` fails with `command not found` or `No such file or directory`. Re-running the link above from `packages/cli` fixes it:
 
