@@ -10,7 +10,7 @@ interface MemoryCardProps {
 
 function MemoryCard({ type, memoryKey, value, files, typeColor }: MemoryCardProps) {
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-5">
+    <div className="rounded-control border border-line bg-paper-raised/50 p-5">
       <div className="mb-2 flex items-center gap-2">
         <span
           className="inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium"
@@ -18,13 +18,13 @@ function MemoryCard({ type, memoryKey, value, files, typeColor }: MemoryCardProp
         >
           {type}
         </span>
-        <span className="font-mono text-sm text-white">{memoryKey}</span>
+        <span className="font-mono text-sm text-ink">{memoryKey}</span>
       </div>
-      <p className="text-sm text-zinc-400 leading-relaxed">{value}</p>
+      <p className="text-sm text-ink-soft leading-relaxed">{value}</p>
       {files && files.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {files.map(f => (
-            <span key={f} className="rounded bg-zinc-800 px-2 py-0.5 font-mono text-xs text-zinc-500">{f}</span>
+            <span key={f} className="rounded bg-paper-sunken px-2 py-0.5 font-mono text-xs text-ink-muted">{f}</span>
           ))}
         </div>
       )}
@@ -40,8 +40,8 @@ function ExampleProject({ name, description, memories }: {
   return (
     <div>
       <div className="mb-4">
-        <h3 className="text-lg font-semibold text-white">{name}</h3>
-        <p className="text-sm text-zinc-500">{description}</p>
+        <h3 className="text-lg font-semibold text-ink">{name}</h3>
+        <p className="text-sm text-ink-muted">{description}</p>
       </div>
       <div className="space-y-3">
         {memories.map(m => <MemoryCard key={m.memoryKey} {...m} />)}
@@ -51,7 +51,7 @@ function ExampleProject({ name, description, memories }: {
 }
 
 const TYPE_COLORS: Record<string, string> = {
-  convention: '#3BA3C7',
+  convention: 'var(--color-signal-600)',
   decision: '#A78BFA',
   architecture: '#60A5FA',
   lesson: '#FBBF24',
@@ -66,14 +66,14 @@ export function ExamplesPage() {
     <div className="relative mx-auto max-w-3xl px-6 py-24">
       {/* Header */}
       <div className="mb-16 text-center">
-        <div className="mb-6 inline-flex items-center rounded-full border border-[#3BA3C7]/30 bg-[#3BA3C7]/10 px-4 py-1.5 text-sm text-[#3BA3C7]">
+        <div className="mb-6 inline-flex items-center rounded-full border border-signal-200 bg-signal-50 px-4 py-1.5 text-sm text-signal-600">
           Real examples
         </div>
-        <h1 className="text-4xl font-bold tracking-tight text-white sm:text-5xl">
+        <h1 className="text-4xl font-bold tracking-tight text-ink sm:text-5xl">
           What agents{' '}
-          <span style={{ color: '#3BA3C7' }}>actually remember</span>
+          <span className="text-signal-600">actually remember</span>
         </h1>
-        <p className="mt-6 text-lg text-zinc-400">
+        <p className="mt-6 text-lg text-ink-soft">
           These are real memories from production projects. This is what your AI tools
           see at the start of every session. The context that prevents mistakes.
         </p>
@@ -125,7 +125,7 @@ export function ExamplesPage() {
           ]}
         />
 
-        <div className="border-t border-zinc-800" />
+        <div className="border-t border-line" />
 
         <ExampleProject
           name="Game Engine (30k LOC)"
@@ -159,7 +159,7 @@ export function ExamplesPage() {
           ]}
         />
 
-        <div className="border-t border-zinc-800" />
+        <div className="border-t border-line" />
 
         <ExampleProject
           name="MCP Server (monorepo)"
@@ -186,22 +186,22 @@ export function ExamplesPage() {
       </div>
 
       {/* CTA */}
-      <div className="mt-20 rounded-xl border border-zinc-800 bg-zinc-900/50 p-8 text-center">
-        <h2 className="text-xl font-semibold text-white">See it in your codebase</h2>
-        <p className="mt-2 text-zinc-400">
+      <div className="mt-20 rounded-card border border-line bg-paper-raised/50 p-8 text-center">
+        <h2 className="text-heading text-ink">See it in your codebase</h2>
+        <p className="mt-2 text-ink-soft">
           Two commands. Your agents start remembering.
         </p>
-        <div className="mt-4 inline-block overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-950 px-6 py-3 font-mono text-xs sm:text-sm">
-          <span className="text-zinc-500">$</span>{' '}
+        <div className="mt-4 inline-block overflow-x-auto rounded-control border border-line bg-paper px-6 py-3 font-mono text-xs sm:text-sm">
+          <span className="text-ink-muted">$</span>{' '}
           <span className="text-green-400">npm install -g @tages/cli</span>{' '}
-          <span className="text-zinc-600">&&</span>{' '}
+          <span className="text-ink-muted">&&</span>{' '}
           <span className="text-green-400">tages init</span>
         </div>
         <div className="mt-6">
           <Link
             href="/auth/login"
-            className="rounded-lg px-8 py-3 text-sm font-medium text-white transition-all hover:opacity-90"
-            style={{ backgroundColor: '#3BA3C7' }}
+            className="rounded-control px-8 py-3 text-sm font-medium text-ink transition-all hover:opacity-90"
+            style={{ backgroundColor: 'var(--color-signal-600)' }}
           >
             Try the demo
           </Link>

@@ -1,5 +1,4 @@
 import type { Metadata } from 'next'
-import { Footer } from '@/components/marketing/footer'
 
 export const metadata: Metadata = {
   title: 'Privacy Policy | Tages',
@@ -367,7 +366,6 @@ export default function PrivacyPage() {
           </li>
         </ul>
       </article>
-      <Footer />
     </>
   )
 }

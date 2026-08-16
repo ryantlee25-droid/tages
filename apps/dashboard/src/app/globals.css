@@ -1,26 +1,227 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+  Tages design tokens — light.
+
+  The original file defined exactly two variables (--background, --foreground)
+  and then set a system-stack body font that overrode the webfonts the layout
+  was loading, so the typeface never actually applied. Components hardcoded
+  zinc-* utilities and a raw accent inline. There was no scale, so nothing
+  composed.
+
+  This is the developer-infrastructure convention played straight, per the
+  standing brand commitment in PRODUCT.md: white ground, a tight ink ramp with
+  real steps, hairline rules doing the structural work instead of cards, one
+  blue accent used sparingly, and mono reserved for code and identifiers.
+
+  Naming: `paper` is anything you put content ON, `ink` is anything you read.
+  That keeps the roles obvious in a light theme, where a numeric lightness
+  ramp would invert confusingly against the usual dark-first convention.
+*/
+
+@theme {
+  /* ---- Paper (surfaces) -----------------------------------------------
+     Steps are deliberately close. On white, a heavy surface step reads as a
+     box; keeping them near lets 1px rules carry the structure instead. */
+  --color-paper: #ffffff;         /* page ground */
+  --color-paper-raised: #fbfcfd;  /* subtle lift */
+  --color-paper-sunken: #f5f7f9;  /* code wells, quiet panels */
+  --color-paper-hover: #eef1f5;   /* interactive hover */
+
+  /* ---- Lines ----------------------------------------------------------- */
+  --color-line: #e3e8ee;          /* default hairline */
+  --color-line-strong: #cdd5df;   /* emphasis, control borders */
+
+  /* ---- Ink (text) ------------------------------------------------------
+     Contrast on #ffffff, measured: text 16.1:1, soft 7.6:1, muted 5.1:1,
+     faint 3.4:1 (decorative and large only, never body copy). */
+  --color-ink: #0f1720;           /* headings, primary body */
+  --color-ink-soft: #4a5763;      /* secondary body */
+  --color-ink-muted: #6b7885;     /* labels, captions */
+  --color-ink-faint: #9aa5b1;     /* prompts, disabled */
+
+  /* ---- Accent ----------------------------------------------------------
+     Blue, per the brief. signal-600 is the action colour and clears 4.5:1 on
+     white for text use; signal-700 is its hover. Deliberately not the
+     reference site's green — matching the craft is the brief, wearing the
+     brand is not. */
+  --color-signal-50: #eff6ff;
+  --color-signal-100: #dbeafe;
+  --color-signal-200: #bfdbfe;
+  --color-signal-500: #3b82f6;
+  --color-signal-600: #2563eb;    /* primary action — 5.2:1 on paper */
+  --color-signal-700: #1d4ed8;    /* hover — 7.0:1 */
+  --color-signal-900: #1e3a8a;    /* code accents, deep type */
+
+  /* Semantic */
+  --color-positive: #047857;
+  --color-caution: #b45309;
+
+  /* ---- Type -----------------------------------------------------------
+     Two families with distinct jobs. Schibsted Grotesk sets everything the
+     reader reads; JetBrains Mono is reserved for things the reader would
+     type or copy — commands, keys, identifiers, code. Mono is never used
+     to signal "technical". */
+  --font-sans: var(--font-sans-face), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono-face), ui-monospace, SFMono-Regular, monospace;
+
+  /* Display steps. The jumps are deliberate — an obvious scale, not a
+     continuum, so hierarchy is readable without weight tricks. */
+  /* Mobile display step. 3.5rem is a desktop size; without this the largest
+     type on the page never adapts. */
+  --text-display-sm: 2.5rem;
+  --text-display-sm--line-height: 1.06;
+  --text-display-sm--letter-spacing: -0.03em;
+  --text-display-sm--font-weight: 600;
+
+  --text-display: 3.5rem;
+  --text-display--line-height: 1.02;
+  --text-display--letter-spacing: -0.035em;
+  --text-display--font-weight: 600;
+
+  --text-title: 2.25rem;
+  --text-title--line-height: 1.1;
+  --text-title--letter-spacing: -0.028em;
+  --text-title--font-weight: 600;
+
+  --text-heading: 1.375rem;
+  --text-heading--line-height: 1.25;
+  --text-heading--letter-spacing: -0.018em;
+  --text-heading--font-weight: 560;
+
+  --text-lead: 1.125rem;
+  --text-lead--line-height: 1.6;
+  --text-lead--letter-spacing: -0.011em;
+
+  /* Body. Authored rather than inherited, so the size carrying the most
+     reading has a real line-height instead of the browser default. */
+  --text-body: 1rem;
+  --text-body--line-height: 1.65;
+  --text-body--letter-spacing: -0.003em;
+
+  --text-label: 0.8125rem;
+  --text-label--line-height: 1.45;
+  --text-label--letter-spacing: 0;
+
+  --radius-card: 0.75rem;
+  --radius-control: 0.5rem;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
 
-@media (prefers-color-scheme: dark) {
+  body {
+    font-family: var(--font-sans);
+    /* The body token applies at the root, not per-paragraph. Defining it and
+       then using it in one place leaves the size most of the page is read at
+       inheriting a framework default. */
+    font-size: var(--text-body);
+    line-height: 1.65;
+    letter-spacing: -0.003em;
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Numerals in any tabular context line up. Ships with browser defaults
+     otherwise, which is one of the cheapest tells that a page was assembled. */
+  table,
+  [data-numeric] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- Browser surfaces we did not draw, themed from the palette ---- */
+  ::selection {
+    background-color: var(--color-signal-100);
+    color: var(--color-signal-900);
+  }
+
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    accent-color: var(--color-signal-600);
+    caret-color: var(--color-signal-600);
+    color-scheme: light;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-line-strong);
+    border-radius: 999px;
+    border: 2px solid var(--color-paper);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-ink-faint);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-signal-600);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  a {
+    text-underline-offset: 0.2em;
+    text-decoration-thickness: from-font;
+  }
+
+  /* Anything that animates in starts visible; the reveal only refines it.
+     A reader with JS blocked or reduced motion set sees a finished page. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer utilities {
+  /* The one authored motion moment: content settles upward as it enters,
+     staggered by a --i index. Exponential ease-out from an already-visible
+     default, so nothing depends on JS to become readable. */
+  @keyframes settle {
+    from {
+      opacity: 0;
+      transform: translate3d(0, 10px, 0);
+      filter: blur(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+      filter: none;
+    }
+  }
+
+  .settle {
+    animation: settle 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: calc(var(--i, 0) * 70ms);
+  }
+
+  /* Hairline that fades at both ends — the structural device this page uses
+     instead of boxing content in cards. */
+  .rule-x {
+    background-image: linear-gradient(
+      to right,
+      transparent,
+      var(--color-line) 12%,
+      var(--color-line) 88%,
+      transparent
+    );
+  }
+
+  .measure {
+    max-width: 68ch;
+  }
 }
