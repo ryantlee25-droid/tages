@@ -162,6 +162,24 @@ describe('createShutdown', () => {
     expect(calls.exit).toEqual([0])
   })
 
+  it('still flushes queued memories when the analytics endSession rejects', async () => {
+    // The regression this guards: endSession() and flush() used to be sequential
+    // awaits in one async function, so a rejecting endSession — an analytics-only
+    // network blip — returned before flush() ever ran, and the whole dirty queue
+    // was lost on the exit(0) that follows. Analytics failing must never cost a
+    // user their memories.
+    const { calls, deps } = makeDeps({
+      endSession: async () => { throw new Error('analytics endpoint unreachable') },
+    })
+
+    await expect(mod.createShutdown({ ...deps, timeoutMs: 1_000 })(0)).resolves.toBeUndefined()
+
+    expect(calls.endSession).toBe(1)
+    expect(calls.flush).toBe(1) // the point: it ran despite endSession rejecting
+    expect(calls.close).toBe(1)
+    expect(calls.exit).toEqual([0])
+  })
+
   it('does not raise an unhandled rejection when the flush rejects after the timeout wins', async () => {
     const rejections: unknown[] = []
     const onRejection = (reason: unknown) => { rejections.push(reason) }

@@ -879,13 +879,31 @@ export function createShutdown(deps: ShutdownDeps): (exitCode?: number) => Promi
       console.error('[tages] Shutdown: stopSync failed:', (err as Error).message)
     }
 
-    // Drain: end the session row, then flush queued memories and dirty chunks.
-    // Folding the rejection into a resolved value here (rather than catching
-    // around the race) means the drain promise can never be left rejected and
+    // Drain: end the session row AND flush queued memories and dirty chunks.
+    //
+    // These must not be sequential awaits. `endSession()` writes an analytics
+    // row and rejects on any network blip; awaiting it first meant a purely
+    // cosmetic failure aborted the function before `flush()` ran, and every
+    // memory in the dirty queue was lost when `exit(0)` followed. That is the
+    // exact loss this block exists to prevent, and analytics is the least
+    // important thing here.
+    //
+    // `allSettled` runs both regardless and never rejects, so a failure in
+    // either is reported without costing the other. Folding the outcome into a
+    // resolved value means the drain promise can never be left rejected and
     // unobserved if the timeout wins the race below.
     const drain: Promise<'drained' | 'failed'> = (async () => {
-      await deps.tracker?.endSession()
-      await deps.sync?.flush()
+      const results = await Promise.allSettled([
+        deps.tracker?.endSession(),
+        deps.sync?.flush(),
+      ])
+      const failed = results.filter((r) => r.status === 'rejected')
+      for (const f of failed) {
+        console.error('[tages] Shutdown drain step failed:', (f as PromiseRejectedResult).reason)
+      }
+      // Only a failed FLUSH means data was left behind; a failed endSession is
+      // cosmetic. Report on the flush, which is index 1.
+      if (results[1]?.status === 'rejected') throw (results[1] as PromiseRejectedResult).reason
     })().then(
       () => 'drained' as const,
       (err) => {

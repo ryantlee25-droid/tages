@@ -101,6 +101,28 @@ describe('login / logout / whoami', () => {
     expect(mode).toBe(0o600)
   })
 
+  it('tightens permissions on an auth.json that already exists at 0644', async () => {
+    // The regression this guards: writeFileSync's `mode` is the open(2) creation
+    // mode, so it is ignored when the file already exists. `login` is a re-run
+    // command by design, so the common case is an existing file — and this one
+    // holds a live refresh token.
+    const authPath = path.join(tempConfigDir, 'auth.json')
+    fs.writeFileSync(authPath, JSON.stringify({ accessToken: 'x', refreshToken: 'y', userId: 'z' }))
+    fs.chmodSync(authPath, 0o644)
+    expect(fs.statSync(authPath).mode & 0o777).toBe(0o644) // precondition
+
+    mockRunGithubOAuth.mockResolvedValue({
+      accessToken: makeToken({ email: 'a@b.com', sub: 'u', exp: FUTURE }),
+      refreshToken: 'r',
+      userId: 'u',
+    })
+    const { loginCommand } = await import('../commands/login.js')
+    await loginCommand()
+
+    expect(fs.statSync(authPath).mode & 0o777).toBe(0o600)
+    expect(fs.statSync(tempConfigDir).mode & 0o777).toBe(0o700)
+  })
+
   it('warns that TAGES_SERVICE_KEY will shadow the login', async () => {
     process.env.TAGES_SERVICE_KEY = 'service-key-value'
     mockRunGithubOAuth.mockResolvedValue({

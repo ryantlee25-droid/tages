@@ -81,6 +81,14 @@ export async function loginCommand() {
 
   fs.mkdirSync(getConfigDir(), { recursive: true })
   fs.writeFileSync(getAuthPath(), JSON.stringify(auth, null, 2) + '\n', { mode: 0o600 })
+  // `mode` on writeFileSync is the open(2) CREATION mode: the OS applies it only
+  // when the file is actually created, so re-running `login` over an existing
+  // auth.json silently keeps whatever bits it already had. This file has been
+  // found at 0644 on real machines, and it holds a live refresh token, so the
+  // permissions are set unconditionally rather than hopefully. Same for the
+  // directory, which mkdirSync leaves at 0755.
+  fs.chmodSync(getConfigDir(), 0o700)
+  fs.chmodSync(getAuthPath(), 0o600)
 
   const who = identityFromToken(auth.accessToken)
   console.log(chalk.green('  Signed in as'), who.email ?? auth.userId)
