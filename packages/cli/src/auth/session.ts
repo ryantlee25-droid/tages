@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import { createSupabaseClient } from '@tages/shared'
 import { getAuthPath } from '../config/paths.js'
+import { writeAuthFile } from './store.js'
 
 /**
  * Creates an authenticated Supabase client for CLI operations.
@@ -43,13 +44,16 @@ export async function createAuthenticatedClient(supabaseUrl: string, supabaseAno
           return supabase // Return unauthenticated client
         }
 
-        // Persist the new tokens so subsequent commands don't need to refresh again
-        const updatedAuth = {
+        // Persist the new tokens so subsequent commands don't need to refresh again.
+        // Via the shared writer: this used to be a bare writeFileSync whose `mode`
+        // is creation-only, so on a pre-existing 0644 auth.json every refresh wrote
+        // a brand-new live refresh token into a world-readable file. Now that
+        // auto-reconcile runs on nearly every command, this is the hot path.
+        writeAuthFile({
           ...auth,
           accessToken: refreshData.session.access_token,
           refreshToken: refreshData.session.refresh_token,
-        }
-        fs.writeFileSync(authPath, JSON.stringify(updatedAuth, null, 2), { mode: 0o600 })
+        })
       }
     }
   }
