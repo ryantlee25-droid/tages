@@ -147,6 +147,15 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-08-17 — Marketing site: mobile overflow, button shadow, pill rendering, nav a11y
+
+- **Fixed horizontal overflow on every phone-width viewport.** At 390px the document laid out 523px wide, pushing the nav hamburger off-screen and running section headings off the right edge. Root cause was `min-width: auto`, the default on grid/flex children, refusing to shrink below content width — one `nowrap` command line (`tages link --project-id <project-id>`) set a width floor for the whole page. Fixed with `min-w-0` in four places: the `Command` code element and `CodePanel` root in `ui.tsx`, both grid children in `search.tsx`, and the step body in `quickstart.tsx`. Verified zero horizontal overflow across 8 routes at 5 viewport widths (360/390/430/768/1024) against a production build.
+- **Removed the accent-tinted halo from the primary button's shadow**, keeping only the neutral hairline contact shadow. The fill (`signal-600` #2563eb) is identical to every other blue on the site, but the blue-tinted shadow darkened its own edge so the button read heavier than the same blue reads as text. A lighter fill (`signal-500` #3b82f6) was rejected — it gives white label text only 3.68:1 contrast, under the 4.5:1 AA floor; `signal-600` is 5.17:1.
+- **Fixed the `convention` memory type rendering as bare text on `/examples`** while the other seven types rendered as pills. The tint was built by string concatenation (`` `${color}15` ``), which works for a bare hex but produced `var(--color-signal-600)15` for the one type whose color was a token, silently invalidating the background and border declarations. Replaced with `color-mix(in srgb, <color> N%, transparent)`, which works for hex and `var()` alike.
+- **Mobile nav menu now locks body scroll while open, closes on Escape, and closes when the viewport crosses the 768px breakpoint** — the panel is `md:hidden`, so without that last case rotating to landscape would hide the menu while leaving the scroll lock stranded on.
+
+Verified with `npx tsc --noEmit` (clean), `pnpm build` (clean), and a 9-check browser suite against `next start` covering scroll lock on/off, Escape, resize release, button fill, absence of the halo, 5.17:1 label contrast, and all 22 type pills painting a capsule.
+
 ### 2026-08-13 — Onboarding release: three security fixes, a working join path, a bundled CLI, and zero-install semantic search (`@tages/cli` 0.4.0 · `@tages/server` 0.3.0 · `@tages/shared` 0.2.0 · `@tages/harness-claude-code` 0.1.0 · the three editor plugins 0.1.0)
 
 A full-repo audit against the goal "a teammate signs up, joins, and recalls a colleague's memory" found the v0.3.0 tag was never distributed and the documented onboarding path did not work end to end. This release closes that. Verified by an automated end-to-end suite driving the real CLI as three distinct authenticated identities against production: **28/28**.

@@ -19,9 +19,13 @@ const buttonBase =
   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal-600'
 
 const buttonVariants = {
+  /* No coloured shadow. A blue halo under a blue slab darkens its edge and makes the
+   * button read heavier than the same blue does as text, which is the whole reason the
+   * fill looked darker than the rest of the palette. The hairline neutral shadow stays
+   * so the control still sits above the page. */
   primary:
     'bg-signal-600 text-white font-semibold hover:bg-signal-700 ' +
-    'shadow-[0_1px_1px_rgba(15,23,32,0.04),0_2px_6px_-1px_rgba(37,99,235,0.28)]',
+    'shadow-[0_1px_1px_rgba(15,23,32,0.04)]',
   secondary:
     'border border-line-strong bg-paper text-ink hover:bg-paper-sunken',
   ghost: 'text-ink-soft hover:text-ink',
@@ -67,7 +71,9 @@ export function Command({ value, label = 'Copy command' }: { value: string; labe
   return (
     <div className="group flex w-full items-center gap-3 rounded-control border border-line bg-paper-raised pl-4 pr-1.5 py-1.5 font-mono text-sm">
       <span aria-hidden className="select-none text-ink-faint">$</span>
-      <code className="flex-1 overflow-x-auto whitespace-nowrap text-ink">{value}</code>
+      {/* min-w-0 is load-bearing: a flex child defaults to min-width:auto, so without it
+       *  this nowrap line refuses to shrink and pushes the whole page wider than a phone. */}
+      <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-ink">{value}</code>
       <button
         type="button"
         onClick={copy}
@@ -145,7 +151,9 @@ export function CodePanel({
   } as const
 
   return (
-    <div className="overflow-hidden rounded-card border border-line bg-paper-sunken">
+    /* min-w-0 so the panel can sit in a grid or flex track and still scroll its own
+     * long lines instead of widening the page. */
+    <div className="min-w-0 overflow-hidden rounded-card border border-line bg-paper-sunken">
       {filename ? (
         <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
           <span className="font-mono text-xs text-ink-muted">{filename}</span>

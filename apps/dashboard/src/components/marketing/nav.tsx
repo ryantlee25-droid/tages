@@ -25,6 +25,32 @@ export function Nav() {
     return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
+  // While the mobile menu is open the page behind it must not scroll, or a thumb
+  // drag on the panel moves the hero instead. Escape closes it, and so does
+  // crossing into the desktop breakpoint: the panel is `md:hidden`, so without
+  // that the menu would vanish on rotation and leave the scroll lock stuck on.
+  useEffect(() => {
+    if (!open) return
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    const onResize = () => {
+      if (window.innerWidth >= 768) setOpen(false)
+    }
+
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('resize', onResize)
+
+    return () => {
+      document.body.style.overflow = previous
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('resize', onResize)
+    }
+  }, [open])
+
   return (
     <header
       className={`fixed top-0 z-50 w-full transition-colors duration-200 ${

@@ -8,13 +8,26 @@ interface MemoryCardProps {
   typeColor: string
 }
 
+/**
+ * Tints a type colour for the pill background and border.
+ *
+ * This used to be string concatenation (`${color}15`), which silently produced no
+ * capsule at all for any colour that was not a bare hex: `var(--color-signal-600)15`
+ * is not a colour, so the declaration was dropped and `convention` alone rendered as
+ * naked text while every other type got a pill. `color-mix` works for hex and for
+ * `var()` alike, so a token-valued colour cannot break the shape again.
+ */
+function tint(color: string, percent: number) {
+  return `color-mix(in srgb, ${color} ${percent}%, transparent)`
+}
+
 function MemoryCard({ type, memoryKey, value, files, typeColor }: MemoryCardProps) {
   return (
     <div className="rounded-control border border-line bg-paper-raised/50 p-5">
       <div className="mb-2 flex items-center gap-2">
         <span
           className="inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium"
-          style={{ backgroundColor: `${typeColor}20`, color: typeColor, border: `1px solid ${typeColor}40` }}
+          style={{ backgroundColor: tint(typeColor, 12), color: typeColor, border: `1px solid ${tint(typeColor, 25)}` }}
         >
           {type}
         </span>
@@ -85,7 +98,7 @@ export function ExamplesPage() {
           <span
             key={type}
             className="inline-flex items-center rounded-full px-3 py-0.5 text-xs font-medium"
-            style={{ backgroundColor: `${color}15`, color, border: `1px solid ${color}30` }}
+            style={{ backgroundColor: tint(color, 8), color, border: `1px solid ${tint(color, 19)}` }}
           >
             {type.replace('_', ' ')}
           </span>

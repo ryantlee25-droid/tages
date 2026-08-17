@@ -47,7 +47,9 @@ export function Quickstart() {
               >
                 {step.n}
               </div>
-              <div>
+              {/* min-w-0: a grid item defaults to min-width:auto, which would let the
+               *  longest command line set a floor wider than a phone screen. */}
+              <div className="min-w-0">
                 <h3 className="text-heading text-ink">{step.title}</h3>
                 <p className="mt-2 measure text-ink-soft">{step.body}</p>
                 <div className="mt-5 max-w-xl">
