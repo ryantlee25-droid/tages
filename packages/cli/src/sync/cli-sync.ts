@@ -81,6 +81,12 @@ export interface CliSyncContext {
    * instead of `flush` — otherwise a failed cloud write is reported as success.
    */
   flushWithResult: () => Promise<FlushResult>
+  /**
+   * Push dirty rows, then pull remote state into the local cache — push first,
+   * always. Remote wins on conflict except for rows that failed to push, which
+   * are preserved rather than overwritten. Never throws.
+   */
+  reconcile: () => Promise<{ pushed: boolean; pulled: number; error?: string; alreadyReported?: boolean }>
   close: () => void
 }
 
@@ -126,6 +132,10 @@ export async function openCliSync(config: ProjectConfig): Promise<CliSyncContext
         await flushWithResult()
       },
       flushWithResult,
+      // Nothing to reconcile against in local mode. Reported as a successful
+      // no-op, matching flush's contract here: local-only is the configured
+      // behaviour, not a failure.
+      reconcile: async () => ({ pushed: true, pulled: 0, alreadyReported: false }),
       close: () => {
         cache.close()
       },
@@ -202,6 +212,53 @@ export async function openCliSync(config: ProjectConfig): Promise<CliSyncContext
     return { ok: true }
   }
 
+  /**
+   * Push local changes, then pull remote state — in that order, always.
+   *
+   * Order is the whole safety property. Pull-then-push would let hydration
+   * overwrite an unsynced local edit with the cloud's older copy before the
+   * edit ever had a chance to leave the machine. Pushing first means anything
+   * still dirty afterwards genuinely failed, and `hydrateFromRemote`'s
+   * `preserveDirty` guard protects exactly that residue.
+   *
+   * Never throws and never blocks the command that called it: reconciliation
+   * is an optimisation of local state, so a network failure degrades to
+   * "carry on with what we have" rather than taking the command down.
+   */
+  const reconcile = async (): Promise<{
+    pushed: boolean
+    pulled: number
+    error?: string
+    /** True when openCliSync already printed this reason, so callers do not echo it. */
+    alreadyReported?: boolean
+  }> => {
+    if (!sync) {
+      return {
+        pushed: false,
+        pulled: 0,
+        error: setupError || 'cloud sync is unavailable',
+        alreadyReported: setupError !== null,
+      }
+    }
+
+    const push = await flushWithResult()
+    try {
+      const pulled = await sync.hydrate()
+      return { pushed: push.ok, pulled: typeof pulled === 'number' ? pulled : 0, error: push.ok ? undefined : push.error }
+    } catch (err) {
+      // Report BOTH halves. Overwriting push.error with the hydrate error hides
+      // the more important message: a failed push means the user's memories are
+      // not reaching their team, which is the entire reason this is surfaced.
+      // A failed pull only means their local copy is stale.
+      const pullError = `pull failed: ${(err as Error).message}`
+      return {
+        pushed: push.ok,
+        pulled: 0,
+        error: push.ok ? pullError : `${push.error}; ${pullError}`,
+      }
+    }
+  }
+
   return {
     cache,
     flush: async () => {
@@ -213,6 +270,7 @@ export async function openCliSync(config: ProjectConfig): Promise<CliSyncContext
       }
     },
     flushWithResult,
+    reconcile,
     close: () => {
       if (sync) {
         try {

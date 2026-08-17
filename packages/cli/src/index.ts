@@ -43,6 +43,7 @@ import { teamInviteCommand, teamListCommand, teamRemoveCommand, teamRoleCommand 
 import { settingsAutoSaveCommand } from './commands/settings.js'
 import { agentsMdWriteCommand, agentsMdAuditCommand, agentsMdDiffCommand, agentsMdFederateCommand } from './commands/agents-md.js'
 import { driftCommand } from './commands/drift.js'
+import { autoReconcile } from './sync/auto-reconcile.js'
 import {
   harnessEnableCommand,
   harnessDisableCommand,
@@ -96,6 +97,25 @@ program
   .name('tages')
   .description('Persistent codebase memory for AI coding agents')
   .version(resolveCliVersion())
+
+/**
+ * Reconcile the local cache with the cloud before any command that reads or
+ * writes memories, so a teammate's work is visible without restarting the
+ * agent. Rate-limited, best-effort, and never able to fail the command — see
+ * sync/auto-reconcile.ts. `TAGES_NO_AUTO_SYNC=1` opts out.
+ */
+program.hook('preAction', async (_thisCommand, actionCommand) => {
+  if (process.env.TAGES_NO_AUTO_SYNC === '1') return
+  // Walk all the way up to `program` so subcommands inherit their TOP-level
+  // group's policy at any depth. Checking only one level would resolve a
+  // three-deep `tages harness claude-code enable` to `claude-code`, which is
+  // not in SKIP, and reconcile despite `harness` being skipped.
+  let root = actionCommand
+  while (root.parent && root.parent !== program) root = root.parent
+  const rootName = root.parent === program ? root.name() : actionCommand.name()
+  const opts = actionCommand.opts?.() ?? {}
+  await autoReconcile(rootName, { slug: typeof opts.project === 'string' ? opts.project : undefined })
+})
 
 program
   .command('init')

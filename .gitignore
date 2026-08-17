@@ -16,3 +16,4 @@ auth.json
 .vercel
 HOOK.md
 .semgrep-results/
+e2e/results/

@@ -117,9 +117,22 @@ export class SupabaseSync {
 
           if (data && data.length > 0) {
             const memories: Memory[] = data.map(dbRowToMemory)
-            this.cache.hydrateFromRemote(memories)
-            this.cache.setLastSyncedAt(this.projectId, new Date().toISOString(), this.cache.getMemoryCount(this.projectId))
-            return memories.length
+            const result = this.cache.hydrateFromRemote(memories)
+            // Only advance the watermark when everything was applied. A row
+            // skipped to protect an unsynced local edit is still pending, and
+            // moving `last_synced_at` past it would push that revision outside
+            // every future `updated_at > lastSynced` window — the local copy of
+            // that key could then never be refreshed again, silently, because
+            // the "cache is current" fast path would report it up to date
+            // forever. Holding the watermark costs one redundant delta query.
+            if (!result?.skipped?.length) {
+              this.cache.setLastSyncedAt(this.projectId, new Date().toISOString(), this.cache.getMemoryCount(this.projectId))
+            } else {
+              console.error(
+                `[tages] Held sync watermark: ${result.skipped.length} remote update(s) deferred behind unsynced local edits`,
+              )
+            }
+            return result?.applied ?? memories.length
           }
         }
       }
@@ -137,9 +150,16 @@ export class SupabaseSync {
 
       if (data && data.length > 0) {
         const memories: Memory[] = data.map(dbRowToMemory)
-        this.cache.hydrateFromRemote(memories)
-        this.cache.setLastSyncedAt(this.projectId, new Date().toISOString(), memories.length)
-        return memories.length
+        const result = this.cache.hydrateFromRemote(memories)
+        // Same watermark rule as the delta path above.
+        if (!result?.skipped?.length) {
+          this.cache.setLastSyncedAt(this.projectId, new Date().toISOString(), memories.length)
+        } else {
+          console.error(
+            `[tages] Held sync watermark: ${result.skipped.length} remote update(s) deferred behind unsynced local edits`,
+          )
+        }
+        return result?.applied ?? memories.length
       }
       return 0
     } catch (err) {

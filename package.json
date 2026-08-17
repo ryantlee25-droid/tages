@@ -8,6 +8,8 @@
     "build": "pnpm -r build",
     "dev": "pnpm --filter @tages/dashboard dev",
     "test": "pnpm -r test",
+    "test:e2e": "node e2e/run.mjs",
+    "test:e2e:local": "node e2e/run.mjs --mode local",
     "lint": "eslint .",
     "typecheck": "pnpm -r typecheck",
     "prepare": "husky"

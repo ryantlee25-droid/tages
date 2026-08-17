@@ -96,6 +96,18 @@ CREATE INDEX IF NOT EXISTS memory_chunks_memory_id ON memory_chunks(memory_id);
 CREATE INDEX IF NOT EXISTS memory_chunks_dirty ON memory_chunks(dirty) WHERE dirty = 1;
 `
 
+/**
+ * Outcome of applying remote state to the local cache.
+ *
+ * `skipped` lists rows that were NOT applied because a local unsynced edit to
+ * the same key would have been destroyed. Callers must not advance a
+ * `updated_at`-based watermark past a skipped row — see SupabaseSync.hydrate().
+ */
+export interface HydrateResult {
+  applied: number
+  skipped: Array<{ projectId: string; key: string; updatedAt: string }>
+}
+
 export class SqliteCache {
   private db: Database.Database
 
@@ -541,13 +553,65 @@ export class SqliteCache {
     `).run(...ids)
   }
 
-  hydrateFromRemote(memories: Memory[]): void {
+  /**
+   * Apply remote state to the local cache. The remote copy wins — that is the
+   * point of hydration — with one exception.
+   *
+   * `preserveDirty` (default true) skips any key that is still marked dirty
+   * locally. Without it, hydration silently destroys unsynced work: a local
+   * edit that has not been pushed yet is overwritten by the cloud's OLDER copy
+   * AND has its dirty flag cleared by `upsertMemory(mem, false)`, so it is
+   * never retried. The user sees their correction revert with no error.
+   *
+   * That is not hypothetical. Until migration 0069, a failing version-snapshot
+   * trigger left every edit permanently dirty; a hydrate in that state would
+   * have wiped the queue. Any push failure — offline, expired token, a
+   * rejected row — reproduces it.
+   *
+   * Correct usage is push-then-pull: flush first so dirty rows become clean and
+   * legitimately lose to remote state, then hydrate. Whatever is still dirty
+   * afterwards genuinely failed to push and must be protected, not discarded.
+   */
+  hydrateFromRemote(memories: Memory[], opts: { preserveDirty?: boolean } = {}): HydrateResult {
+    const preserveDirty = opts.preserveDirty !== false
+    // Composite keys are built with JSON.stringify rather than a delimiter
+    // string. A delimiter has to be a character that cannot appear in a project
+    // id or a key, and the obvious choice — NUL — is a trap: a raw NUL byte in
+    // the source makes this entire file test as binary, at which point ripgrep
+    // refuses to search it and grep silently returns nothing for symbols that
+    // are plainly present. Code search across a 1,200-line core module breaks
+    // for every developer and every agent, with no visible cause. JSON escaping
+    // is unambiguous and involves no control characters at all.
+    const composite = (projectId: string, key: string) => JSON.stringify([projectId, key])
+    const dirtyKeys = preserveDirty
+      ? new Set(
+          (
+            this.db.prepare('SELECT project_id, key FROM memories WHERE dirty = 1').all() as Array<{
+              project_id: string
+              key: string
+            }>
+          ).map(r => composite(r.project_id, r.key)),
+        )
+      : new Set<string>()
+
+    const skipped: Array<{ projectId: string; key: string; updatedAt: string }> = []
     const upsert = this.db.transaction((mems: Memory[]) => {
       for (const mem of mems) {
+        if (dirtyKeys.has(composite(mem.projectId, mem.key))) {
+          skipped.push({ projectId: mem.projectId, key: mem.key, updatedAt: mem.updatedAt })
+          continue
+        }
         this.upsertMemory(mem, false)
       }
     })
     upsert(memories)
+
+    // Reported so the caller can decide whether it is safe to advance its
+    // watermark. Advancing past a skipped row would move that revision outside
+    // the next `updated_at > lastSynced` window, so the local copy of a
+    // permanently-dirty key could never be refreshed again — silently, and
+    // forever. See SupabaseSync.hydrate().
+    return { applied: memories.length - skipped.length, skipped }
   }
 
   // --- Sync metadata ---
