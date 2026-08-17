@@ -186,6 +186,10 @@ A full-repo audit against the goal "a teammate signs up, joins, and recalls a co
 
 - **Semantic search now needs nothing installed.** Embedding used to run client-side, so every developer had to install Ollama or hold an OpenAI key — and `embedOne` probed Ollama *unconditionally*, so a teammate who happened to have it running for an unrelated project silently wrote vectors from a different model into the shared index. Similarity across models is meaningless, so those results looked confident and were noise. Embedding now runs through a hosted Supabase edge function (`gte-small`, JWT-gated, project-membership checked), and provider selection is a deterministic switch resolved once per process with no fallthrough. An unreachable endpoint degrades to trigram; it never silently switches model. All 135 existing prod memories were re-embedded onto the new provider.
 
+### 2026-08-17 — Release: `@tages/cli` 0.5.0
+
+Releasing `@tages/cli` 0.5.0, which packages the `login`, `logout`, and `whoami` commands added in commit `2529355` (see the entry above). No other workspace package is changing in this release.
+
 **Known limitation (superseded):** embeddings were previously opt-in. Without Ollama or `TAGES_OPENAI_EMBED`, memories store with a null embedding and recall silently degrades to trigram matching. See `docs/team-onboarding.md`.
 
 ### 2026-07-19 — Team-readiness release (`@tages/cli` 0.3.0 · `@tages/server` 0.2.0 · `@tages/shared` 0.1.2)
