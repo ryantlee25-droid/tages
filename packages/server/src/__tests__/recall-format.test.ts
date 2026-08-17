@@ -46,7 +46,12 @@ describe('Task 13: recall output shaping', () => {
     const result = await handleRecall({ query: 'convention-a' }, TEST_PROJECT, cache, null)
     const text = result.content[0].text
 
-    expect(text).toMatch(/\[1\] \[convention\] convention-a\s+\(source: agent, updated: \d{4}-\d{2}-\d{2}\)/)
+    // The provenance parenthetical carries source, evidence level (migration
+    // 0070), and date. An agent write defaults to `inferred` — it concluded
+    // this, it did not check it.
+    expect(text).toMatch(
+      /\[1\] \[convention\] convention-a\s+\(source: agent, evidence: inferred, updated: \d{4}-\d{2}-\d{2}\)/,
+    )
     expect(text).toContain('cite the passage number')
   })
 
@@ -95,7 +100,7 @@ describe('Task 13: recall output shaping', () => {
     const text = result.content[0].text
 
     expect(text).toMatch(
-      /^Found 1 memories for "snap-key" \(local \(ranked\)\)\. Passages are numbered \[1\]-\[1\] — cite the passage number\(s\) that support your answer\.\n\n\[1\] \[lesson\] snap-key {2}\(source: agent, updated: \d{4}-\d{2}-\d{2}\)\n {3}snapshot value\n {3}Tags: t1, t2$/,
+      /^Found 1 memories for "snap-key" \(local \(ranked\)\)\. Passages are numbered \[1\]-\[1\] — cite the passage number\(s\) that support your answer\.\n\n\[1\] \[lesson\] snap-key {2}\(source: agent, evidence: inferred, updated: \d{4}-\d{2}-\d{2}\)\n {3}snapshot value\n {3}Tags: t1, t2$/,
     )
   })
 

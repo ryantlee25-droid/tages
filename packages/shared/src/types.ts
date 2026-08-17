@@ -23,6 +23,65 @@ export type MemorySource =
 
 export type MemoryStatus = 'live' | 'pending' | 'archived'
 
+/**
+ * How well established a claim is — distinct from `type` (what it is about),
+ * `source` (how it was captured), and `confidence` (a float that conflates the
+ * two).
+ *
+ * An agent reading `confidence: 0.8` cannot tell whether a test proved the
+ * claim or a model guessed it, and those warrant opposite behaviour: act, or
+ * check first. This field answers that and nothing else.
+ *
+ *   verified   checked against something executable — a test, a command, a file
+ *   declared   asserted by a human as policy or intent; true because decided
+ *   observed   seen happening once; empirical, may not generalise
+ *   inferred   concluded by reasoning without a direct check — a lead, not a fact
+ *   disputed   contradicted by evidence or by another memory
+ *
+ * `undefined` means unknown and is never inferred: memories written before this
+ * existed have no assessment behind them, and inventing one is precisely the
+ * failure this field prevents.
+ *
+ * Adapted from YAIML's evidence discipline (github.com/wirsingj/YAIML).
+ */
+export type EvidenceLevel = 'verified' | 'declared' | 'observed' | 'inferred' | 'disputed'
+
+export const EVIDENCE_LEVELS: readonly EvidenceLevel[] = [
+  'verified',
+  'declared',
+  'observed',
+  'inferred',
+  'disputed',
+] as const
+
+export function isEvidenceLevel(v: unknown): v is EvidenceLevel {
+  return typeof v === 'string' && (EVIDENCE_LEVELS as readonly string[]).includes(v)
+}
+
+/**
+ * Retrieval weight per level, applied multiplicatively to text and semantic
+ * scores at rank time.
+ *
+ * A level that is recorded but never affects what comes back first is
+ * decorative. `disputed` is demoted hardest but deliberately NOT suppressed —
+ * a contradicted claim is exactly what someone re-litigating a decision needs
+ * to find, so it must remain reachable, clearly labelled.
+ *
+ * An unknown level (pre-existing rows) scores 1.0: neither rewarded nor
+ * punished for a field nobody filled in.
+ */
+export const EVIDENCE_WEIGHT: Record<EvidenceLevel, number> = {
+  verified: 1.0,
+  declared: 0.95,
+  observed: 0.9,
+  inferred: 0.75,
+  disputed: 0.5,
+}
+
+export function evidenceWeight(level: EvidenceLevel | undefined | null): number {
+  return level ? EVIDENCE_WEIGHT[level] : 1.0
+}
+
 export interface MemoryExample {
   input: string
   output: string
@@ -48,6 +107,8 @@ export interface Memory {
   filePaths?: string[]
   tags?: string[]
   confidence: number
+  /** How well established the claim is. Undefined means unknown, never assumed. */
+  evidence?: EvidenceLevel
   // Structured metadata (optional — enriches recall quality)
   conditions?: string[]
   phases?: string[]
