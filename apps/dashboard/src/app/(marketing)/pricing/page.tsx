@@ -1,7 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
-import { Pricing, PricingComparison, PricingFAQ } from '@/components/marketing/pricing'
-import { Footer } from '@/components/marketing/footer'
+import { Pricing, PricingFAQ } from '@/components/marketing/pricing'
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
@@ -19,11 +18,9 @@ export default async function PricingPage() {
 
   return (
     <>
-      <div className="pt-16" />
+      <div className="pt-12" />
       <Pricing />
-      <PricingComparison />
       <PricingFAQ />
-      <Footer />
     </>
   )
 }

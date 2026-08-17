@@ -5,9 +5,9 @@ interface SectionProps {
 
 function Section({ title, children }: SectionProps) {
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6 sm:p-8">
-      <h2 className="mb-4 text-xl font-semibold text-white">{title}</h2>
-      <div className="space-y-3 text-zinc-400">{children}</div>
+    <div className="rounded-card border border-line bg-paper-raised/50 p-6 sm:p-8">
+      <h2 className="mb-4 text-heading text-ink">{title}</h2>
+      <div className="space-y-3 text-ink-soft">{children}</div>
     </div>
   )
 }
@@ -18,7 +18,7 @@ interface BadgeProps {
 
 function Badge({ label }: BadgeProps) {
   return (
-    <span className="inline-flex items-center rounded-full border border-[#3BA3C7]/30 bg-[#3BA3C7]/10 px-3 py-0.5 text-xs font-medium text-[#3BA3C7]">
+    <span className="inline-flex items-center rounded-full border border-signal-200 bg-signal-50 px-3 py-0.5 text-xs font-medium text-signal-600">
       {label}
     </span>
   )
@@ -32,14 +32,14 @@ interface FieldRowProps {
 
 function FieldRow({ name, type, description }: FieldRowProps) {
   return (
-    <tr className="border-b border-zinc-800 last:border-0">
+    <tr className="border-b border-line last:border-0">
       <td className="py-2 pr-4 align-top">
-        <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs font-mono text-zinc-200">
+        <code className="rounded bg-paper-sunken px-1.5 py-0.5 text-xs font-mono text-ink">
           {name}
         </code>
       </td>
-      <td className="py-2 pr-4 align-top text-xs text-zinc-500">{type}</td>
-      <td className="py-2 align-top text-sm text-zinc-400">{description}</td>
+      <td className="py-2 pr-4 align-top text-xs text-ink-muted">{type}</td>
+      <td className="py-2 align-top text-sm text-ink-soft">{description}</td>
     </tr>
   )
 }
@@ -49,14 +49,14 @@ export function GovernancePage() {
     <div className="relative mx-auto max-w-3xl px-6 py-24">
       {/* Header */}
       <div className="mb-16 text-center">
-        <div className="mb-6 inline-flex items-center rounded-full border border-[#3BA3C7]/30 bg-[#3BA3C7]/10 px-4 py-1.5 text-sm text-[#3BA3C7]">
+        <div className="mb-6 inline-flex items-center rounded-full border border-signal-200 bg-signal-50 px-4 py-1.5 text-sm text-signal-600">
           Memory governance
         </div>
-        <h1 className="text-4xl font-bold tracking-tight text-white sm:text-5xl">
+        <h1 className="text-4xl font-bold tracking-tight text-ink sm:text-5xl">
           Shared memory your team can{' '}
-          <span style={{ color: '#3BA3C7' }}>actually audit</span>
+          <span className="text-signal-600">actually audit</span>
         </h1>
-        <p className="mt-6 text-lg text-zinc-400">
+        <p className="mt-6 text-lg text-ink-soft">
           When three developers are using Claude Code, Cursor, and Codex on the same codebase,
           Tages gives you one memory graph with provenance, RBAC, and an audit trail across
           every agent. Memory isn&apos;t storage. It&apos;s a team practice.
@@ -95,17 +95,17 @@ export function GovernancePage() {
             Every memory write captures the full context of its origin. This is stored alongside
             the memory value and is queryable via the CLI, MCP tools, and the dashboard.
           </p>
-          <div className="mt-4 overflow-x-auto rounded-lg border border-zinc-800 bg-zinc-950/50">
+          <div className="mt-4 overflow-x-auto rounded-control border border-line bg-paper/50">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="border-b border-zinc-800">
-                  <th className="py-2 pl-3 pr-4 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                <tr className="border-b border-line">
+                  <th className="py-2 pl-3 pr-4 text-xs font-semibold uppercase tracking-wide text-ink-muted">
                     Field
                   </th>
-                  <th className="py-2 pr-4 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  <th className="py-2 pr-4 text-xs font-semibold uppercase tracking-wide text-ink-muted">
                     Type
                   </th>
-                  <th className="py-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  <th className="py-2 text-xs font-semibold uppercase tracking-wide text-ink-muted">
                     Description
                   </th>
                 </tr>
@@ -149,9 +149,9 @@ export function GovernancePage() {
               </tbody>
             </table>
           </div>
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-ink-muted">
             See{' '}
-            <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs font-mono text-zinc-200">
+            <code className="rounded bg-paper-sunken px-1.5 py-0.5 text-xs font-mono text-ink">
               docs/provenance-model.md
             </code>{' '}
             for the formal specification and migration history.
@@ -165,19 +165,19 @@ export function GovernancePage() {
             RBAC role of the actor at the time of the write.
           </p>
           <p>
-            <strong className="text-white">Retention:</strong> audit rows are retained for
+            <strong className="text-ink">Retention:</strong> audit rows are retained for
             365 days by default. Self-hosted deployments configure retention via the{' '}
-            <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs font-mono text-zinc-200">
+            <code className="rounded bg-paper-sunken px-1.5 py-0.5 text-xs font-mono text-ink">
               TAGES_AUDIT_RETENTION_DAYS
             </code>{' '}
             environment variable. Cloud customers on the Governance tier can request extended
             retention (up to 7 years) to meet SOC 2 and HIPAA requirements.
           </p>
           <p>
-            <strong className="text-white">Tamper-evidence:</strong> each audit row is written
+            <strong className="text-ink">Tamper-evidence:</strong> each audit row is written
             with a row-level hash chained to the previous row within the same project. Any
             modification or deletion breaks the chain and is detectable via{' '}
-            <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs font-mono text-zinc-200">
+            <code className="rounded bg-paper-sunken px-1.5 py-0.5 text-xs font-mono text-ink">
               tages audit verify
             </code>
             . (Planned for Governance tier; see roadmap.)
@@ -191,21 +191,21 @@ export function GovernancePage() {
           </p>
           <ul className="list-inside list-disc space-y-1 text-sm">
             <li>
-              <strong className="text-zinc-300">JSON Lines</strong> — one record per line, full
+              <strong className="text-ink-soft">JSON Lines</strong> — one record per line, full
               field fidelity, stable schema version.
             </li>
             <li>
-              <strong className="text-zinc-300">CSV</strong> — flattened rows for spreadsheet
+              <strong className="text-ink-soft">CSV</strong> — flattened rows for spreadsheet
               and SIEM ingestion.
             </li>
             <li>
-              <strong className="text-zinc-300">NDJSON stream</strong> — for incremental export to
+              <strong className="text-ink-soft">NDJSON stream</strong> — for incremental export to
               OpenTelemetry-compatible pipelines (planned).
             </li>
           </ul>
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-ink-muted">
             Run{' '}
-            <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs font-mono text-zinc-200">
+            <code className="rounded bg-paper-sunken px-1.5 py-0.5 text-xs font-mono text-ink">
               tages audit export --format json --since 2026-01-01
             </code>{' '}
             to export scoped ranges.
@@ -236,19 +236,19 @@ export function GovernancePage() {
           <p>Three roles at the project scope:</p>
           <ul className="list-inside list-disc space-y-1 text-sm">
             <li>
-              <strong className="text-zinc-300">Owner</strong> — full read/write, can manage
+              <strong className="text-ink-soft">Owner</strong> — full read/write, can manage
               members, rotate tokens, export audit logs, revoke invites.
             </li>
             <li>
-              <strong className="text-zinc-300">Admin</strong> — full read/write, can invite
+              <strong className="text-ink-soft">Admin</strong> — full read/write, can invite
               members but not remove owners, can export audit logs.
             </li>
             <li>
-              <strong className="text-zinc-300">Member</strong> — read-only by default; write
+              <strong className="text-ink-soft">Member</strong> — read-only by default; write
               access is grantable per memory type by owners.
             </li>
           </ul>
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-ink-muted">
             Enforced at the Supabase Row Level Security layer (migration 0031 and
             0051_team_rbac_hardening). UI and MCP tools receive the same RLS denials; there is
             no enforcement split between layers.
@@ -260,7 +260,7 @@ export function GovernancePage() {
             Federation lets one team memory propagate to other projects with explicit override
             rules. Security and platform teams can own specific memory types or AGENTS.md
             sections (planned via{' '}
-            <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs font-mono text-zinc-200">
+            <code className="rounded bg-paper-sunken px-1.5 py-0.5 text-xs font-mono text-ink">
               tages agents-md federate
             </code>
             ) so cross-project conventions stay consistent without manual copy-paste.
@@ -274,13 +274,13 @@ export function GovernancePage() {
         <Section title="Drift detection (roadmap)">
           <p>
             When multiple developers run agents on the same codebase, memory state drifts.
-            Tages&apos; <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs font-mono text-zinc-200">
+            Tages&apos; <code className="rounded bg-paper-sunken px-1.5 py-0.5 text-xs font-mono text-ink">
               tages drift
             </code>{' '}
             command computes an Agent Stability Index across semantic, coordination, and
             behavioral drift dimensions, surfacing which memory keys are diverging and why.
           </p>
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-ink-muted">
             Inspired by the Agent Drift paper (arxiv:2601.04170). Shipping in the Governance
             tier.
           </p>
@@ -289,15 +289,15 @@ export function GovernancePage() {
         <Section title="Encryption &amp; transport">
           <p>
             Optional AES-256-GCM field-level encryption for memory values (set{' '}
-            <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs font-mono text-zinc-200">
+            <code className="rounded bg-paper-sunken px-1.5 py-0.5 text-xs font-mono text-ink">
               TAGES_ENCRYPTION_KEY
             </code>
             ). All cloud traffic over TLS 1.2+. Supabase Auth with GitHub OAuth for user
             identity; SHA-256 hashed CLI tokens with expiration and rotation.
           </p>
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-ink-muted">
             Full security posture at{' '}
-            <a href="/security" className="text-[#3BA3C7] hover:underline">
+            <a href="/security" className="text-signal-600 hover:underline">
               /security
             </a>
             .
@@ -311,11 +311,11 @@ export function GovernancePage() {
             <li>HIPAA readiness: dependent on customer demand; self-hosted BYOK available today</li>
             <li>Data residency: self-hosting on your own Supabase region supported today</li>
           </ul>
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-ink-muted">
             Compliance status is documented openly. Contact{' '}
             <a
               href="mailto:security@tages.ai"
-              className="text-[#3BA3C7] hover:underline"
+              className="text-signal-600 hover:underline"
             >
               security@tages.ai
             </a>{' '}

@@ -1,7 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { ExamplesPage } from '@/components/marketing/examples-page'
-import { Footer } from '@/components/marketing/footer'
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
@@ -20,7 +19,6 @@ export default async function Examples() {
   return (
     <>
       <ExamplesPage />
-      <Footer />
     </>
   )
 }

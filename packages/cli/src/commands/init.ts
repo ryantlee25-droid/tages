@@ -1,5 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
+import { fileURLToPath } from 'url'
 import chalk from 'chalk'
 import ora from 'ora'
 import { createSupabaseClient, createCloudProject, createLocalProject } from '@tages/shared'
@@ -11,6 +12,93 @@ import { installPostCommitHook } from '../indexer/install-hook.js'
 const DASHBOARD_URL = process.env.TAGES_DASHBOARD_URL || 'https://app.tages.ai'
 const SUPABASE_URL = process.env.TAGES_SUPABASE_URL || 'https://wezagdgpvwfywjoxztfs.supabase.co'
 const SUPABASE_ANON_KEY = process.env.TAGES_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndlemFnZGdwdndmeXdqb3h6dGZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzNDcyNTAsImV4cCI6MjA5MDkyMzI1MH0.iMJ3gnt0w104QxzEaTLJsAYVciPDFJvAzOtIU5tofG0'
+
+/** How the MCP client should launch the tages server, plus where it came from. */
+export interface ServerInvocation {
+  /** Executable for the `.mcp.json` `command` field. */
+  command: string
+  /** Args for the `.mcp.json` `args` field. Always passed alongside `command`. */
+  args: string[]
+  /**
+   * True when we resolved a server built from this checkout; false when we
+   * fell back to the published npm package.
+   */
+  local: boolean
+  /** Absolute path to the local server entrypoint — set only when `local`. */
+  serverPath?: string
+}
+
+/**
+ * Decides how `.mcp.json` should launch the tages MCP server.
+ *
+ * Prefers the server built from THIS checkout (`packages/server/dist/index.js`)
+ * over `npx -y @tages/server`: the published package lags this repo, and the
+ * team installs the CLI from a monorepo clone, so pointing at npm would wire an
+ * agent to a stale server. Falls back to the npx form when no local build is
+ * found (a genuine `npm i -g @tages/cli` install) — never to a path that
+ * doesn't exist, which would make Claude Code fail to start the server at all.
+ *
+ * Both fields are always returned together because `injectMcpConfig` does NOT
+ * inherit its npx args default once a custom `serverCommand` is supplied.
+ */
+export function resolveServerInvocation(): ServerInvocation {
+  const serverPath = resolveLocalServerEntrypoint()
+  if (serverPath) {
+    return { command: 'node', args: [serverPath], local: true, serverPath }
+  }
+  return { command: 'npx', args: ['-y', '@tages/server'], local: false }
+}
+
+/**
+ * Walks up from this module's own resolved location looking for a built
+ * `packages/server/dist/index.js` in the same monorepo.
+ *
+ * Mirrors the walk in `sync/cli-sync.ts` and `commands/harness.ts`, with the
+ * package.json `name` check that `index.ts`'s `resolveCliVersion` added: a
+ * bare path-shape match can hit an unrelated `packages/server` in whatever
+ * repo the user happens to be nested under, so the candidate only counts when
+ * its package.json actually says `@tages/server`.
+ *
+ * The walk absorbs both invocation depths. Under `tsx` this file is
+ * `packages/cli/src/commands/init.ts` (4 levels below the root); in the built
+ * output it is `packages/cli/dist/packages/cli/src/commands/init.js` (7
+ * levels), because the CLI tsconfig sets `rootDir: '../../'`. It also works
+ * through a `pnpm link --global` symlink, since Node resolves
+ * `import.meta.url` to the real path.
+ */
+function resolveLocalServerEntrypoint(): string | null {
+  try {
+    let dir = path.dirname(fileURLToPath(import.meta.url))
+    for (let i = 0; i < 10; i++) {
+      const pkgPath = path.join(dir, 'packages', 'server', 'package.json')
+      const entry = path.join(dir, 'packages', 'server', 'dist', 'index.js')
+      if (fs.existsSync(pkgPath) && fs.existsSync(entry)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8')) as { name?: string }
+        if (pkg.name === '@tages/server') return entry
+      }
+      const parent = path.dirname(dir)
+      if (parent === dir) break
+      dir = parent
+    }
+  } catch {
+    // Unreadable package.json, exotic URL scheme — treat as "no local build".
+  }
+  return null
+}
+
+/**
+ * Prints the resolved server invocation so the user can see which server their
+ * agent was just wired to, and can tell a stale-npm wiring from a local one.
+ */
+export function printServerInvocation(server: ServerInvocation) {
+  if (server.local) {
+    console.log(chalk.green('  MCP server:'), `node ${server.serverPath}`, chalk.dim('(local build)'))
+  } else {
+    console.log(chalk.green('  MCP server:'), 'npx -y @tages/server', chalk.dim('(published package)'))
+    console.log(chalk.dim('  No local packages/server/dist/index.js found — run `pnpm build` in your'))
+    console.log(chalk.dim('  tages checkout and re-run to wire the agent to the local server instead.'))
+  }
+}
 
 interface InitOptions {
   local?: boolean   // opt-out of cloud mode; use local-only mode
@@ -45,10 +133,13 @@ export async function initCommand(options: InitOptions) {
     const projectPath = path.join(getProjectsDir(), `${slug}.json`)
     fs.writeFileSync(projectPath, JSON.stringify(projectConfig, null, 2) + '\n', { mode: 0o600 })
 
-    // Inject MCP config
+    // Inject MCP config, pointed at the local server build when there is one
+    const server = resolveServerInvocation()
     const { path: mcpPath, created } = injectMcpConfig({
       projectId: projectConfig.projectId,
       projectSlug: slug,
+      serverCommand: server.command,
+      serverArgs: server.args,
     })
 
     // Install post-commit hook for auto-indexing
@@ -58,6 +149,7 @@ export async function initCommand(options: InitOptions) {
     console.log()
     console.log(chalk.green('  Project config:'), projectPath)
     console.log(chalk.green('  MCP config:'), mcpPath, created ? '(created)' : '(updated)')
+    printServerInvocation(server)
     if (hookInstalled) {
       console.log(chalk.green('  Git hook:'), hookPath)
     }
@@ -127,12 +219,15 @@ export async function initCommand(options: InitOptions) {
   const projectPath = path.join(getProjectsDir(), `${slug}.json`)
   fs.writeFileSync(projectPath, JSON.stringify(projectConfig, null, 2) + '\n', { mode: 0o600 })
 
-  // Inject MCP config with real credentials
+  // Inject MCP config with real credentials, pointed at the local server build
+  const server = resolveServerInvocation()
   const { path: mcpPath, created } = injectMcpConfig({
     supabaseUrl: SUPABASE_URL,
     supabaseAnonKey: SUPABASE_ANON_KEY,
     projectId,
     projectSlug: slug,
+    serverCommand: server.command,
+    serverArgs: server.args,
   })
 
   // Install post-commit hook for auto-indexing
@@ -142,6 +237,7 @@ export async function initCommand(options: InitOptions) {
   console.log(chalk.green('  Auth saved:'), getAuthPath())
   console.log(chalk.green('  Project config:'), projectPath)
   console.log(chalk.green('  MCP config:'), mcpPath, created ? '(created)' : '(updated)')
+  printServerInvocation(server)
   if (hookInstalled) {
     console.log(chalk.green('  Git hook:'), hookPath)
   }
@@ -203,10 +299,13 @@ export async function initCommand(options: InitOptions) {
       }
     }
 
-    // Print MCP config snippet for teammates
+    // Print the join command for teammates. `tages link --project-id` verifies
+    // membership, writes the local project config, injects `.mcp.json` (pointed
+    // at whichever server that machine resolves) and installs the git hook — so
+    // teammates no longer hand-wire `claude mcp add` or export env vars.
     console.log(chalk.bold('\n  Share this with your teammates:\n'))
-    console.log(chalk.cyan('  claude mcp add tages -- npx -y @tages/server'))
-    console.log(chalk.dim('\n  # Environment variables for team members:'))
+    console.log(chalk.cyan(`  tages link --project-id ${projectId}`))
+    console.log(chalk.dim('\n  # Equivalent manual wiring, if they are not using the tages CLI:'))
     console.log(chalk.dim(`  TAGES_PROJECT_ID=${projectId}`))
     console.log(chalk.dim(`  TAGES_PROJECT_SLUG=${slug}`))
     console.log(chalk.dim(`  TAGES_SUPABASE_URL=${SUPABASE_URL}`))

@@ -20,6 +20,75 @@ const RECALL_CANDIDATE_POOL = Number(process.env.TAGES_RECALL_CANDIDATE_POOL) ||
 // cross-encoder/judge rerank pass — matches the CLI's Task 2 window.
 const RERANK_TOP_K = 20
 
+// PLAN-HOSTED-EMBEDDING.md Task 2: in-process LRU cache for QUERY embeddings.
+//
+// With hosted embedding, every recall costs a ~550ms network round trip before
+// any search runs. Repeated/refined queries in one session pay that repeatedly.
+//
+// SCOPE, stated plainly: this only helps the LONG-LIVED MCP SERVER, where the
+// process survives across many recall calls. It does essentially nothing for
+// one-shot CLI invocations, which exit before a second lookup could hit. It is
+// also per-process and never persisted or shared — two MCP servers do not
+// share entries. That is the accepted trade (PLAN-HOSTED-EMBEDDING.md,
+// "Ambiguities resolved"), not an oversight.
+const QUERY_EMBEDDING_CACHE_MAX = 50
+const QUERY_EMBEDDING_CACHE_TTL_MS = 5 * 60 * 1000
+
+// Map preserves insertion order, which is all an LRU of this size needs:
+// re-inserting on hit moves an entry to the newest position, and eviction
+// takes the oldest key.
+const queryEmbeddingCache = new Map<string, { embedding: number[]; expiresAt: number }>()
+
+/**
+ * Embed a recall query, memoized per (project, query).
+ *
+ * The provider is deliberately NOT part of the key: embeddings.ts resolves one
+ * provider per process and never re-reads it, so every entry in this map is
+ * guaranteed to come from the same model and the same vector space. Keying on
+ * it would imply a variation that cannot occur.
+ *
+ * Only SUCCESSFUL embeddings are cached. Caching a `null` would pin a
+ * transient hosted timeout or 5xx in place for the full TTL, silently forcing
+ * this project onto trigram for five minutes after one blip.
+ *
+ * This is module-level state that outlives an individual test; suites needing
+ * a cold cache should call `__resetQueryEmbeddingCacheForTests()`.
+ */
+async function getQueryEmbedding(
+  query: string,
+  projectId: string,
+  supabaseClient?: SupabaseClient,
+): Promise<number[] | null> {
+  const key = `${projectId} ${query}`
+  const now = Date.now()
+
+  const hit = queryEmbeddingCache.get(key)
+  if (hit) {
+    if (hit.expiresAt > now) {
+      queryEmbeddingCache.delete(key)
+      queryEmbeddingCache.set(key, hit) // refresh LRU recency
+      return hit.embedding
+    }
+    queryEmbeddingCache.delete(key)
+  }
+
+  const embedding = await generateEmbedding(query, { supabaseClient, projectId })
+  if (!embedding) return null
+
+  queryEmbeddingCache.set(key, { embedding, expiresAt: now + QUERY_EMBEDDING_CACHE_TTL_MS })
+  while (queryEmbeddingCache.size > QUERY_EMBEDDING_CACHE_MAX) {
+    const oldest = queryEmbeddingCache.keys().next()
+    if (oldest.done) break
+    queryEmbeddingCache.delete(oldest.value)
+  }
+  return embedding
+}
+
+/** Test-only: drop all cached query embeddings. */
+export function __resetQueryEmbeddingCacheForTests(): void {
+  queryEmbeddingCache.clear()
+}
+
 function decryptMemories(memories: Memory[]): Memory[] {
   const encKey = getEncryptionKey()
   return memories.map((m) => {
@@ -28,7 +97,20 @@ function decryptMemories(memories: Memory[]): Memory[] {
         // Memory is marked as encrypted but no key is available — fail loudly
         return { ...m, value: '[ERROR: memory is encrypted but TAGES_ENCRYPTION_KEY is not set]' }
       }
-      return { ...m, value: decryptValue(m.value, encKey) }
+      // Per-row failure isolation: decryptValue throws (decipher.final(), see
+      // crypto/encryption.ts) whenever this key cannot open THIS row's
+      // ciphertext — the routine case once two developers share a project with
+      // different TAGES_ENCRYPTION_KEY values, since there is no key
+      // distribution mechanism. Without this catch, one undecryptable row
+      // threw away the ENTIRE recall response, including every row that
+      // decrypted fine. Substitute a per-row placeholder in the same style as
+      // the no-key-set branch above and let the other rows through, so the
+      // response still carries the same number of rows.
+      try {
+        return { ...m, value: decryptValue(m.value, encKey) }
+      } catch {
+        return { ...m, value: '[ERROR: memory could not be decrypted with the configured TAGES_ENCRYPTION_KEY]' }
+      }
     }
     // Not encrypted — return as-is regardless of whether a key is configured
     return m
@@ -48,12 +130,20 @@ export async function handleRecall(
   // one yet, so the channel contributes zero candidates (fetchTemporalCandidates
   // is skipped entirely) until that follow-up wiring lands — see
   // search/temporal-channel.ts's module doc for the full rationale.
+  //
+  // PLAN-HOSTED-EMBEDDING.md Task 2: this same client is now ALSO how the
+  // hosted embedding provider reaches `${supabaseUrl}/functions/v1/embed` with
+  // the caller's own JWT (see getQueryEmbedding above). index.ts:285 does pass
+  // one today.
   supabaseClient?: SupabaseClient,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const limit = args.limit || 5
 
-  // Generate embedding for semantic search (works locally via Ollama)
-  const embedding = await generateEmbedding(args.query)
+  // Generate embedding for semantic search. `null` (any provider failing —
+  // hosted timeout/5xx, Ollama down, no OpenAI key) is NOT an error here: the
+  // semantic branches below are simply skipped and recall falls back to
+  // trigram/text search. That degradation path is deliberate and unchanged.
+  const embedding = await getQueryEmbedding(args.query, projectId, supabaseClient)
 
   // Try local unified scoring first (sub-10ms, no network)
   const scoredResults = cache.scoredQuery(

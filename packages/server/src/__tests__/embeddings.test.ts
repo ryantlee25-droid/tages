@@ -9,11 +9,75 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { normalizeTo1536, generateEmbedding, generateChunkEmbeddings } from '../embeddings'
+import {
+  normalizeTo1536,
+  generateEmbedding,
+  generateChunkEmbeddings,
+  generateHostedEmbeddingsBatch,
+  resolveEmbeddingProvider,
+  embeddingProvidersUsedThisProcess,
+  __resetEmbeddingProviderForTests,
+  HOSTED_CHUNK_TARGET_CHARS,
+  HOSTED_MAX_BATCH,
+} from '../embeddings'
 import { chunkText } from '../chunking'
 
 function l2Norm(v: number[]): number {
   return Math.sqrt(v.reduce((sum, x) => sum + x * x, 0))
+}
+
+/**
+ * PLAN-HOSTED-EMBEDDING.md Task 2 turned provider selection into a
+ * deterministic switch resolved ONCE per process. Every suite below that
+ * exercises a specific provider must therefore pin `TAGES_EMBED_PROVIDER` and
+ * clear the memo, or it would inherit whichever provider a previously-run test
+ * in this file resolved. The pre-Task-2 suites that used to rely on the
+ * implicit "always probe Ollama, then OpenAI" chain are pinned explicitly —
+ * their assertions about Ollama/OpenAI behaviour are unchanged, only the
+ * selection of that provider is now stated instead of ambient.
+ */
+const ORIGINAL_PROVIDER_ENV = process.env.TAGES_EMBED_PROVIDER
+
+function useProvider(provider: 'hosted' | 'ollama' | 'openai'): void {
+  process.env.TAGES_EMBED_PROVIDER = provider
+  __resetEmbeddingProviderForTests()
+}
+
+function restoreProviderEnv(): void {
+  if (ORIGINAL_PROVIDER_ENV === undefined) delete process.env.TAGES_EMBED_PROVIDER
+  else process.env.TAGES_EMBED_PROVIDER = ORIGINAL_PROVIDER_ENV
+  __resetEmbeddingProviderForTests()
+}
+
+/** Hosted-provider env: a Supabase URL + a token, so resolveHostedConfig succeeds. */
+function useHostedEnv(): void {
+  process.env.SUPABASE_URL = 'https://test-project.supabase.co'
+  process.env.TAGES_SERVICE_KEY = 'test-service-key'
+}
+
+function clearHostedEnv(): void {
+  delete process.env.SUPABASE_URL
+  delete process.env.TAGES_SERVICE_KEY
+  delete process.env.TAGES_EMBED_URL
+  delete process.env.SUPABASE_SERVICE_ROLE_KEY
+  delete process.env.SUPABASE_ANON_KEY
+  delete process.env.TAGES_PROJECT_ID
+}
+
+function hostedOk(dims = 384, fill = 0.05) {
+  return (_url: string, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? '{}'))
+    const count = Array.isArray(body.texts) ? body.texts.length : 1
+    return Promise.resolve({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          model: 'gte-small',
+          dims,
+          embeddings: Array.from({ length: count }, () => new Array(dims).fill(fill)),
+        }),
+    })
+  }
 }
 
 describe('normalizeTo1536', () => {
@@ -67,6 +131,7 @@ describe('generateEmbedding provider chain (regression, unaffected by Task 9)', 
 
   beforeEach(() => {
     delete process.env.OPENAI_API_KEY
+    useProvider('ollama')
   })
 
   afterEach(() => {
@@ -75,6 +140,7 @@ describe('generateEmbedding provider chain (regression, unaffected by Task 9)', 
     else process.env.OLLAMA_URL = originalOllamaUrl
     if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY
     else process.env.OPENAI_API_KEY = originalOpenAiKey
+    restoreProviderEnv()
   })
 
   it('returns a normalized 1536-dim embedding when Ollama succeeds with an oversized vector', async () => {
@@ -89,10 +155,270 @@ describe('generateEmbedding provider chain (regression, unaffected by Task 9)', 
     expect(l2Norm(result!)).toBeCloseTo(1, 6)
   })
 
-  it('returns null when both Ollama and OpenAI are unavailable', async () => {
+  it('returns null when the selected provider (ollama) is unavailable', async () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('connection refused')) as unknown as typeof fetch
     const result = await generateEmbedding('hello world')
     expect(result).toBeNull()
+  })
+})
+
+/**
+ * PLAN-HOSTED-EMBEDDING.md Task 2: hosted is the DEFAULT provider, and its
+ * failure modes must degrade to `null` (recall falls back to trigram) rather
+ * than throwing or escalating to a different model.
+ */
+describe('hosted provider (PLAN-HOSTED-EMBEDDING Task 2)', () => {
+  const originalFetch = globalThis.fetch
+  const originalOpenAiKey = process.env.OPENAI_API_KEY
+
+  beforeEach(() => {
+    clearHostedEnv()
+    useHostedEnv()
+    useProvider('hosted')
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    clearHostedEnv()
+    if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY
+    else process.env.OPENAI_API_KEY = originalOpenAiKey
+    restoreProviderEnv()
+  })
+
+  it('is the provider when TAGES_EMBED_PROVIDER is unset', () => {
+    delete process.env.TAGES_EMBED_PROVIDER
+    delete process.env.TAGES_OPENAI_EMBED
+    __resetEmbeddingProviderForTests()
+    expect(resolveEmbeddingProvider()).toBe('hosted')
+  })
+
+  it('POSTs to {supabaseUrl}/functions/v1/embed with a bearer token and the frozen body shape', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      return hostedOk()(url, init)
+    }) as unknown as typeof fetch
+
+    const result = await generateEmbedding('a short memory value', { projectId: 'proj-123' })
+
+    expect(result).not.toBeNull()
+    expect(calls.length).toBe(1)
+    expect(calls[0].url).toBe('https://test-project.supabase.co/functions/v1/embed')
+    const headers = calls[0].init?.headers as Record<string, string>
+    expect(headers.Authorization).toBe('Bearer test-service-key')
+    const body = JSON.parse(String(calls[0].init?.body))
+    expect(body.text).toBe('a short memory value')
+    expect(body.project_id).toBe('proj-123')
+  })
+
+  it('zero-pads gte-small 384-dim vectors to the 1536-dim pgvector width', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(hostedOk(384, 0.1)) as unknown as typeof fetch
+    const result = await generateEmbedding('short')
+    expect(result).not.toBeNull()
+    expect(result!.length).toBe(1536)
+    expect(result!.slice(384).every((v) => v === 0)).toBe(true)
+  })
+
+  it('chunks long text at HOSTED_CHUNK_TARGET_CHARS and batches, never one call per chunk', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body ?? '{}')))
+      return hostedOk(384, 0.02)(url, init)
+    }) as unknown as typeof fetch
+
+    const longText = 'lorem ipsum dolor sit amet '.repeat(400) // ~10,800 chars
+    expect(longText.length).toBeGreaterThan(HOSTED_CHUNK_TARGET_CHARS)
+
+    const result = await generateEmbedding(longText)
+
+    expect(result).not.toBeNull()
+    expect(result!.length).toBe(1536)
+    // Chunks are batched, not sent one HTTP call each. Derived from the
+    // constants rather than hardcoded, because both moved once already when
+    // gte-small's real limits were measured (800 chars, 8 per batch).
+    const allTexts = bodies.flatMap((b) => b.texts as string[])
+    expect(allTexts.length).toBeGreaterThan(1)
+    expect(bodies.length).toBe(Math.ceil(allTexts.length / HOSTED_MAX_BATCH))
+    // The point of batching: far fewer calls than chunks.
+    expect(bodies.length).toBeLessThan(allTexts.length)
+    for (const b of bodies) {
+      expect(Array.isArray(b.texts)).toBe(true)
+      expect((b.texts as string[]).length).toBeLessThanOrEqual(HOSTED_MAX_BATCH)
+    }
+    for (const t of allTexts) {
+      // Oversizing this is invisible: gte-small truncates silently at ~512
+      // tokens and still returns HTTP 200.
+      expect(t.length).toBeLessThanOrEqual(HOSTED_CHUNK_TARGET_CHARS)
+    }
+  })
+
+  it('returns null (never throws) on a hosted 5xx, so recall can fall back to trigram', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      headers: { get: () => null },
+      text: () => Promise.resolve('{"error":"upstream failed","code":"upstream_error"}'),
+    }) as unknown as typeof fetch
+
+    await expect(generateEmbedding('a query')).resolves.toBeNull()
+    expect(errorSpy).toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
+  it('returns null (never throws) when the hosted fetch rejects outright', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down')) as unknown as typeof fetch
+    await expect(generateEmbedding('a query')).resolves.toBeNull()
+  })
+
+  it('retries a hosted 429 honoring Retry-After via the shared fetchEmbeddingJson helper', async () => {
+    let calls = 0
+    globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls++
+      if (calls === 1) {
+        return Promise.resolve({
+          ok: false,
+          status: 429,
+          headers: { get: (h: string) => (h.toLowerCase() === 'retry-after' ? '0' : null) },
+          text: () => Promise.resolve('{"error":"rate limited","code":"rate_limited"}'),
+        })
+      }
+      return hostedOk()(url, init)
+    }) as unknown as typeof fetch
+
+    const result = await generateEmbedding('a query')
+    expect(result).not.toBeNull()
+    expect(calls).toBe(2)
+  })
+
+  it('returns null and warns once when hosted is selected but unconfigured', async () => {
+    clearHostedEnv()
+    __resetEmbeddingProviderForTests()
+    process.env.TAGES_EMBED_PROVIDER = 'hosted'
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const fetchSpy = vi.fn()
+    globalThis.fetch = fetchSpy as unknown as typeof fetch
+
+    await expect(generateEmbedding('a query')).resolves.toBeNull()
+    await expect(generateEmbedding('another query')).resolves.toBeNull()
+
+    expect(fetchSpy).not.toHaveBeenCalled()
+    const warnings = errorSpy.mock.calls
+      .map((c) => c.join(' '))
+      .filter((l) => l.includes('Hosted embedding is selected but not configured'))
+    expect(warnings.length).toBe(1) // once per process, not once per call
+    errorSpy.mockRestore()
+  })
+
+  it('generateHostedEmbeddingsBatch preserves order and splits above HOSTED_MAX_BATCH', async () => {
+    const batchSizes: number[] = []
+    globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? '{}'))
+      batchSizes.push(Array.isArray(body.texts) ? body.texts.length : 1)
+      return hostedOk()(url, init)
+    }) as unknown as typeof fetch
+
+    const texts = Array.from({ length: 300 }, (_, i) => `text ${i}`)
+    const result = await generateHostedEmbeddingsBatch(texts, { projectId: 'p' })
+
+    expect(result).not.toBeNull()
+    expect(result!.length).toBe(300)
+    const TOTAL = 300
+    const expectedSizes = Array.from(
+      { length: Math.ceil(TOTAL / HOSTED_MAX_BATCH) },
+      (_, i) => Math.min(HOSTED_MAX_BATCH, TOTAL - i * HOSTED_MAX_BATCH),
+    )
+    expect(batchSizes).toEqual(expectedSizes)
+    expect(result!.every((v) => v.length === 1536)).toBe(true)
+  })
+
+  it('generateHostedEmbeddingsBatch is fail-closed: one failed sub-batch nulls the whole result', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let call = 0
+    globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      call++
+      if (call === 2) {
+        return Promise.resolve({
+          ok: false,
+          status: 500,
+          headers: { get: () => null },
+          text: () => Promise.resolve('boom'),
+        })
+      }
+      return hostedOk()(url, init)
+    }) as unknown as typeof fetch
+
+    const texts = Array.from({ length: 200 }, (_, i) => `text ${i}`)
+    await expect(generateHostedEmbeddingsBatch(texts)).resolves.toBeNull()
+    errorSpy.mockRestore()
+  })
+
+  it('rejects a response whose embeddings array does not match the request length', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({ model: 'gte-small', dims: 384, embeddings: [new Array(384).fill(0.1)] }),
+    }) as unknown as typeof fetch
+
+    await expect(generateHostedEmbeddingsBatch(['a', 'b', 'c'])).resolves.toBeNull()
+  })
+
+  it('uses the caller JWT from the threaded Supabase client in preference to the service key', async () => {
+    const calls: RequestInit[] = []
+    globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      calls.push(init as RequestInit)
+      return hostedOk()(url, init)
+    }) as unknown as typeof fetch
+
+    const supabaseClient = {
+      supabaseUrl: 'https://from-client.supabase.co',
+      auth: { getSession: async () => ({ data: { session: { access_token: 'user-jwt' } } }) },
+    }
+
+    await generateEmbedding('q', {
+      supabaseClient: supabaseClient as never,
+      projectId: 'proj-abc',
+    })
+
+    const headers = calls[0].headers as Record<string, string>
+    expect(headers.Authorization).toBe('Bearer user-jwt')
+  })
+})
+
+/**
+ * The explicit zero-install check from PLAN-HOSTED-EMBEDDING.md: with
+ * TAGES_EMBED_PROVIDER unset and no local provider running, generateEmbedding
+ * must resolve to `null` rather than throwing, so recall degrades to trigram.
+ */
+describe('default provider with nothing installed', () => {
+  const originalFetch = globalThis.fetch
+  const originalOpenAiKey = process.env.OPENAI_API_KEY
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    clearHostedEnv()
+    if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY
+    else process.env.OPENAI_API_KEY = originalOpenAiKey
+    restoreProviderEnv()
+  })
+
+  it('returns null (does not throw) with no provider env, no Ollama, no OpenAI key', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    clearHostedEnv()
+    delete process.env.TAGES_EMBED_PROVIDER
+    delete process.env.TAGES_OPENAI_EMBED
+    delete process.env.OPENAI_API_KEY
+    __resetEmbeddingProviderForTests()
+
+    // Every network attempt fails, standing in for "Ollama unreachable" too.
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('ECONNREFUSED')) as unknown as typeof fetch
+
+    await expect(generateEmbedding('some query')).resolves.toBeNull()
+    await expect(generateChunkEmbeddings('some memory value')).resolves.toBeNull()
+
+    // Crucially, it never reached Ollama: hosted was selected and stayed selected.
+    expect(embeddingProvidersUsedThisProcess()).toEqual(['hosted'])
+    errorSpy.mockRestore()
   })
 })
 
@@ -111,14 +437,20 @@ describe('generateEmbedding chunking + error handling (Task A)', () => {
 
   beforeEach(() => {
     process.env.OPENAI_API_KEY = 'test-openai-key'
+    // Post-Task-2 this suite must SELECT openai explicitly. Its assertions are
+    // otherwise unchanged: OpenAI chunking, 429 retry, fail-closed pooling.
+    useProvider('openai')
   })
 
   afterEach(() => {
     globalThis.fetch = originalFetch
     if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY
     else process.env.OPENAI_API_KEY = originalOpenAiKey
+    restoreProviderEnv()
   })
 
+  // Retained so these tests keep proving they never touch Ollama — under the
+  // openai provider they no longer even attempt it, which is the point.
   function rejectOllama(url: string): boolean {
     return typeof url === 'string' && url.includes('11434')
   }
@@ -350,9 +682,11 @@ describe('generateEmbedding chunking + error handling (Task A)', () => {
 /**
  * Tests for Task 9 (Phase 2): per-chunk embeddings for multi-vector chunk
  * storage. `generateChunkEmbeddings` is a separate entry point from
- * `generateEmbedding`, reusing `chunkText()` and the same single-chunk OpenAI
- * embed call as `embedLongTextViaOpenAI` (embedSingleChunkViaOpenAI), but
- * OpenAI-only and fail-closed on any partial chunk failure.
+ * `generateEmbedding`, reusing `chunkText()` and the same per-chunk embed call
+ * the pooled path uses, and fail-closed on any partial chunk failure.
+ *
+ * Post-Task-2 these run under an explicitly selected provider instead of the
+ * old implicit probe chain; the chunk-storage assertions are unchanged.
  */
 describe('generateChunkEmbeddings (Task 9)', () => {
   const originalFetch = globalThis.fetch
@@ -360,19 +694,21 @@ describe('generateChunkEmbeddings (Task 9)', () => {
 
   beforeEach(() => {
     process.env.OPENAI_API_KEY = 'test-openai-key'
+    useProvider('openai')
   })
 
   afterEach(() => {
     globalThis.fetch = originalFetch
     if (originalOpenAiKey === undefined) delete process.env.OPENAI_API_KEY
     else process.env.OPENAI_API_KEY = originalOpenAiKey
+    restoreProviderEnv()
   })
 
   function rejectOllama(url: string): boolean {
     return typeof url === 'string' && url.includes('11434')
   }
 
-  it('returns null when NO provider is available (Ollama down + no OPENAI_API_KEY)', async () => {
+  it('returns null when the selected provider (openai) has no key', async () => {
     delete process.env.OPENAI_API_KEY
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('connection refused')) as unknown as typeof fetch
 
@@ -380,10 +716,12 @@ describe('generateChunkEmbeddings (Task 9)', () => {
     expect(result).toBeNull()
   })
 
-  it('tries Ollama FIRST and uses Ollama-space chunks with NO OpenAI call when Ollama serves (Fix A — findings 1/7)', async () => {
-    // Fix A: chunk vectors must share the query vector space (Ollama-first) and
-    // Ollama-only users must never be billed for OpenAI. OPENAI_API_KEY is set
-    // (beforeEach) yet OpenAI must NOT be called because Ollama succeeds.
+  it('under TAGES_EMBED_PROVIDER=ollama, uses Ollama-space chunks and makes NO OpenAI call even with a key set', async () => {
+    // Chunk vectors must share the query vector space, and an Ollama-selected
+    // team must never be billed for OpenAI. OPENAI_API_KEY is set (beforeEach)
+    // yet OpenAI must NOT be called — post-Task-2 that is guaranteed by the
+    // switch having no fallthrough, not by call ordering.
+    useProvider('ollama')
     let ollamaCalled = false
     let openAiCalls = 0
     globalThis.fetch = vi.fn().mockImplementation((url: string) => {
@@ -408,6 +746,37 @@ describe('generateChunkEmbeddings (Task 9)', () => {
     // Ollama's 768-dim vector zero-padded to 1536 — not an OpenAI vector.
     expect(result!.chunks[0].embedding.slice(0, 768)).toEqual(new Array(768).fill(0.1))
     expect(result!.chunks[0].embedding.slice(768)).toEqual(new Array(768).fill(0))
+  })
+
+  it('under TAGES_EMBED_PROVIDER=hosted, chunks are hosted vectors from batched calls', async () => {
+    clearHostedEnv()
+    useHostedEnv()
+    useProvider('hosted')
+    let hostedCalls = 0
+    globalThis.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (typeof url === 'string' && url.includes('11434')) {
+        throw new Error('Ollama must never be contacted under the hosted provider')
+      }
+      hostedCalls++
+      return hostedOk(384, 0.07)(url, init)
+    }) as unknown as typeof fetch
+
+    const longText = 'lorem ipsum dolor sit amet '.repeat(400)
+    const result = await generateChunkEmbeddings(longText)
+
+    expect(result).not.toBeNull()
+    expect(result!.chunks.length).toBeGreaterThan(1)
+    // Batched, not one call per chunk. Derived from HOSTED_MAX_BATCH rather
+    // than hardcoded, because the batch cap moved from an advertised 128 to a
+    // measured 8 (batches >= 16 are killed with HTTP 546 WORKER_LIMIT).
+    expect(hostedCalls).toBe(Math.ceil(result!.chunks.length / HOSTED_MAX_BATCH))
+    expect(hostedCalls).toBeLessThan(result!.chunks.length)
+    // Chunked at the hosted size, not the OpenAI-sized CHUNK_TARGET_CHARS.
+    // Oversizing is invisible: gte-small truncates silently and still 200s.
+    for (const c of result!.chunks) {
+      expect(c.text.length).toBeLessThanOrEqual(HOSTED_CHUNK_TARGET_CHARS)
+    }
+    clearHostedEnv()
   })
 
   it('single-chunk parity for short text: one chunk row, pooled equals the single embedding', async () => {
@@ -517,13 +886,13 @@ describe('generateChunkEmbeddings (Task 9)', () => {
     expect(openAiCalls).toBeGreaterThanOrEqual(2)
   })
 
-  it('falls through to OpenAI chunks when Ollama is DOWN (eval config: no Ollama, OPENAI_API_KEY set)', async () => {
-    // Fix A must not regress the OpenAI-only eval config: with Ollama
-    // unavailable and OPENAI_API_KEY set, chunks are still OpenAI vectors.
+  it('produces OpenAI chunks without ever contacting Ollama (eval config: OPENAI_API_KEY set)', async () => {
+    // The OpenAI-only eval config still works, and post-Task-2 it no longer
+    // even probes Ollama first — the ollama branch is unreachable here.
     let openAiCalls = 0
     globalThis.fetch = vi.fn().mockImplementation((url: string) => {
       if (typeof url === 'string' && url.includes('11434')) {
-        return Promise.reject(new Error('connection refused'))
+        throw new Error('Ollama must never be contacted under the openai provider')
       }
       openAiCalls++
       return Promise.resolve({

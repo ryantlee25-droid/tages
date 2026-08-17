@@ -1,0 +1,47 @@
+# Proves the NPM_TOKEN secret can authenticate to the registry WITHOUT publishing.
+#
+# Why this exists: a published version is permanent (npm's unpublish window is
+# narrow and blocked once anything depends on it), so discovering a bad token
+# mid-publish is expensive. `publish.yml` has six sequential unguarded steps;
+# a token failure partway through leaves the scope half-published.
+#
+# Triggered by pushing the throwaway branch `ci/npm-auth-check`. It is not a
+# workflow_dispatch because that only fires for workflows already on the
+# default branch, and this needs to run from a feature branch.
+#
+# This workflow must never publish. It runs `npm whoami` and nothing else.
+name: npm auth check
+
+on:
+  push:
+    branches: [ci/npm-auth-check]
+
+jobs:
+  whoami:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+      - name: Verify registry authentication
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::NPM_TOKEN secret is empty or unset"
+            exit 1
+          fi
+          echo "Token is present (length ${#NODE_AUTH_TOKEN}). Checking identity..."
+          who=$(npm whoami 2>/dev/null) || {
+            echo "::error::npm whoami failed: $who"
+            echo "A Classic *Publish* token will fail here with E403 — it needs to be"
+            echo "a Granular Access Token (read+write on @tages) or a Classic *Automation* token."
+            exit 1
+          }
+          echo "Authenticated as: $who"
+          echo "--- write access to the @tages scope ---"
+          # whoami only proves the token is VALID. These prove it can WRITE,
+          # which is the permission publish.yml actually needs.
+          echo "--- packages the token can see in the @tages scope ---"
+          npm access list packages @tages 2>&1 | head -20 || true

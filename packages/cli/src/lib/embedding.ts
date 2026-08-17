@@ -1,35 +1,55 @@
 /**
  * CLI-local embedding generation for semantic recall.
  *
- * Mirrors packages/server/src/embeddings.ts's Ollama -> OpenAI fallback chain
- * and 1536-dim normalization. Deliberately NOT imported from @tages/server:
- * a runtime dependency on the server package would break `npm install -g
- * @tages/cli` standalone installs. Keep this file in sync with the server's
- * copy by hand if either fallback order or normalization logic changes.
+ * Mirrors packages/server/src/embeddings.ts's provider selection and 1536-dim
+ * normalization. Deliberately NOT imported from @tages/server: a runtime
+ * dependency on the server package would break `npm install -g @tages/cli`
+ * standalone installs. Keep this file in sync with the server's copy BY HAND
+ * if provider precedence, fallthrough behavior, or normalization changes.
  *
- * The OpenAI fallback is OPT-IN (env TAGES_OPENAI_EMBED=1), off by default,
- * for two reasons:
+ * ---------------------------------------------------------------------------
+ * PROVIDER SELECTION (PLAN-HOSTED-EMBEDDING.md Task 3 — mirror of Task 2)
+ * ---------------------------------------------------------------------------
  *
- *   1. Hot-path cost/latency (finding 6): recall runs `generateEmbedding` on
- *      every query. When Ollama is down, an automatic OpenAI fallback turns
- *      recall into a blocking, billable, up-to-10s network call on the read
- *      path. Fail-fast to trigram instead — return null so the caller skips
- *      semantic search.
+ *   TAGES_EMBED_PROVIDER = hosted (default) | ollama | openai
  *
- *   2. Vector-space consistency (finding 5): a query embedded with OpenAI
- *      text-embedding-3-small (native 1536-dim) and documents embedded with
- *      Ollama nomic-embed-text (768-dim zero-padded to 1536) live in DIFFERENT
- *      vector spaces; their cosine similarity is meaningless. Gating both the
- *      write and the recall path on the SAME env flag keeps the whole index
- *      single-provider: either everything is Ollama (default) or, if the user
- *      opts in, everything is OpenAI. We never silently mix the two.
+ * Resolved ONCE per process and memoized, then `embedOne` `switch`es on it:
+ * exactly one branch runs per call, with NO fallthrough to a different
+ * provider. That structural guarantee is the whole point.
  *
- * TODO (full fix for finding 5): record the embedding model on each memory row
- * (e.g. an `embedding_model` column) and only run semantic recall when the
- * query can be embedded with that same model, falling back to trigram per-row
- * otherwise. That removes the "one provider per whole index" restriction. The
- * env-flag approach here is the conservative version that avoids a schema
- * change while still guaranteeing query and documents share a vector space.
+ * The bug this replaces was live, not hypothetical: `embedOne` previously
+ * called `embedViaOllama(text)` UNCONDITIONALLY on every call, gated by
+ * nothing — only the OpenAI leg sat behind TAGES_OPENAI_EMBED. So two
+ * teammates already wrote vectors from different models into one index purely
+ * because one of them happened to have Ollama running for an unrelated
+ * project. Cosine similarity across models is meaningless, so the index
+ * returned confident nonsense with nothing anywhere surfacing an error.
+ *
+ * `embedViaOllama` and `embedSingleChunkViaOpenAI` are UNCHANGED internally
+ * (same fetch calls, same retry/429 handling, same normalization). They simply
+ * become unreachable unless a team explicitly opts the whole team out of
+ * hosted — an all-or-nothing decision, because a half-migrated team is exactly
+ * the mixed-vector-space state above.
+ *
+ * Precedence, in order (identical to the server copy):
+ *   1. TAGES_EMBED_PROVIDER, when set to a recognized value.
+ *   2. TAGES_OPENAI_EMBED=1 — backward-compatible alias for `openai`, honored
+ *      ONLY when TAGES_EMBED_PROVIDER is unset, with a deprecation warning.
+ *   3. hosted (the default).
+ * An unrecognized TAGES_EMBED_PROVIDER value warns and falls back to hosted,
+ * never to a local probe.
+ *
+ * `generateEmbedding`'s failure contract is UNCHANGED: any provider failing
+ * (hosted timeout, hosted 5xx, Ollama down, no OpenAI key, hosted not
+ * configured) returns null, never throws. recall.ts already treats null as
+ * "skip semantic search, fall through to trigram"; that path is untouched.
+ *
+ * TODO (removes the one-provider-per-index restriction entirely): record the
+ * embedding model on each memory row (e.g. an `embedding_model` column) and
+ * only run semantic recall when the query can be embedded with that same
+ * model, falling back to trigram per-row otherwise. The process-wide switch
+ * here is the conservative version that avoids a schema change while still
+ * guaranteeing query and documents share a vector space.
  *
  * Bug fix (chunking): OpenAI's text-embedding-3-small caps input at 8192
  * tokens. Previously, a memory value over that limit got an HTTP 400 back
@@ -48,55 +68,196 @@
  *
  * Multi-vector chunk storage (Task 9, Phase 2): `generateChunkEmbeddings`
  * below mirrors the server's copy (packages/server/src/embeddings.ts) — a
- * separate entry point from `generateEmbedding` for the new per-chunk
- * `memory_chunks` table. Per chunk it uses the SAME provider selection as
- * `generateEmbedding` (Fix A): Ollama-first, then OpenAI (the OpenAI leg still
- * gated behind the TAGES_OPENAI_EMBED opt-in). This keeps chunk vectors and
- * query vectors in one vector space; previously chunks were OpenAI-only while
- * queries were Ollama-first. `generateEmbedding()`'s external behavior is
- * unchanged.
+ * separate entry point from `generateEmbedding` for the per-chunk
+ * `memory_chunks` table. Per chunk it goes through the SAME `embedOne`
+ * provider switch as `generateEmbedding`, so chunk vectors, the pooled vector,
+ * and the query vector are always produced by one provider and comparable in
+ * one vector space. `generateEmbedding()`'s external behavior is unchanged.
  */
 
 import { chunkText, estimateTokenCount, SAFE_SINGLE_CALL_TOKEN_LIMIT } from './chunking.js'
 
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434'
 
-function openAIFallbackEnabled(explicit?: boolean): boolean {
-  if (explicit !== undefined) return explicit
-  return process.env.TAGES_OPENAI_EMBED === '1' || process.env.TAGES_OPENAI_EMBED === 'true'
+/**
+ * THE hosted chunk size. gte-small is a compact BERT-family encoder whose real
+ * input ceiling is far below OpenAI's 8192 tokens (typically ~512), so the
+ * OpenAI-sized `CHUNK_TARGET_CHARS = 4000` in chunking.ts must NOT be reused
+ * for the hosted path.
+ *
+ * 1500 is a deliberately conservative PLACEHOLDER (PLAN-HOSTED-EMBEDDING.md
+ * Open Question 2). Task 1 is empirically probing gte-small's actual limit
+ * against the live dev endpoint. Both constants live here, in one clearly
+ * named place, precisely so adopting that number is a one-line change and
+ * cannot drift across the call sites that consume it.
+ *
+ * Hand-synced with packages/server/src/embeddings.ts — same names, same
+ * values.
+ */
+/**
+ * MEASURED, not a guess — and kept byte-identical to the server copy in
+ * packages/server/src/embeddings.ts (this file is a deliberate hand-synced
+ * mirror; drift here is the exact bug class the provider switch exists to
+ * prevent).
+ *
+ * gte-small does NOT error on oversized input. It returns HTTP 200 with a
+ * vector bit-identical to the one for the truncated prefix, so setting this
+ * too high degrades retrieval silently, with nothing to observe. A 32,000-char
+ * input measured identical to its first ~2,350 chars.
+ *
+ * Measured truncation boundaries by content type (first char offset already
+ * discarded): English prose 2350, TypeScript 1472, stack traces 1466,
+ * JSON records with paths 1107, hex/UUIDs 712. 800 sits ~28% under the
+ * realistic worst case (JSON-shaped memory records).
+ */
+export const HOSTED_CHUNK_TARGET_CHARS = 800
+export const HOSTED_CHUNK_OVERLAP_CHARS = 120 // 15% of HOSTED_CHUNK_TARGET_CHARS
+
+/** Max `texts[]` per hosted call — matches the edge function's own cap. */
+export const HOSTED_MAX_BATCH = 8
+
+const HOSTED_TIMEOUT_MS = 10000
+const HOSTED_BATCH_TIMEOUT_MS = 30000
+
+export type EmbeddingProvider = 'hosted' | 'ollama' | 'openai'
+
+/**
+ * The single resolved provider for this process, memoized on first use.
+ *
+ * Resolving once is the structural half of the fix: a provider that could be
+ * re-read per call would let a mid-run env change split one logical write
+ * across two vector spaces — exactly the bug this module exists to prevent.
+ */
+let resolvedProvider: EmbeddingProvider | null = null
+
+/** Providers actually exercised in this process. See the invariant below. */
+const providersUsed = new Set<EmbeddingProvider>()
+
+/**
+ * Every provider this process has actually embedded with. The invariant that
+ * makes uniformity structural rather than conventional is
+ * `embeddingProvidersUsedThisProcess().length <= 1`.
+ */
+export function embeddingProvidersUsedThisProcess(): EmbeddingProvider[] {
+  return [...providersUsed]
+}
+
+/**
+ * Resolve the embedding provider for this process — read once, cached forever.
+ *
+ * `TAGES_OPENAI_EMBED=1` is honored as a backward-compatible alias for
+ * `openai`, but ONLY when `TAGES_EMBED_PROVIDER` is unset, with a one-time
+ * deprecation warning. An unrecognized `TAGES_EMBED_PROVIDER` value falls back
+ * to the hosted default rather than to a local probe: an unreadable value must
+ * never resurrect the ambient-Ollama behaviour this replaced.
+ */
+export function resolveEmbeddingProvider(): EmbeddingProvider {
+  if (resolvedProvider !== null) return resolvedProvider
+  resolvedProvider = computeEmbeddingProvider()
+  return resolvedProvider
+}
+
+function computeEmbeddingProvider(): EmbeddingProvider {
+  const raw = process.env.TAGES_EMBED_PROVIDER?.trim().toLowerCase()
+  if (raw) {
+    if (raw === 'hosted' || raw === 'ollama' || raw === 'openai') return raw
+    console.error(
+      `[embedding] Unrecognized TAGES_EMBED_PROVIDER="${process.env.TAGES_EMBED_PROVIDER}" ` +
+        `(expected hosted|ollama|openai) — using the hosted default.`,
+    )
+    return 'hosted'
+  }
+  if (process.env.TAGES_OPENAI_EMBED === '1') {
+    console.error(
+      '[embedding] TAGES_OPENAI_EMBED is deprecated — use TAGES_EMBED_PROVIDER=openai. ' +
+        'Honoring it as openai for now.',
+    )
+    return 'openai'
+  }
+  return 'hosted'
+}
+
+/**
+ * Test-only: clear the memoized provider (and the used-provider audit) so each
+ * test can exercise a different provider in one vitest process. Never call
+ * this from product code — re-resolving mid-run is the exact hazard the
+ * once-per-process memo exists to prevent.
+ */
+export function __resetEmbeddingProviderForTests(): void {
+  resolvedProvider = null
+  providersUsed.clear()
+  warnedHostedConfig = false
 }
 
 export interface GenerateEmbeddingOptions {
   /**
-   * Allow falling back to the paid OpenAI embeddings API when Ollama is
-   * unavailable. Defaults to the TAGES_OPENAI_EMBED env flag (off). Pass
-   * `false` explicitly to force fail-fast even when the env flag is set.
+   * CLI-only kill switch (the server copy has no equivalent). Pass `false` and
+   * the openai provider returns null without calling out, for callers that
+   * must never make a paid request whatever the environment says.
+   *
+   * It no longer doubles as the enable gate: selecting openai — via
+   * TAGES_EMBED_PROVIDER=openai or the legacy TAGES_OPENAI_EMBED alias — is
+   * now the whole opt-in, matching the server, which gates only on
+   * OPENAI_API_KEY. It does NOT redirect to another provider: a disabled
+   * openai provider returns null, like any unavailable provider.
    */
   allowOpenAIFallback?: boolean
+  /**
+   * Supabase project URL, from the CLI's project config. The server copy reads
+   * this off its threaded SupabaseClient instead; the CLI passes it explicitly
+   * so lib/embedding.ts keeps no @supabase/supabase-js dependency.
+   */
+  supabaseUrl?: string
+  /**
+   * The signed-in user's JWT, resolved by the calling command. Same position
+   * in the precedence chain as the server's `supabaseClient.auth.getSession()`
+   * lookup: tried first, then the env key chain in resolveHostedConfig.
+   */
+  accessToken?: string
+  /** Project id for the endpoint's membership check. */
+  projectId?: string
 }
 
 export async function generateEmbedding(
   text: string,
   opts: GenerateEmbeddingOptions = {},
 ): Promise<number[] | null> {
-  // Long OpenAI-fallback inputs still chunk+pool, but Ollama gets the whole
-  // input first (unchanged). Every other (short-text) case goes through the
-  // shared `embedOne` helper — the SAME provider-selection path
-  // `generateChunkEmbeddings` uses per chunk (Fix A) — so query vectors and
-  // chunk vectors always live in the same vector space. Before, chunks were
-  // OpenAI-only while queries were Ollama-first, so their cosine was
-  // meaningless whenever Ollama was running.
-  const openaiKey = process.env.OPENAI_API_KEY
-  if (
-    openaiKey &&
-    openAIFallbackEnabled(opts.allowOpenAIFallback) &&
-    estimateTokenCount(text) > SAFE_SINGLE_CALL_TOKEN_LIMIT
-  ) {
-    const ollama = await embedViaOllama(text)
-    if (ollama) return ollama
-    return await embedLongTextViaOpenAI(text, openaiKey)
+  const provider = resolveEmbeddingProvider()
+
+  // Long-text handling is per-provider, but it is still only ever ONE
+  // provider: each branch chunks (at its own model's safe size) and pools with
+  // the shared `poolChunkEmbeddings`, and none of them falls through to
+  // another provider on failure.
+  //
+  // This switch is load-bearing, not cosmetic. The old code opened this
+  // function with `if (openaiKey && estimateTokenCount(text) > LIMIT) { const
+  // ollama = await embedViaOllama(text); if (ollama) return ollama; ... }` —
+  // an unconditional Ollama probe on the long-text path. Porting only
+  // `embedOne` and leaving that preamble would keep the mixed-vector-space bug
+  // alive in the one code path nobody reads.
+  switch (provider) {
+    case 'hosted':
+      // gte-small's ceiling is low enough that the hosted path decides on raw
+      // character length rather than the OpenAI-calibrated token estimate.
+      if (text.length > HOSTED_CHUNK_TARGET_CHARS) {
+        return await embedLongTextViaHosted(text, opts)
+      }
+      return await embedOne(text, opts)
+    case 'openai': {
+      const openaiKey = process.env.OPENAI_API_KEY
+      if (
+        openaiKey &&
+        opts.allowOpenAIFallback !== false &&
+        estimateTokenCount(text) > SAFE_SINGLE_CALL_TOKEN_LIMIT
+      ) {
+        return await embedLongTextViaOpenAI(text, openaiKey)
+      }
+      return await embedOne(text, opts)
+    }
+    case 'ollama':
+      // Unchanged: Ollama has always been handed the whole input.
+      return await embedOne(text, opts)
   }
-  return embedOne(text, opts)
 }
 
 /**
@@ -123,27 +284,194 @@ async function embedViaOllama(text: string): Promise<number[] | null> {
 }
 
 /**
- * Embed a single text (a query, or ONE already-chunk-sized passage) using the
- * SAME provider selection as generateEmbedding's short-text path: Ollama-first,
- * then OpenAI — but the OpenAI leg stays gated behind the TAGES_OPENAI_EMBED
- * opt-in (openAIFallbackEnabled), exactly as generateEmbedding's OpenAI
- * fallback is. Shared by generateChunkEmbeddings per chunk (Fix A) so chunk
- * vectors and query vectors are produced by the same provider and comparable
- * in one vector space. Assumes `text` already fits a single embed call.
+ * Embed a single text (a query, or ONE already-chunk-sized passage) with the
+ * process's ONE resolved provider.
+ *
+ * This is the single provider-branch point in the module, and the shared
+ * helper `generateChunkEmbeddings` uses per chunk — so chunk vectors, pooled
+ * vectors and query vectors are always produced by the same model and are
+ * comparable in one vector space.
+ *
+ * Exactly one `case` runs. There is deliberately NO fallthrough: a failing
+ * provider returns `null` (recall degrades to trigram, remember skips the
+ * embedding write and a backfill can retry later) rather than escalating to a
+ * different model and poisoning the index with a second vector space. Adding
+ * an `||` or a `catch`-and-try-the-next-provider here would reintroduce
+ * exactly the bug this switch replaced.
  */
 async function embedOne(text: string, opts: GenerateEmbeddingOptions = {}): Promise<number[] | null> {
-  const ollama = await embedViaOllama(text)
-  if (ollama) return ollama
+  const provider = resolveEmbeddingProvider()
+  providersUsed.add(provider)
 
-  const openaiKey = process.env.OPENAI_API_KEY
-  if (openaiKey && openAIFallbackEnabled(opts.allowOpenAIFallback)) {
-    try {
-      return await embedSingleChunkViaOpenAI(text, openaiKey)
-    } catch {
-      // OpenAI not available
+  switch (provider) {
+    case 'hosted':
+      return await embedViaHosted(text, opts)
+    case 'ollama':
+      return await embedViaOllama(text)
+    case 'openai': {
+      const openaiKey = process.env.OPENAI_API_KEY
+      // `allowOpenAIFallback === false` is the CLI-only kill switch; the
+      // server copy has only the key check.
+      if (!openaiKey || opts.allowOpenAIFallback === false) return null
+      try {
+        return await embedSingleChunkViaOpenAI(text, openaiKey)
+      } catch {
+        // OpenAI not available — null, never another provider.
+        return null
+      }
     }
   }
-  return null
+}
+
+/**
+ * Resolve the hosted endpoint URL, bearer token and project id.
+ *
+ * Returns `null` (never throws) when the process has no usable hosted config,
+ * which propagates as the module's normal "no embedding available" `null`.
+ * The warning is emitted once per process: recall calls this on every query,
+ * so a per-call log would be a firehose.
+ *
+ * Precedence is hand-synced with the server copy. The CLI's `opts.accessToken`
+ * occupies the slot the server fills from `supabaseClient.auth.getSession()`;
+ * the env chain below it is identical.
+ */
+let warnedHostedConfig = false
+
+function resolveHostedConfig(
+  opts: GenerateEmbeddingOptions,
+): { url: string; token: string; projectId: string | undefined } | null {
+  const explicitUrl = process.env.TAGES_EMBED_URL
+  const baseUrl = process.env.SUPABASE_URL || opts.supabaseUrl
+  const url = explicitUrl || (baseUrl ? `${baseUrl.replace(/\/+$/, '')}/functions/v1/embed` : undefined)
+
+  const token =
+    opts.accessToken ||
+    process.env.TAGES_SERVICE_KEY ||
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_ANON_KEY
+
+  if (!url || !token) {
+    if (!warnedHostedConfig) {
+      warnedHostedConfig = true
+      console.error(
+        '[embedding] Hosted embedding is selected but not configured ' +
+          `(${!url ? 'no Supabase URL' : 'no auth token'}) — semantic search will fall back to text search. ` +
+          'Set TAGES_EMBED_PROVIDER=ollama|openai to use a local provider instead.',
+      )
+    }
+    return null
+  }
+
+  return { url, token, projectId: opts.projectId || process.env.TAGES_PROJECT_ID }
+}
+
+/**
+ * POST to the hosted embed edge function, reusing `fetchEmbeddingJson` so the
+ * hosted path inherits its 429 retry-with-backoff (which already honors
+ * `Retry-After`, sent by the edge function's rate limiter) and its
+ * read-and-log-every-non-OK-body behaviour.
+ *
+ * Request/response contract is frozen in PLAN-HOSTED-EMBEDDING.md
+ * ("Technical Approach") and hand-mirrored from packages/server/src/
+ * embeddings.ts — do not change it on one side only.
+ */
+async function postHostedEmbed(
+  texts: string[],
+  opts: GenerateEmbeddingOptions,
+  timeoutMs: number,
+): Promise<number[][] | null> {
+  const cfg = resolveHostedConfig(opts)
+  if (!cfg) return null
+
+  const body: Record<string, unknown> = texts.length === 1 ? { text: texts[0] } : { texts }
+  if (cfg.projectId) body.project_id = cfg.projectId
+
+  try {
+    const data = (await fetchEmbeddingJson(
+      cfg.url,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${cfg.token}`,
+        },
+        body: JSON.stringify(body),
+      },
+      'Hosted (tages embed)',
+      timeoutMs,
+    )) as { embeddings?: number[][] } | null
+
+    const embeddings = data?.embeddings
+    if (!Array.isArray(embeddings) || embeddings.length !== texts.length) return null
+    // Partial/short results are treated as total failure rather than silently
+    // embedding a subset — the same fail-closed stance as the pooled paths.
+    if (embeddings.some((e) => !Array.isArray(e) || e.length === 0)) return null
+    return embeddings.map((e) => normalizeTo1536(e))
+  } catch {
+    // Network error / abort — null, never another provider.
+    return null
+  }
+}
+
+/**
+ * Embed a single already-chunk-sized text via the hosted edge function,
+ * normalized to 1536 dims (gte-small returns 384; normalizeTo1536 zero-pads).
+ */
+async function embedViaHosted(
+  text: string,
+  opts: GenerateEmbeddingOptions,
+): Promise<number[] | null> {
+  const result = await postHostedEmbed([text], opts, HOSTED_TIMEOUT_MS)
+  return result?.[0] ?? null
+}
+
+/**
+ * Embed text longer than gte-small can take in one call: chunk at the hosted
+ * size, send the chunks as ONE batched `texts[]` request, and mean-pool with
+ * the existing `poolChunkEmbeddings`. No new pooling logic — just a smaller
+ * chunk size feeding the machinery the OpenAI long-text path already uses.
+ */
+async function embedLongTextViaHosted(
+  text: string,
+  opts: GenerateEmbeddingOptions,
+): Promise<number[] | null> {
+  const chunks = chunkText(text, {
+    chunkSizeChars: HOSTED_CHUNK_TARGET_CHARS,
+    overlapChars: HOSTED_CHUNK_OVERLAP_CHARS,
+  })
+  const embeddings = await generateHostedEmbeddingsBatch(chunks, opts)
+  if (!embeddings || embeddings.length === 0) return null
+  return poolChunkEmbeddings(embeddings)
+}
+
+/**
+ * Embed many texts in as few hosted calls as possible, preserving input order.
+ *
+ * Splits into sub-batches of `HOSTED_MAX_BATCH` because the edge function
+ * rejects more than 128 texts per call. Fail-closed: returns `null` if ANY
+ * sub-batch fails, rather than a partially-embedded array a caller could
+ * mistake for a complete one.
+ *
+ * Hosted-specific by design — it is the batching endpoint, not a
+ * provider-selection entry point, so it never consults
+ * `resolveEmbeddingProvider`. (The server exports its copy for the backfill
+ * scripts; the CLI has no backfill, so this stays module-private.)
+ */
+async function generateHostedEmbeddingsBatch(
+  texts: string[],
+  opts: GenerateEmbeddingOptions = {},
+): Promise<number[][] | null> {
+  if (texts.length === 0) return []
+  providersUsed.add('hosted')
+
+  const out: number[][] = []
+  for (let i = 0; i < texts.length; i += HOSTED_MAX_BATCH) {
+    const slice = texts.slice(i, i + HOSTED_MAX_BATCH)
+    const embedded = await postHostedEmbed(slice, opts, HOSTED_BATCH_TIMEOUT_MS)
+    if (!embedded) return null
+    out.push(...embedded)
+  }
+  return out
 }
 
 /**
@@ -217,14 +545,17 @@ function poolChunkEmbeddings(chunkEmbeddings: number[][]): number[] | null {
  * Generate per-chunk embeddings for multi-vector chunk storage (Task 9,
  * Phase 2), alongside (not instead of) the existing pooled `generateEmbedding`.
  *
- * Same provider selection as generateEmbedding (Fix A): each chunk is embedded
- * via `embedOne` — Ollama-first, then OpenAI (the OpenAI leg still gated behind
- * the TAGES_OPENAI_EMBED opt-in, so chunk storage never fires an unexpected
- * billable network call on a machine that hasn't opted in). Chunk vectors, the
- * pooled vector, and the query vector are therefore always in the same vector
- * space. Returns null (no chunks persisted) only when NO provider yields a
- * vector at all. In the OpenAI-only eval config (no Ollama, TAGES_OPENAI_EMBED
- * =1, OPENAI_API_KEY set) embedOne yields OpenAI vectors, unchanged from before.
+ * Same provider selection as generateEmbedding: each chunk goes through
+ * `embedOne`, so it uses the process's one resolved provider (hosted by
+ * default). Chunk vectors, the pooled vector, and the query vector are
+ * therefore always in the same vector space. Returns null (no chunks
+ * persisted) when the provider yields no vector.
+ *
+ * Chunk-row granularity stays at chunking.ts's eval-tuned CHUNK_TARGET_CHARS
+ * (4000) regardless of provider, because it determines what a `memory_chunks`
+ * row IS. Under hosted, embedViaHosted sub-chunks each of those to
+ * HOSTED_CHUNK_TARGET_CHARS and pools — so gte-small's window is respected
+ * without changing what gets stored or re-tuning the retrieval eval.
  *
  * Fail-closed for chunk storage (distinct from the pooled path's fail-open
  * contract): if ANY individual chunk fails to embed, the whole result is
@@ -236,13 +567,41 @@ export async function generateChunkEmbeddings(
   text: string,
   opts: GenerateEmbeddingOptions = {},
 ): Promise<{ pooled: number[] | null; chunks: Array<{ text: string; embedding: number[] }> } | null> {
-  const chunkTexts = chunkText(text)
-  const chunks: Array<{ text: string; embedding: number[] }> = []
+  const provider = resolveEmbeddingProvider()
 
-  for (const chunkTextValue of chunkTexts) {
-    const embedding = await embedOne(chunkTextValue, opts)
+  // Chunk at the selected provider's own safe size. Reusing the OpenAI-sized
+  // CHUNK_TARGET_CHARS for hosted would hand gte-small inputs well past its
+  // real ceiling — the failure this would produce (truncation or a 400) is the
+  // silent-embedding-loss class this module already has scar tissue for.
+  const chunkTexts =
+    provider === 'hosted'
+      ? chunkText(text, {
+          chunkSizeChars: HOSTED_CHUNK_TARGET_CHARS,
+          overlapChars: HOSTED_CHUNK_OVERLAP_CHARS,
+        })
+      : chunkText(text)
+
+  let embeddings: Array<number[] | null> | null
+  if (provider === 'hosted') {
+    // One batched call instead of N sequential round trips. Same provider,
+    // same model, same fail-closed semantics as the per-chunk loop below.
+    providersUsed.add('hosted')
+    embeddings = await generateHostedEmbeddingsBatch(chunkTexts, opts)
+  } else {
+    const collected: Array<number[] | null> = []
+    for (const chunkTextValue of chunkTexts) {
+      collected.push(await embedOne(chunkTextValue, opts))
+    }
+    embeddings = collected
+  }
+
+  if (!embeddings || embeddings.length !== chunkTexts.length) return null
+
+  const chunks: Array<{ text: string; embedding: number[] }> = []
+  for (let i = 0; i < chunkTexts.length; i++) {
+    const embedding = embeddings[i]
     if (!embedding) return null
-    chunks.push({ text: chunkTextValue, embedding })
+    chunks.push({ text: chunkTexts[i], embedding })
   }
 
   if (chunks.length === 0) return null

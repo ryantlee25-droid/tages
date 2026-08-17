@@ -42,28 +42,77 @@ export default async function ProjectsPage() {
       </div>
 
       {projects.length === 0 ? (
-        <div className="rounded-lg border border-zinc-800 p-12 text-center max-w-lg mx-auto">
+        <div className="rounded-lg border border-zinc-800 p-8 text-center max-w-4xl mx-auto">
           <div className="text-4xl mb-4">🧒</div>
           <h2 className="text-lg font-medium text-zinc-300">Welcome to Tages</h2>
           <p className="mt-2 text-sm text-zinc-400">
             Give your AI tools persistent memory about your codebase.
           </p>
-          <div className="mt-6 space-y-3 text-left">
-            <div className="rounded-lg bg-zinc-800/50 p-4">
-              <p className="text-xs font-medium text-zinc-300 mb-2">1. Install the CLI</p>
-              <code className="text-xs text-[#3BA3C7]">npm install -g @tages/cli</code>
+
+          <div className="mt-6 mx-auto max-w-md rounded-lg bg-zinc-800/50 p-4 text-left">
+            <p className="text-xs font-medium text-zinc-300 mb-2">First, install the CLI</p>
+            <code className="text-xs text-[#3BA3C7]">npm install -g @tages/cli</code>
+          </div>
+
+          <p className="mt-6 text-sm text-zinc-400">
+            Then pick the path that matches you.
+          </p>
+
+          <div className="mt-4 grid gap-4 text-left sm:grid-cols-2">
+            <div className="rounded-lg border border-zinc-800 p-4">
+              <h3 className="text-sm font-medium text-white">Starting your own project</h3>
+              <p className="mt-1 text-xs text-zinc-500">
+                Nobody on your team has set up Tages for this repo yet.
+              </p>
+              <div className="mt-3 space-y-3">
+                <div className="rounded-lg bg-zinc-800/50 p-3">
+                  <p className="text-xs font-medium text-zinc-300 mb-2">1. Create the project</p>
+                  <code className="text-xs text-[#3BA3C7]">cd your-project && tages init</code>
+                </div>
+                <div className="rounded-lg bg-zinc-800/50 p-3">
+                  <p className="text-xs font-medium text-zinc-300 mb-2">2. Store your first memory</p>
+                  <code className="text-xs text-[#3BA3C7]">tages remember &quot;uses-pnpm&quot; &quot;This project uses pnpm&quot;</code>
+                </div>
+              </div>
+              <p className="mt-3 text-xs text-zinc-500">
+                <code className="rounded bg-zinc-800 px-1">tages init</code> claims the project
+                name for your whole team. Names are unique across all of Tages, so only one
+                person should run it per repo.
+              </p>
             </div>
-            <div className="rounded-lg bg-zinc-800/50 p-4">
-              <p className="text-xs font-medium text-zinc-300 mb-2">2. Initialize in your project</p>
-              <code className="text-xs text-[#3BA3C7]">cd your-project && tages init</code>
-            </div>
-            <div className="rounded-lg bg-zinc-800/50 p-4">
-              <p className="text-xs font-medium text-zinc-300 mb-2">3. Store your first memory</p>
-              <code className="text-xs text-[#3BA3C7]">tages remember &quot;uses-pnpm&quot; &quot;This project uses pnpm&quot;</code>
+
+            <div className="rounded-lg border border-zinc-800 p-4">
+              <h3 className="text-sm font-medium text-white">Joining a teammate&apos;s project</h3>
+              <p className="mt-1 text-xs text-zinc-500">
+                Someone on your team already ran <code className="rounded bg-zinc-800 px-1">tages init</code> for this repo.
+              </p>
+              <div className="mt-3 space-y-3">
+                <div className="rounded-lg bg-zinc-800/50 p-3">
+                  <p className="text-xs font-medium text-zinc-300 mb-2">1. Ask your team for the project ID</p>
+                  <p className="text-xs text-zinc-400">
+                    A project owner or admin can give you the ID (a UUID). Ask them to add you to
+                    the project as well: <code className="text-[#3BA3C7]">tages team invite &lt;your-email&gt;</code>
+                  </p>
+                </div>
+                <div className="rounded-lg bg-zinc-800/50 p-3">
+                  <p className="text-xs font-medium text-zinc-300 mb-2">2. Join the project</p>
+                  <code className="text-xs text-[#3BA3C7]">cd your-project && tages link --project-id &lt;uuid&gt;</code>
+                </div>
+              </div>
+              <p className="mt-3 text-xs text-zinc-500">
+                Do not run <code className="rounded bg-zinc-800 px-1">tages init</code> to join. It
+                tries to create a second project with a name that is already taken, and the failure
+                is sometimes misreported as a plan limit.{' '}
+                <code className="rounded bg-zinc-800 px-1">tages link</code> signs you in with
+                GitHub if you have no session yet, so it can be your very first command.
+              </p>
             </div>
           </div>
+
           <p className="mt-6 text-xs text-zinc-500">
-            Your projects will appear here once you run <code className="rounded bg-zinc-800 px-1">tages init</code>.
+            Run either path from your own work repo, the one you want your AI tools to remember,
+            not from a checkout of Tages itself. Your projects appear here as soon as the command
+            finishes.
           </p>
         </div>
       ) : (

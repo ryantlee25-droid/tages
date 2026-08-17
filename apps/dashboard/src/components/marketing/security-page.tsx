@@ -7,9 +7,9 @@ interface SecuritySectionProps {
 
 function SecuritySection({ title, children }: SecuritySectionProps) {
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6 sm:p-8">
-      <h2 className="mb-4 text-xl font-semibold text-white">{title}</h2>
-      <div className="space-y-3 text-zinc-400">{children}</div>
+    <div className="rounded-card border border-line bg-paper-raised/50 p-6 sm:p-8">
+      <h2 className="mb-4 text-heading text-ink">{title}</h2>
+      <div className="space-y-3 text-ink-soft">{children}</div>
     </div>
   )
 }
@@ -20,7 +20,7 @@ interface SecurityBadgeProps {
 
 function SecurityBadge({ label }: SecurityBadgeProps) {
   return (
-    <span className="inline-flex items-center rounded-full border border-[#3BA3C7]/30 bg-[#3BA3C7]/10 px-3 py-0.5 text-xs font-medium text-[#3BA3C7]">
+    <span className="inline-flex items-center rounded-full border border-signal-200 bg-signal-50 px-3 py-0.5 text-xs font-medium text-signal-600">
       {label}
     </span>
   )
@@ -31,14 +31,14 @@ export function SecurityPage() {
     <div className="relative mx-auto max-w-3xl px-6 py-24">
       {/* Header */}
       <div className="mb-16 text-center">
-        <div className="mb-6 inline-flex items-center rounded-full border border-[#3BA3C7]/30 bg-[#3BA3C7]/10 px-4 py-1.5 text-sm text-[#3BA3C7]">
+        <div className="mb-6 inline-flex items-center rounded-full border border-signal-200 bg-signal-50 px-4 py-1.5 text-sm text-signal-600">
           Security posture
         </div>
-        <h1 className="text-4xl font-bold tracking-tight text-white sm:text-5xl">
+        <h1 className="text-4xl font-bold tracking-tight text-ink sm:text-5xl">
           Built with security{' '}
-          <span style={{ color: '#3BA3C7' }}>from the start</span>
+          <span className="text-signal-600">from the start</span>
         </h1>
-        <p className="mt-6 text-lg text-zinc-400">
+        <p className="mt-6 text-lg text-ink-soft">
           Tages is open-source and self-hostable. We document our security posture
           openly so you can evaluate it for your team.
         </p>
@@ -63,11 +63,11 @@ export function SecurityPage() {
             database. Only your application can decrypt it.
           </p>
           <p>
-            To enable encryption, set the <code className="rounded bg-zinc-800 px-1.5 py-0.5 text-xs sm:text-sm font-mono text-zinc-200">TAGES_ENCRYPTION_KEY</code> environment
+            To enable encryption, set the <code className="rounded bg-paper-sunken px-1.5 py-0.5 text-xs sm:text-sm font-mono text-ink">TAGES_ENCRYPTION_KEY</code> environment
             variable to a 32-byte hex key. Without this variable, data is stored in plaintext
             (protected by Supabase RLS policies and your database credentials).
           </p>
-          <p className="text-sm text-zinc-500">
+          <p className="text-sm text-ink-muted">
             Encryption is opt-in by design. Self-hosted users choose their own key management strategy.
           </p>
         </SecuritySection>
@@ -93,7 +93,7 @@ export function SecurityPage() {
             CLI tokens are hashed with SHA-256 before storage. Raw tokens are never persisted.
             Tokens support configurable expiry and can be rotated at any time with:
           </p>
-          <div className="overflow-x-auto rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 font-mono text-xs sm:text-sm text-zinc-300">
+          <div className="overflow-x-auto rounded-control border border-line bg-paper-raised px-4 py-3 font-mono text-xs sm:text-sm text-ink-soft">
             tages token rotate --expires-in 30
           </div>
           <p>
@@ -104,7 +104,7 @@ export function SecurityPage() {
 
         <SecuritySection title="Data flow and LLM privacy">
           <p>
-            <strong className="font-semibold text-white">Your memory data is never used to train LLMs.</strong>{' '}
+            <strong className="font-semibold text-ink">Your memory data is never used to train LLMs.</strong>{' '}
             Tages does not send your codebase memories to any external model unless you explicitly
             invoke a recall or auto-index operation.
           </p>
@@ -128,10 +128,10 @@ export function SecurityPage() {
           <p>
             Projects support role-based access control with three roles:
           </p>
-          <ul className="ml-4 list-disc space-y-1 text-zinc-400">
-            <li><strong className="text-zinc-200">Owner</strong>: full control, can manage members and delete the project</li>
-            <li><strong className="text-zinc-200">Admin</strong>: can read and write memories, manage most settings</li>
-            <li><strong className="text-zinc-200">Member</strong>: read-only access to project memories</li>
+          <ul className="ml-4 list-disc space-y-1 text-ink-soft">
+            <li><strong className="text-ink">Owner</strong>: full control, can manage members and delete the project</li>
+            <li><strong className="text-ink">Admin</strong>: can read and write memories, manage most settings</li>
+            <li><strong className="text-ink">Member</strong>: read-only access to project memories</li>
           </ul>
         </SecuritySection>
 
@@ -146,7 +146,7 @@ export function SecurityPage() {
             connect directly to your Supabase instance. This is the highest-isolation option
             for teams with strict data residency requirements.
           </p>
-          <div className="overflow-x-auto rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 font-mono text-xs sm:text-sm text-zinc-300">
+          <div className="overflow-x-auto rounded-control border border-line bg-paper-raised px-4 py-3 font-mono text-xs sm:text-sm text-ink-soft">
             npm install -g @tages/cli{'\n'}tages init --supabase-url YOUR_URL --supabase-key YOUR_KEY
           </div>
         </SecuritySection>
@@ -158,16 +158,16 @@ export function SecurityPage() {
           </p>
           <div className="mt-2 space-y-2 text-sm">
             <p>
-              <strong className="text-zinc-200">Email:</strong>{' '}
-              <a href="mailto:security@tages.ai" className="text-[#3BA3C7] hover:underline">
+              <strong className="text-ink">Email:</strong>{' '}
+              <a href="mailto:security@tages.ai" className="text-signal-600 hover:underline">
                 security@tages.ai
               </a>
             </p>
             <p>
-              <strong className="text-zinc-200">GitHub Security Advisory:</strong>{' '}
+              <strong className="text-ink">GitHub Security Advisory:</strong>{' '}
               <a
                 href="https://github.com/ryantlee25-droid/tages/security/advisories/new"
-                className="text-[#3BA3C7] hover:underline"
+                className="text-signal-600 hover:underline"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -175,12 +175,12 @@ export function SecurityPage() {
               </a>
             </p>
           </div>
-          <p className="mt-4 text-sm text-zinc-500">
+          <p className="mt-4 text-sm text-ink-muted">
             We acknowledge reports within 48 hours and aim to patch critical issues within
             7 days. Full disclosure policy in{' '}
             <Link
               href="https://github.com/ryantlee25-droid/tages/blob/main/SECURITY.md"
-              className="text-[#3BA3C7] hover:underline"
+              className="text-signal-600 hover:underline"
               target="_blank"
               rel="noopener noreferrer"
             >
@@ -192,15 +192,15 @@ export function SecurityPage() {
       </div>
 
       {/* Footer CTA */}
-      <div className="mt-16 rounded-xl border border-[#3BA3C7]/20 bg-[#3BA3C7]/5 p-8 text-center">
-        <h2 className="text-xl font-semibold text-white">Questions about our security posture?</h2>
-        <p className="mt-2 text-zinc-400">
+      <div className="mt-16 rounded-card border border-signal-200 bg-signal-50 p-8 text-center">
+        <h2 className="text-heading text-ink">Questions about our security posture?</h2>
+        <p className="mt-2 text-ink-soft">
           We&apos;re happy to answer questions from security teams evaluating Tages.
         </p>
         <a
           href="mailto:security@tages.ai"
-          className="mt-6 inline-flex items-center rounded-lg px-6 py-2.5 text-sm font-medium text-white transition-all hover:opacity-90"
-          style={{ backgroundColor: '#3BA3C7' }}
+          className="mt-6 inline-flex items-center rounded-control px-6 py-2.5 text-sm font-medium text-ink transition-all hover:opacity-90"
+          style={{ backgroundColor: 'var(--color-signal-600)' }}
         >
           Contact security@tages.ai
         </a>

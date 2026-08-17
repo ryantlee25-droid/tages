@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: read
+  # Required for npm provenance (--provenance below). npm exchanges this OIDC
+  # token for a signed attestation linking the tarball to this workflow run.
   id-token: write
 
 jobs:
@@ -24,21 +26,115 @@ jobs:
       - run: pnpm build
       - run: pnpm -r test
       - run: pnpm typecheck
-      - run: pnpm --filter @tages/shared publish --access public --no-git-checks
+
+      # Publishing is NOT idempotent by default: npm rejects a re-publish of an
+      # already-published version with E403, so a run that dies partway through
+      # cannot simply be re-run — the earlier packages would fail at step 1 and
+      # the scope would stay half-published at mismatched versions. This helper
+      # makes each publish step a no-op when name@version is already on the
+      # registry, so the whole job is safe to re-run until it fully succeeds.
+      - name: Prepare idempotent publish helper
+        run: |
+          cat > "$RUNNER_TEMP/publish-if-needed.sh" <<'HELPER'
+          #!/usr/bin/env bash
+          # Usage: publish-if-needed.sh <package-dir-relative-to-repo-root>
+          #
+          # Probes the registry for the exact name@version in that package's
+          # manifest, then:
+          #   - registry has it            -> SKIP (exit 0)
+          #   - registry 404s (version not
+          #     published, or package has
+          #     never been published)      -> PUBLISH
+          #   - any other probe failure
+          #     (network, auth, 5xx)       -> FAIL LOUDLY (exit 1)
+          #
+          # The last branch matters: treating an auth or network error as "not
+          # published" would push a duplicate publish attempt into an E403, or
+          # worse, mask a broken token until half the scope is published.
+          set -uo pipefail
+
+          dir="$1"
+          manifest="$GITHUB_WORKSPACE/$dir/package.json"
+          name="$(node -p "require('$manifest').name")"
+          version="$(node -p "require('$manifest').version")"
+
+          if [ -z "$name" ] || [ -z "$version" ]; then
+            echo "FAIL: could not read name/version from $manifest." >&2
+            exit 1
+          fi
+
+          echo "::group::$name@$version"
+
+          view_err="$(mktemp)"
+          published="$(npm view "$name@$version" version 2>"$view_err")"
+          status=$?
+
+          if [ "$status" -eq 0 ] && [ -n "$published" ]; then
+            echo "SKIP: $name@$version is already on the registry (reported: $published)."
+            echo "::endgroup::"
+            exit 0
+          fi
+
+          # npm returns E404 both for "this package has never been published"
+          # and for "this package exists but not at this version". Both mean
+          # "not present, proceed" — verified against the live registry.
+          if [ "$status" -ne 0 ] && ! grep -q 'code E404' "$view_err"; then
+            echo "FAIL: registry probe for $name@$version failed, and not with E404." >&2
+            cat "$view_err" >&2
+            echo "::endgroup::"
+            exit 1
+          fi
+
+          echo "PUBLISH: $name@$version is not on the registry."
+          pnpm --filter "$name" publish --access public --no-git-checks --provenance
+          publish_status=$?
+          echo "::endgroup::"
+          exit "$publish_status"
+          HELPER
+          chmod +x "$RUNNER_TEMP/publish-if-needed.sh"
+
+      # Order is load-bearing. @tages/shared must land first: server, cli, and
+      # harness-claude-code all depend on it via `workspace:*`, which pnpm
+      # rewrites to an exact version pin at pack time, so a consumer published
+      # before shared would pin a version that does not exist yet.
+      #
+      # A SKIP does not weaken that guarantee — a skip means the registry
+      # already serves that exact version, which is precisely the postcondition
+      # later steps need. A genuine failure exits non-zero and fail-fast stops
+      # the job before any dependent publishes.
+      - name: Publish @tages/shared
+        run: bash "$RUNNER_TEMP/publish-if-needed.sh" packages/shared
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: pnpm --filter @tages/server publish --access public --no-git-checks
+      - name: Publish @tages/server
+        run: bash "$RUNNER_TEMP/publish-if-needed.sh" packages/server
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: pnpm --filter @tages/cli publish --access public --no-git-checks
+      # MUST precede @tages/cli. `tages harness enable` resolves the hook binary
+      # through require.resolve('@tages/harness-claude-code') — it needs the real
+      # file on disk to point a Claude Code hook at, so bundling cannot satisfy
+      # it and the CLI now carries a genuine runtime dependency on this package.
+      # Publishing cli first would ship a manifest pinning a version that does
+      # not exist yet, and `npm install -g @tages/cli` would fail outright.
+      - name: Publish @tages/harness-claude-code
+        run: bash "$RUNNER_TEMP/publish-if-needed.sh" packages/harness-claude-code
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: pnpm --filter @tages/cursor-plugin publish --access public --no-git-checks
+      - name: Publish @tages/cli
+        run: bash "$RUNNER_TEMP/publish-if-needed.sh" packages/cli
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: pnpm --filter @tages/codex-plugin publish --access public --no-git-checks
+      # The three editor plugins have no workspace dependencies, so their
+      # relative order is free.
+      - name: Publish @tages/cursor-plugin
+        run: bash "$RUNNER_TEMP/publish-if-needed.sh" packages/cursor-plugin
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: pnpm --filter @tages/gemini-plugin publish --access public --no-git-checks
+      - name: Publish @tages/codex-plugin
+        run: bash "$RUNNER_TEMP/publish-if-needed.sh" packages/codex-plugin
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish @tages/gemini-plugin
+        run: bash "$RUNNER_TEMP/publish-if-needed.sh" packages/gemini-plugin
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

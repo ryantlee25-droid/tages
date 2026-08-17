@@ -1,50 +1,47 @@
 import * as fs from 'fs'
-import * as path from 'path'
-import { fileURLToPath } from 'url'
-import { createRequire } from 'module'
 import chalk from 'chalk'
 import { getCacheDir, getAuthPath } from '../config/paths.js'
 import { createAuthenticatedClient } from '../auth/session.js'
 
-// Cross-package imports: server is CJS, CLI is ESM
-// Resolve to the server package's own dist/ (not the CLI's compiled copy)
+/**
+ * The two `@tages/server` modules the CLI needs to read and push the local
+ * cache. They are imported FROM SOURCE and compiled into the CLI bundle by
+ * tsup, which is the only form that works in all three environments the CLI
+ * runs in:
+ *
+ *   - published npm install — there is no sibling `packages/server` on disk
+ *   - monorepo clone + `pnpm link --global` — there is, but it need not be built
+ *   - `tsx` / vitest running straight off `src/`
+ *
+ * This replaces a filesystem walk that looked for
+ * `packages/server/dist/cache/sqlite.js` up to ten directories above this
+ * file. That path only ever exists in a monorepo checkout, so every command
+ * that syncs (`remember`, `forget`, `import`, `import-memories`, `index`)
+ * threw `Failed to load server modules` for anyone who installed from npm.
+ * The walk also made the CJS server `dist/` the thing being loaded, which is
+ * why the loader needed `createRequire` interop at all; bundling from source
+ * removes the module-format mismatch instead of bridging it.
+ *
+ * Kept as a lazy `await import()` rather than a top-level import so the
+ * SQLite-backed module body is not evaluated by commands that never sync.
+ */
 let SqliteCache: any
 let SupabaseSync: any
 
 async function loadServerModules() {
-  if (!SqliteCache) {
-    try {
-      // Resolve server dist: walk up from this file until we find packages/server/dist
-      const __filename = fileURLToPath(import.meta.url)
-      let dir = path.dirname(__filename)
-      let serverDist = ''
-      for (let i = 0; i < 10; i++) {
-        const candidate = path.join(dir, 'packages', 'server', 'dist')
-        if (fs.existsSync(path.join(candidate, 'cache', 'sqlite.js'))) {
-          serverDist = candidate
-          break
-        }
-        dir = path.dirname(dir)
-      }
-      if (!serverDist) throw new Error('Could not find packages/server/dist')
-      const require = createRequire(import.meta.url)
-
-      if (fs.existsSync(path.join(serverDist, 'cache', 'sqlite.js'))) {
-        // Load CJS server dist from ESM CLI
-        SqliteCache = require(path.join(serverDist, 'cache', 'sqlite.js')).SqliteCache
-        SupabaseSync = require(path.join(serverDist, 'sync', 'supabase-sync.js')).SupabaseSync
-      } else {
-        // tsx source execution: dynamic import from source
-        // @ts-ignore — cross-package import
-        const sqliteModule = await import('../../../server/src/cache/sqlite.js')
-        SqliteCache = sqliteModule.SqliteCache
-        // @ts-ignore — cross-package import
-        const syncModule = await import('../../../server/src/sync/supabase-sync.js')
-        SupabaseSync = syncModule.SupabaseSync
-      }
-    } catch (e) {
-      throw new Error(`Failed to load server modules: ${(e as Error).message}`)
+  if (SqliteCache) return
+  try {
+    // @ts-ignore — cross-package source import, inlined by tsup
+    const sqliteModule = await import('../../../server/src/cache/sqlite.js')
+    SqliteCache = sqliteModule.SqliteCache
+    // @ts-ignore — cross-package source import, inlined by tsup
+    const syncModule = await import('../../../server/src/sync/supabase-sync.js')
+    SupabaseSync = syncModule.SupabaseSync
+    if (!SqliteCache || !SupabaseSync) {
+      throw new Error('server modules loaded but did not export SqliteCache/SupabaseSync')
     }
+  } catch (e) {
+    throw new Error(`Failed to load server modules: ${(e as Error).message}`)
   }
 }
 
@@ -56,10 +53,56 @@ export interface ProjectConfig {
   [key: string]: unknown
 }
 
+/**
+ * Outcome of a sync flush.
+ *
+ * `ok: true` means every locally-dirty memory reached Supabase, OR there was
+ * nowhere to push it (local mode, no cloud configured) — i.e. nothing was
+ * silently lost. `ok: false` means the memory is still sitting in local SQLite
+ * with dirty=1 and no teammate can see it; `error` says why.
+ */
+export interface FlushResult {
+  ok: boolean
+  /** Populated only when `ok` is false. */
+  error?: string
+}
+
 export interface CliSyncContext {
   cache: any  // SqliteCache instance (dynamically imported)
+  /**
+   * Best-effort push that never throws and discards the outcome.
+   * Used by the bulk commands (import, import-memories, index) which print
+   * their own aggregate summary. Delegates to `flushWithResult`.
+   */
   flush: () => Promise<void>
+  /**
+   * Push dirty rows and report whether they actually landed in Supabase.
+   * Any caller that prints a per-memory success line to a human must use this
+   * instead of `flush` — otherwise a failed cloud write is reported as success.
+   */
+  flushWithResult: () => Promise<FlushResult>
+  /**
+   * Push dirty rows, then pull remote state into the local cache — push first,
+   * always. Remote wins on conflict except for rows that failed to push, which
+   * are preserved rather than overwritten. Never throws.
+   */
+  reconcile: () => Promise<{ pushed: boolean; pulled: number; error?: string; alreadyReported?: boolean }>
   close: () => void
+}
+
+/**
+ * Ids of the memories currently marked dirty (unsynced) in the local cache.
+ * Defensive: a caller may hand us a partial/mocked cache with no getDirty.
+ * An unreadable cache yields an empty list, which degrades to the previous
+ * "assume success" behaviour rather than reporting a spurious failure.
+ */
+function dirtyMemoryIds(cache: any): string[] {
+  try {
+    const rows = typeof cache?.getDirty === 'function' ? cache.getDirty() : []
+    return Array.isArray(rows) ? rows.map((r: { id: string }) => r.id) : []
+  } catch {
+    return []
+  }
 }
 
 /**
@@ -80,11 +123,19 @@ export async function openCliSync(config: ProjectConfig): Promise<CliSyncContext
 
   // Local mode — no Supabase URL configured
   if (!config.supabaseUrl) {
+    // Nothing to push and nowhere to push it: a local-only write is the
+    // configured behaviour here, not a silent failure, so report ok.
+    const flushWithResult = async (): Promise<FlushResult> => ({ ok: true })
     return {
       cache,
       flush: async () => {
-        // no-op in local mode
+        await flushWithResult()
       },
+      flushWithResult,
+      // Nothing to reconcile against in local mode. Reported as a successful
+      // no-op, matching flush's contract here: local-only is the configured
+      // behaviour, not a failure.
+      reconcile: async () => ({ pushed: true, pulled: 0, alreadyReported: false }),
       close: () => {
         cache.close()
       },
@@ -93,6 +144,7 @@ export async function openCliSync(config: ProjectConfig): Promise<CliSyncContext
 
   // Cloud mode — set up SupabaseSync with auth
   let sync: InstanceType<typeof SupabaseSync> | null = null
+  let setupError: string | null = null
 
   try {
     const anonKey = config.supabaseAnonKey || ''
@@ -100,24 +152,125 @@ export async function openCliSync(config: ProjectConfig): Promise<CliSyncContext
     sync = new SupabaseSync(supabase, cache, config.projectId)
   } catch (err) {
     // Auth setup failed — fall back to local mode with a warning
+    setupError = (err as Error).message
     console.error(
-      chalk.dim(`[tages] Could not set up cloud sync: ${(err as Error).message}. Operating in local mode.`)
+      chalk.dim(`[tages] Could not set up cloud sync: ${setupError}. Operating in local mode.`)
     )
+  }
+
+  const flushWithResult = async (): Promise<FlushResult> => {
+    if (!sync) {
+      // Cloud sync WAS configured for this project but the client could never
+      // be built (missing/expired auth). The write stays local — that is a
+      // failure to report, not a local-mode success.
+      return { ok: false, error: setupError || 'cloud sync is unavailable' }
+    }
+
+    // Snapshot what we are about to push. SupabaseSync.markSynced() clears
+    // dirty=1 only after a successful upsert, so rows that are STILL dirty
+    // once flush() resolves are rows that never reached Supabase. This is the
+    // authoritative signal, because awaiting sync.flush() on its own tells us
+    // nothing: _flushMemories() catches the Supabase error, logs it, and
+    // returns normally (packages/server/src/sync/supabase-sync.ts).
+    const pendingIds = dirtyMemoryIds(cache)
+
+    // Recover the underlying reason from that swallowed log line. console.error
+    // is teed, not replaced: every message is still forwarded untouched, we
+    // only keep a copy of the sync failures. Remove this shim once
+    // SupabaseSync.flush() reports a result of its own.
+    const swallowed: string[] = []
+    const realConsoleError = console.error
+    console.error = (...args: unknown[]) => {
+      const line = args.map((a) => (a instanceof Error ? a.message : String(a))).join(' ')
+      if (line.includes('Sync flush failed') || line.includes('Sync error')) {
+        swallowed.push(
+          line.replace(/^\[tages\]\s*/, '').replace(/^Sync (?:flush failed|error):\s*/, '')
+        )
+      }
+      realConsoleError(...args)
+    }
+
+    try {
+      await sync.flush()
+    } catch (err) {
+      // Never rethrow — flush failures are non-fatal, but they ARE reported.
+      return { ok: false, error: (err as Error).message }
+    } finally {
+      console.error = realConsoleError
+    }
+
+    const stillDirty = dirtyMemoryIds(cache).filter((id) => pendingIds.includes(id))
+    if (stillDirty.length > 0) {
+      return {
+        ok: false,
+        error:
+          swallowed[0] ||
+          `${stillDirty.length} ${stillDirty.length === 1 ? 'memory' : 'memories'} still marked unsynced locally`,
+      }
+    }
+
+    return { ok: true }
+  }
+
+  /**
+   * Push local changes, then pull remote state — in that order, always.
+   *
+   * Order is the whole safety property. Pull-then-push would let hydration
+   * overwrite an unsynced local edit with the cloud's older copy before the
+   * edit ever had a chance to leave the machine. Pushing first means anything
+   * still dirty afterwards genuinely failed, and `hydrateFromRemote`'s
+   * `preserveDirty` guard protects exactly that residue.
+   *
+   * Never throws and never blocks the command that called it: reconciliation
+   * is an optimisation of local state, so a network failure degrades to
+   * "carry on with what we have" rather than taking the command down.
+   */
+  const reconcile = async (): Promise<{
+    pushed: boolean
+    pulled: number
+    error?: string
+    /** True when openCliSync already printed this reason, so callers do not echo it. */
+    alreadyReported?: boolean
+  }> => {
+    if (!sync) {
+      return {
+        pushed: false,
+        pulled: 0,
+        error: setupError || 'cloud sync is unavailable',
+        alreadyReported: setupError !== null,
+      }
+    }
+
+    const push = await flushWithResult()
+    try {
+      const pulled = await sync.hydrate()
+      return { pushed: push.ok, pulled: typeof pulled === 'number' ? pulled : 0, error: push.ok ? undefined : push.error }
+    } catch (err) {
+      // Report BOTH halves. Overwriting push.error with the hydrate error hides
+      // the more important message: a failed push means the user's memories are
+      // not reaching their team, which is the entire reason this is surfaced.
+      // A failed pull only means their local copy is stale.
+      const pullError = `pull failed: ${(err as Error).message}`
+      return {
+        pushed: push.ok,
+        pulled: 0,
+        error: push.ok ? pullError : `${push.error}; ${pullError}`,
+      }
+    }
   }
 
   return {
     cache,
     flush: async () => {
-      if (!sync) return
-      try {
-        await sync.flush()
-      } catch (err) {
-        console.error(
-          chalk.dim(`[tages] Sync flush warning: ${(err as Error).message}`)
-        )
-        // Never throw — flush failures are non-fatal
+      // Outcome-discarding wrapper for bulk callers. It still surfaces the
+      // reason on stderr so nothing regresses to a fully silent failure.
+      const result = await flushWithResult()
+      if (!result.ok) {
+        console.error(chalk.dim(`[tages] Sync flush warning: ${result.error}`))
       }
     },
+    flushWithResult,
+    reconcile,
     close: () => {
       if (sync) {
         try {

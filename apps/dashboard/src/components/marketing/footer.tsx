@@ -1,37 +1,97 @@
-import Image from 'next/image'
 import Link from 'next/link'
+
+const GROUPS = [
+  {
+    title: 'Product',
+    links: [
+      { href: '/pricing', label: 'Pricing' },
+      { href: '/examples', label: 'Examples' },
+      { href: '/auth/login', label: 'Sign in' },
+    ],
+  },
+  {
+    title: 'Trust',
+    links: [
+      { href: '/security', label: 'Security' },
+      { href: '/governance', label: 'Governance' },
+      { href: '/privacy', label: 'Privacy' },
+      { href: '/terms', label: 'Terms' },
+    ],
+  },
+  {
+    title: 'Developers',
+    links: [
+      {
+        href: 'https://github.com/ryantlee25-droid/tages/blob/main/docs/quickstart.md',
+        label: 'Quickstart',
+        external: true,
+      },
+      {
+        href: 'https://github.com/ryantlee25-droid/tages/blob/main/docs/team-onboarding.md',
+        label: 'Team onboarding',
+        external: true,
+      },
+      { href: 'https://www.npmjs.com/package/@tages/cli', label: 'npm', external: true },
+      { href: 'https://github.com/ryantlee25-droid/tages', label: 'GitHub', external: true },
+    ],
+  },
+]
 
 export function Footer() {
   return (
-    <footer className="border-t border-zinc-800 px-6 py-12">
-      <div className="mx-auto flex max-w-4xl flex-col items-center gap-8 sm:flex-row sm:justify-between">
-        <div className="flex items-center gap-3">
-          <Image src="/logo-hero.png" alt="Tages" width={300} height={200} className="h-16 w-auto" style={{ filter: 'hue-rotate(-13deg) saturate(0.6)' }} />
-          <span className="text-xs text-zinc-500">Shared memory for teams that ship with AI</span>
+    <footer className="mt-auto border-t border-line/70 px-6 py-14">
+      <div className="mx-auto w-full max-w-5xl">
+        <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-[1.4fr_repeat(3,1fr)]">
+          <div>
+            <p className="text-[15px] font-semibold tracking-[-0.01em] text-ink">Tages</p>
+            <p className="measure mt-2 text-label text-ink-muted">
+              Shared memory for AI coding agents. Named for the Etruscan divine child who
+              dictated sacred knowledge to scribes.
+            </p>
+          </div>
+
+          {GROUPS.map((g) => (
+            <div key={g.title}>
+              <h2 className="text-label font-medium text-ink">{g.title}</h2>
+              <ul className="mt-3 space-y-2">
+                {g.links.map((l) => (
+                  <li key={l.href}>
+                    {'external' in l && l.external ? (
+                      <a
+                        href={l.href}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        className="text-label text-ink-muted transition-colors duration-150 hover:text-ink"
+                      >
+                        {l.label}
+                      </a>
+                    ) : (
+                      <Link
+                        href={l.href}
+                        className="text-label text-ink-muted transition-colors duration-150 hover:text-ink"
+                      >
+                        {l.label}
+                      </Link>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
         </div>
-        <div className="flex flex-wrap justify-center gap-6 text-sm text-zinc-400">
-          <Link href="/examples" className="hover:text-white transition-colors">Examples</Link>
-          <Link href="/pricing" className="hover:text-white transition-colors">Pricing</Link>
-          <Link href="/security" className="hover:text-white transition-colors">Security</Link>
-          <Link href="/privacy" className="hover:text-white transition-colors">Privacy</Link>
-          <Link href="/terms" className="hover:text-white transition-colors">Terms</Link>
-          <a
-            href="https://github.com/ryantlee25-droid/tages"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-white transition-colors"
-          >
-            GitHub
-          </a>
-          <a
-            href="https://github.com/ryantlee25-droid/tages/blob/main/docs/quickstart.md"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-white transition-colors"
-          >
-            Docs
-          </a>
-          <Link href="/auth/login" className="hover:text-white transition-colors">Try demo</Link>
+
+        <div className="mt-12 flex flex-col gap-3 border-t border-line/70 pt-6 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-label text-ink-muted">
+            © {new Date().getFullYear()} Tages. MIT licensed.
+          </p>
+          <p className="text-label text-ink-muted">
+            <a
+              href="mailto:support@tages.ai"
+              className="transition-colors duration-150 hover:text-ink-soft"
+            >
+              support@tages.ai
+            </a>
+          </p>
         </div>
       </div>
     </footer>

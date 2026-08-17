@@ -4,9 +4,13 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ slug: string }> },
+  // The folder is [id] only because Next forbids two different dynamic
+  // segment names at the same path position, and the sibling routes use [id].
+  // The value here is still a SLUG and is still looked up as one; the URL
+  // shape /api/projects/<slug>/export is unchanged.
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  const { slug } = await params
+  const { id: slug } = await params
 
   if (!isValidSlug(slug)) {
     return NextResponse.json({ error: 'Invalid slug format' }, { status: 400 })

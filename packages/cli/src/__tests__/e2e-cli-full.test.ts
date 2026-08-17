@@ -7,19 +7,30 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 // __dirname = packages/cli/src/__tests__ → go up 4 levels to reach repo root
 const PROJECT_ROOT = path.resolve(__dirname, '../../../../')
 
+// `tages init` writes a project-scoped .mcp.json into its *current* directory,
+// so it must not run against the live checkout — doing so rewrites this repo's
+// own tracked .mcp.json. Those runs get an explicit temp cwd, which `pnpm exec`
+// cannot resolve tsx from, so invoke the tsx binary by absolute path instead.
+const TSX_BIN = path.join(PROJECT_ROOT, 'packages', 'cli', 'node_modules', '.bin', 'tsx')
+const CLI_ENTRY = path.join(PROJECT_ROOT, 'packages', 'cli', 'src', 'index.ts')
+
 describe('E2E: CLI Full Coverage', () => {
   let tmpHome: string
   let tmpCachePath: string
+  let tmpWorkDir: string
 
   beforeAll(() => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'tages-cli-full-test-'))
     tmpCachePath = path.join(tmpHome, 'tages-test-cache.db')
+    // Throwaway, non-git working directory for project-mutating commands.
+    tmpWorkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tages-cli-full-work-'))
     // Initialize local mode for functional tests
-    run('init --local --slug h2-test')
+    run('init --local --slug h2-test', { cwd: tmpWorkDir })
   }, 30000)
 
   afterAll(() => {
     fs.rmSync(tmpHome, { recursive: true, force: true })
+    fs.rmSync(tmpWorkDir, { recursive: true, force: true })
   })
 
   function run(
@@ -27,8 +38,11 @@ describe('E2E: CLI Full Coverage', () => {
     opts: { allowFail?: boolean; cwd?: string } = {}
   ): { stdout: string; code: number } {
     const cwd = opts.cwd ?? PROJECT_ROOT
+    const command = opts.cwd
+      ? `"${TSX_BIN}" "${CLI_ENTRY}" ${args}`
+      : `pnpm exec tsx packages/cli/src/index.ts ${args}`
     try {
-      const stdout = execSync(`pnpm exec tsx packages/cli/src/index.ts ${args}`, {
+      const stdout = execSync(command, {
         cwd,
         env: {
           ...process.env,

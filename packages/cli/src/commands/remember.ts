@@ -1,8 +1,9 @@
 import chalk from 'chalk'
 import type { Memory, MemoryType } from '@tages/shared'
+import { createAuthenticatedClient } from '../auth/session.js'
 import { loadProjectConfig } from '../config/project.js'
 import { randomUUID } from 'crypto'
-import { openCliSync } from '../sync/cli-sync.js'
+import { openCliSync, type FlushResult } from '../sync/cli-sync.js'
 import { extractDatesFromMemory } from '../lib/date-extraction.js'
 import { generateEmbedding, generateChunkEmbeddings } from '../lib/embedding.js'
 
@@ -11,6 +12,47 @@ interface RememberOptions {
   project?: string
   filePaths?: string[]
   tags?: string[]
+}
+
+/**
+ * The signed-in user's JWT for the hosted embedding endpoint
+ * (PLAN-HOSTED-EMBEDDING.md Task 3).
+ *
+ * remember.ts needs its OWN Supabase client for this: the one it already uses
+ * is private inside openCliSync's cli-sync internals and is not reachable from
+ * here. recall.ts already builds its own client the same way, so this follows
+ * an existing pattern rather than inventing one.
+ *
+ * Fills the same precedence slot as the server copy's
+ * `opts.supabaseClient.auth.getSession()` lookup — ahead of the
+ * TAGES_SERVICE_KEY / SUPABASE_SERVICE_ROLE_KEY / SUPABASE_ANON_KEY chain that
+ * lib/embedding.ts applies when this returns undefined. When TAGES_SERVICE_KEY
+ * is set we skip building a client at all: createAuthenticatedClient would
+ * build a service-role client that has no session anyway, and lib/embedding.ts
+ * picks the key up from env one step later.
+ *
+ * Everything here is best-effort. A token we cannot resolve degrades the
+ * memory to trigram-only; it must never cost us the write, so no failure in
+ * this function is allowed to escape.
+ *
+ * Duplicated (small, deliberate) from commands/recall.ts rather than shared
+ * from lib/embedding.ts: this module's unit tests mock '../lib/embedding.js'
+ * with an explicit two-function factory, so a new import from that module
+ * would resolve to undefined at runtime under test.
+ */
+async function resolveHostedEmbedToken(
+  supabaseUrl?: string,
+  supabaseAnonKey?: string,
+): Promise<string | undefined> {
+  if (process.env.TAGES_SERVICE_KEY) return undefined
+  if (!supabaseUrl || !supabaseAnonKey) return undefined
+  try {
+    const supabase = await createAuthenticatedClient(supabaseUrl, supabaseAnonKey)
+    const { data } = await supabase.auth.getSession()
+    return data?.session?.access_token ?? undefined
+  } catch {
+    return undefined
+  }
 }
 
 export async function rememberCommand(key: string, value: string, options: RememberOptions) {
@@ -45,16 +87,18 @@ export async function rememberCommand(key: string, value: string, options: Remem
     updatedAt: now,
   }
 
-  const { cache, flush, close } = await openCliSync(config)
+  const { cache, flush, flushWithResult, close } = await openCliSync(config)
+  let syncResult: FlushResult | undefined
   try {
     // Generate a DURABLE embedding synchronously (await) before this one-shot
     // process exits. The long-lived MCP server can fire-and-forget embedding
     // generation (scheduleEmbeddingSync in packages/server/src/tools/remember.ts),
     // but the CLI process would exit before any deferred embedding resolved —
     // leaving embedding=null and the memory invisible to semantic recall.
-    // Same opt-in gate as CLI recall (recall.ts:79): generateEmbedding returns
-    // null when neither Ollama nor the opt-in OpenAI path (TAGES_OPENAI_EMBED)
-    // is available, so this adds no latency/cost when embeddings are disabled.
+    // Same provider selection as CLI recall: the process's one resolved
+    // TAGES_EMBED_PROVIDER (hosted by default). generateEmbedding returns null
+    // whenever that provider is unavailable, so this adds no cost and loses no
+    // memory when embeddings can't be produced.
     // Embed the value only, mirroring the server's plaintextForIndex
     // (packages/server/src/tools/remember.ts:113 — the key is used for the token
     // index, not the embedding), so CLI- and server-written vectors share a space.
@@ -65,16 +109,26 @@ export async function rememberCommand(key: string, value: string, options: Remem
     // Single-pass embedding (Task 11 integration): generateChunkEmbeddings
     // returns BOTH the per-chunk vectors and their mean-pool in one pass, so
     // we take the pooled vector from it instead of paying a second, redundant
-    // embedding pass via generateEmbedding. Post-Fix-A generateChunkEmbeddings
-    // shares generateEmbedding's Ollama-first/OpenAI-opt-in selection (embedOne),
-    // so the pooled vector lands in the SAME space as the recall-time query in
-    // every provider config; the pooled vector is chunk-mean-pooled in all
-    // configs now (not a whole-text embed). generateEmbedding stays as the
-    // fallback for when no chunk provider is available (returns null).
+    // embedding pass via generateEmbedding. It shares generateEmbedding's
+    // provider switch (embedOne), so the pooled vector lands in the SAME space
+    // as the recall-time query in every provider config. generateEmbedding
+    // stays as the fallback for when the chunk pass yields nothing.
+    //
+    // The hosted context is threaded to generateChunkEmbeddings only, not to
+    // the generateEmbedding fallback below. That is not an oversight: under
+    // hosted, a null from generateChunkEmbeddings means the endpoint already
+    // failed, so a second hosted call would fail identically — and the
+    // fallback's call signature is pinned by an existing single-argument
+    // assertion in a test file this task does not own. Under ollama/openai the
+    // hosted context is ignored entirely, so nothing is lost either way.
     let embedding: number[] | null = null
     let chunks: Array<{ text: string; embedding: number[] }> | null = null
     try {
-      const chunkResult = await generateChunkEmbeddings(value)
+      const chunkResult = await generateChunkEmbeddings(value, {
+        supabaseUrl: config.supabaseUrl,
+        accessToken: await resolveHostedEmbedToken(config.supabaseUrl, config.supabaseAnonKey),
+        projectId: config.projectId,
+      })
       if (chunkResult) {
         embedding = chunkResult.pooled
         chunks = chunkResult.chunks
@@ -126,12 +180,42 @@ export async function rememberCommand(key: string, value: string, options: Remem
       cache.upsertChunks(persisted?.id ?? memory.id, config.projectId, chunks)
     }
 
-    // Best-effort cloud sync — never fatal. Also carries any dirty chunk rows
-    // written above (SupabaseSync._flush pushes dirty chunks alongside dirty
-    // memories — see supabase-sync.ts's _flushDirtyChunks).
-    await flush()
+    // Cloud sync — never fatal, but never silent either. Also carries any
+    // dirty chunk rows written above (SupabaseSync._flush pushes dirty chunks
+    // alongside dirty memories — see supabase-sync.ts's _flushDirtyChunks).
+    //
+    // The outcome decides which line we print below. Reporting a green
+    // "Stored:" on a failed cloud write is how a memory ends up living only in
+    // this developer's local SQLite (dirty=1), invisible to every teammate,
+    // with nobody aware it never left the machine.
+    //
+    // flushWithResult is probed rather than called blind: a caller (unit tests
+    // mocking openCliSync) may supply a context that only has the older
+    // void-returning flush(). Absent outcome information is treated as success
+    // — the pre-existing behaviour — never as a spurious failure.
+    if (typeof flushWithResult === 'function') {
+      syncResult = await flushWithResult()
+    } else {
+      await flush()
+    }
   } finally {
     close()
+  }
+
+  if (syncResult && !syncResult.ok) {
+    // Deliberately NOT the green "Stored:" form, and deliberately not a
+    // non-zero exit: the memory IS durably written locally and a later sync
+    // (or `tages status`) can still push it, so failing the process would
+    // break agent hooks and scripts over a recoverable condition.
+    console.error(chalk.yellow('Stored locally only:'), `"${key}" (${options.type})`)
+    console.error(
+      chalk.yellow('  Cloud sync failed:'),
+      syncResult.error || 'unknown error',
+    )
+    console.error(
+      chalk.dim("  Teammates will not see this memory. Run 'tages status' to check sync state."),
+    )
+    return
   }
 
   console.log(chalk.green('Stored:'), `"${key}" (${options.type})`)

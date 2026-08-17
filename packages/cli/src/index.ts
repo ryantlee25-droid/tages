@@ -1,9 +1,13 @@
 #!/usr/bin/env node
+import * as fs from 'fs'
+import * as path from 'path'
+import { fileURLToPath } from 'url'
 import { Command } from 'commander'
 import { initCommand } from './commands/init.js'
 import { rememberCommand } from './commands/remember.js'
 import { recallCommand } from './commands/recall.js'
 import { forgetCommand } from './commands/forget.js'
+import { loginCommand, logoutCommand, whoamiCommand } from './commands/login.js'
 import { statusCommand } from './commands/status.js'
 import { dashboardCommand } from './commands/dashboard.js'
 import { indexCommand } from './commands/index.js'
@@ -39,6 +43,7 @@ import { teamInviteCommand, teamListCommand, teamRemoveCommand, teamRoleCommand 
 import { settingsAutoSaveCommand } from './commands/settings.js'
 import { agentsMdWriteCommand, agentsMdAuditCommand, agentsMdDiffCommand, agentsMdFederateCommand } from './commands/agents-md.js'
 import { driftCommand } from './commands/drift.js'
+import { autoReconcile } from './sync/auto-reconcile.js'
 import {
   harnessEnableCommand,
   harnessDisableCommand,
@@ -46,12 +51,71 @@ import {
   harnessSyncCommand,
 } from './commands/harness.js'
 
+/**
+ * Reads the CLI version from `packages/cli/package.json` at runtime, so
+ * `tages --version` can never drift from the version that was published.
+ * (It did: the shipped 0.3.0 CLI reported a hardcoded 0.2.0.)
+ *
+ * Layout note — tsconfig sets `rootDir: '../../'`, so the built entrypoint lands
+ * at `packages/cli/dist/packages/cli/src/index.js` while package.json stays at
+ * `packages/cli/package.json`. Under `tsx` the entrypoint is
+ * `packages/cli/src/index.ts`. The walk-up absorbs both depths, and it works
+ * through a `pnpm link --global` symlink because Node resolves `import.meta.url`
+ * to the real path before this module runs.
+ *
+ * The `name` check matters: the repo root also has a package.json (name `tages`,
+ * independently versioned), and a bare "first package.json wins" walk could
+ * reach it. Only `@tages/cli` is accepted.
+ */
+function resolveCliVersion(): string {
+  try {
+    let dir = path.dirname(fileURLToPath(import.meta.url))
+    for (let i = 0; i < 10; i++) {
+      const candidate = path.join(dir, 'package.json')
+      if (fs.existsSync(candidate)) {
+        const pkg = JSON.parse(fs.readFileSync(candidate, 'utf-8')) as {
+          name?: string
+          version?: string
+        }
+        if (pkg.name === '@tages/cli' && pkg.version) return pkg.version
+      }
+      const parent = path.dirname(dir)
+      if (parent === dir) break
+      dir = parent
+    }
+  } catch {
+    // fall through to the sentinel below
+  }
+  // Deliberately not a plausible-looking version: a wrong number is worse than
+  // an obviously broken one, since `--version` is used to confirm a build.
+  return '0.0.0-unknown'
+}
+
 const program = new Command()
 
 program
   .name('tages')
   .description('Persistent codebase memory for AI coding agents')
-  .version('0.2.0')
+  .version(resolveCliVersion())
+
+/**
+ * Reconcile the local cache with the cloud before any command that reads or
+ * writes memories, so a teammate's work is visible without restarting the
+ * agent. Rate-limited, best-effort, and never able to fail the command — see
+ * sync/auto-reconcile.ts. `TAGES_NO_AUTO_SYNC=1` opts out.
+ */
+program.hook('preAction', async (_thisCommand, actionCommand) => {
+  if (process.env.TAGES_NO_AUTO_SYNC === '1') return
+  // Walk all the way up to `program` so subcommands inherit their TOP-level
+  // group's policy at any depth. Checking only one level would resolve a
+  // three-deep `tages harness claude-code enable` to `claude-code`, which is
+  // not in SKIP, and reconcile despite `harness` being skipped.
+  let root = actionCommand
+  while (root.parent && root.parent !== program) root = root.parent
+  const rootName = root.parent === program ? root.name() : actionCommand.name()
+  const opts = actionCommand.opts?.() ?? {}
+  await autoReconcile(rootName, { slug: typeof opts.project === 'string' ? opts.project : undefined })
+})
 
 program
   .command('init')
@@ -97,6 +161,21 @@ program
   .argument('<key>', 'The key to delete')
   .option('-p, --project <slug>', 'Project slug')
   .action(forgetCommand)
+
+program
+  .command('login')
+  .description('Sign in with GitHub, or switch to a different account')
+  .action(loginCommand)
+
+program
+  .command('logout')
+  .description('Sign out and remove stored credentials')
+  .action(logoutCommand)
+
+program
+  .command('whoami')
+  .description('Show which account is currently signed in')
+  .action(whoamiCommand)
 
 program
   .command('status')
