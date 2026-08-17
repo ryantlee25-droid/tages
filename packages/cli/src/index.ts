@@ -7,6 +7,7 @@ import { initCommand } from './commands/init.js'
 import { rememberCommand } from './commands/remember.js'
 import { recallCommand } from './commands/recall.js'
 import { forgetCommand } from './commands/forget.js'
+import { loginCommand, logoutCommand, whoamiCommand } from './commands/login.js'
 import { statusCommand } from './commands/status.js'
 import { dashboardCommand } from './commands/dashboard.js'
 import { indexCommand } from './commands/index.js'
@@ -140,6 +141,21 @@ program
   .argument('<key>', 'The key to delete')
   .option('-p, --project <slug>', 'Project slug')
   .action(forgetCommand)
+
+program
+  .command('login')
+  .description('Sign in with GitHub, or switch to a different account')
+  .action(loginCommand)
+
+program
+  .command('logout')
+  .description('Sign out and remove stored credentials')
+  .action(logoutCommand)
+
+program
+  .command('whoami')
+  .description('Show which account is currently signed in')
+  .action(whoamiCommand)
 
 program
   .command('status')
