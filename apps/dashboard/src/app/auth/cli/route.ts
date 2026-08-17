@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { isLocalRedirect } from '@/lib/safe-redirect'
 
 /**
  * CLI token exchange route.
@@ -10,18 +11,6 @@ import { createClient } from '@/lib/supabase/server'
  * Security: redirect_uri is restricted to localhost/127.0.0.1 to prevent
  * open redirect attacks that could leak session tokens to external domains.
  */
-
-function isLocalRedirect(uri: string): boolean {
-  try {
-    const url = new URL(uri)
-    return (
-      url.protocol === 'http:' &&
-      (url.hostname === '127.0.0.1' || url.hostname === 'localhost')
-    )
-  } catch {
-    return false
-  }
-}
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url)

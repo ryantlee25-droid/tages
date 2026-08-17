@@ -17,3 +17,9 @@ auth.json
 HOOK.md
 .semgrep-results/
 e2e/results/
+
+# Internal audit/handoff notes — never in a public repo
+FINDINGS-*.md
+HANDOFF-*.md
+PLAN-*.md
+SPLIT-*.md
