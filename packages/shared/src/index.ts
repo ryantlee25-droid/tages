@@ -9,3 +9,11 @@ export {
   redactSensitiveData,
 } from './safety'
 export type { SafetyWarning } from './safety'
+
+export {
+  judgeRelevance,
+  RELEVANCE_MIN_Z,
+  RELEVANCE_MIN_TOP,
+  RELEVANCE_MIN_CANDIDATES,
+} from './relevance'
+export type { RelevanceVerdict } from './relevance'

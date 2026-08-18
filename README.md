@@ -147,6 +147,14 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-08-18 — Recall relevance floor: `recall` can now answer "nothing"
+
+- **`tages recall <anything>` returned the whole project.** The recall RPCs filter on an absolute cosine threshold (`p_threshold`, 0.7 or 0.3), which against the hosted embedding model filters nothing: measured, pure nonsense (`wibbleflux ganthorpe zzzqx`) scores **0.775** against unrelated memories and *"what is the best recipe for sourdough bread"* scores **0.725** — both clear 0.7. Agents were receiving irrelevant memories presented as answers, and every positive recall result was therefore uninformative.
+- **No absolute cutoff can fix this.** The model's cosines occupy a narrow high band (~0.69–0.95), and any constant tuned to it breaks when the embedding model changes — which is exactly how the existing 0.7 became inert.
+- **The signal is distributional.** Calibrated over 12 memories × 13 queries (8 answerable, 5 not): a query the corpus can answer makes one result stand out; one it cannot produces a flat pack. The top result's **z-score** separated the two cleanly (answerable 2.27–3.22, unanswerable 1.12–1.99, margin 0.277) and is scale-free, unlike the absolute top (margin 0.060), top−2nd (0.008), or top−mean (0.003).
+- **The rule is deliberately conservative.** Suppression is destructive — hiding a memory someone needed is worse than showing one they did not — so results are dropped only when both signals agree: a top score below 0.80 **and** either a flat distribution or too few candidates to judge. A tightly focused corpus, where everything is legitimately about one subject, keeps its high absolute scores and survives. Scoped to the semantic and chunk channels only; the trigram channel already has a real floor (measured 0 rows for the same nonsense queries) and is left alone.
+- **The suite is now 137/137**, green three runs consecutively, with the paraphrase check still passing — the floor rejects nonsense without suppressing genuine semantic matches. Constants come from n=12 on one model: a defensible starting point, not a tuned optimum. `TAGES_DEBUG_RECALL=1` prints the verdict and its reason.
+
 ### 2026-08-18 — `v0.5.3`: republish with `@tages/shared` bumped
 
 - **`v0.5.2` shipped a broken MCP server.** `evidenceWeight` was added to `@tages/shared` without bumping that package, so the publish workflow correctly skipped it as already-published at `0.2.0` — and `@tages/server@0.3.2` went out pinned to `@tages/shared@0.2.0`, a version with no such export. Every MCP `recall` failed with `(0, shared_1.evidenceWeight) is not a function`. Local builds were unaffected because the workspace link resolves to the source tree, so nothing caught it until the end-to-end suite ran against the public registry: 134/137 published vs 136/137 local, with two MCP checks failing only from npm.
