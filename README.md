@@ -147,6 +147,12 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-08-18 — `v0.5.3`: republish with `@tages/shared` bumped
+
+- **`v0.5.2` shipped a broken MCP server.** `evidenceWeight` was added to `@tages/shared` without bumping that package, so the publish workflow correctly skipped it as already-published at `0.2.0` — and `@tages/server@0.3.2` went out pinned to `@tages/shared@0.2.0`, a version with no such export. Every MCP `recall` failed with `(0, shared_1.evidenceWeight) is not a function`. Local builds were unaffected because the workspace link resolves to the source tree, so nothing caught it until the end-to-end suite ran against the public registry: 134/137 published vs 136/137 local, with two MCP checks failing only from npm.
+- **Fix is versions, not code:** `@tages/shared` 0.2.1, `@tages/server` 0.3.3, `@tages/cli` 0.5.3.
+- **Lesson worth keeping:** a monorepo package whose *exports* changed must be bumped even when its consumers were. Testing only the workspace build cannot catch this class of defect — the suite's npm mode is what did.
+
 ### 2026-08-18 — Release readiness: CLI secret gate, working authorship, `created_by` pinned in the database (migration `0074`)
 
 - **The CLI never scanned for secrets.** `tages remember` persisted an AWS key that the MCP path already blocked (`tools/remember.ts:65`) — and it was the wrong way round, since the human-typed path is where a pasted config snippet arrives, and a stored secret is then readable by every project member and pulled into every agent's context by recall. The CLI now runs the same scan, fails closed before any write, and exposes the same `--force` override.
