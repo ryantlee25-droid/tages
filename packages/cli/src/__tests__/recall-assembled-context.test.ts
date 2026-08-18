@@ -21,7 +21,12 @@ const mockSupabase = {
   from: vi.fn(),
   rpc: mockRpc,
 }
-vi.mock('@tages/shared', () => ({
+// importOriginal so real exports (evidenceWeight, EVIDENCE_WEIGHT, …) pass
+// through: recall.ts imports the evidence weighting from here, and a
+// hand-listed mock silently omits anything added later, failing the whole
+// suite on an unrelated change.
+vi.mock('@tages/shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@tages/shared')>()),
   createSupabaseClient: vi.fn(() => mockSupabase),
 }))
 

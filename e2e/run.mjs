@@ -45,6 +45,7 @@ const PHASE_MODULES = [
   './phases/08-isolation.mjs',
   './phases/09-lifecycle.mjs',
   './phases/10-bidirectional-sync.mjs',
+  './phases/11-evidence.mjs',
   './phases/99-controls.mjs',
 ]
 
@@ -295,8 +296,16 @@ async function main() {
     // concurrently running suite.
     report.startPhase('00a · SWEEP — remove fixtures orphaned by an earlier hard kill')
     const cutoff = new Date(Date.now() - 3600_000).toISOString()
+    // Matched by anchored regex, not `like.tages-e2e-*`. The prefix alone is a
+    // human-typeable string, and this DELETE runs with the service key against
+    // whatever `--target` says (prod by default), so a real project in a repo
+    // directory named `tages-e2e-anything` was inside the blast radius. The
+    // fixture slug is always the prefix plus a generated base36 stamp plus the
+    // literal `-project` suffix (see `fixturePrefix` above), so requiring the
+    // full shape costs nothing here and takes hand-named projects out of range.
     const orphans = await api.rest(
-      `/projects?slug=like.tages-e2e-*&created_at=lt.${cutoff}&select=id,slug,created_at`,
+      `/projects?slug=match.${encodeURIComponent('^tages-e2e-[0-9a-z]{8,20}-project$')}` +
+        `&created_at=lt.${cutoff}&select=id,slug,created_at`,
     )
     const stale = Array.isArray(orphans.body) ? orphans.body : []
     for (const p of stale) {

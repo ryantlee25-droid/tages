@@ -10,6 +10,7 @@ import { getEncryptionKey, decryptValue } from '../crypto/encryption'
 import { budgetedResults } from '../search/token-budget'
 import { rerankMemories } from '../search/reranker'
 import { fetchTemporalCandidates, fuseMemoryLists } from '../search/temporal-channel'
+import { applyEvidenceWeight } from '../search/evidence-weighting'
 
 // PLAN.md Task 6: candidate pool widened before rerank/fusion narrow it back
 // down to args.limit. Overridable for tuning/testing, mirroring the CLI's
@@ -169,6 +170,12 @@ export async function handleRecall(
       })
       // Demote stale memories: multiply text/semantic scores by (1 - decay * 0.5)
       const decayPenalty = 1 - decayScore * 0.5
+      // Evidence weight (migration 0070), multiplied in alongside decay. A
+      // level that is recorded but never changes what comes back first is
+      // decorative: the point is that a verified fact outranks an inferred
+      // guess answering the same question, so the agent acts on the checked
+      // one. Unknown (pre-0070 rows) weighs 1.0 — neither rewarded nor
+      // punished for a field nobody filled in.
       return {
         memory: r.memory,
         semanticScore: r.semanticScore * decayPenalty,
@@ -176,7 +183,7 @@ export async function handleRecall(
       }
     })
 
-    const ranked = rankResults(decayAdjusted, {}, args.query)
+    const ranked = rankResults(applyEvidenceWeight(decayAdjusted), {}, args.query)
     let sliced = decryptMemories(ranked.slice(0, limit))
     if (args.maxTokens !== undefined) {
       sliced = budgetedResults(sliced, args.maxTokens, formatMemory)
@@ -315,7 +322,21 @@ function formatMemoryBody(m: Memory): string[] {
 // e.g. "per [2], ...".
 function formatPassage(m: Memory, index: number): string {
   const source = m.source || 'unknown'
-  const header = `[${index}] [${m.type}] ${m.key}  (source: ${source}, updated: ${formatCiteDate(m.updatedAt)})`
+  // Evidence level (migration 0070) rides in the same provenance parenthetical
+  // as source and date. Recording how a claim is known and then hiding it at
+  // read time would be pointless — the reader deciding whether to act on it or
+  // check it first is the entire audience for the field.
+  //
+  // Omitted entirely when unknown rather than printed as "unknown": every row
+  // written before 0070 has no assessment behind it, and a label implies one
+  // was made. `disputed` is shouted, because a contradicted claim served as a
+  // plain fact is worse than no memory at all.
+  const evidence = m.evidence
+    ? m.evidence === 'disputed'
+      ? ', evidence: DISPUTED — contradicted, do not act on this without re-checking'
+      : `, evidence: ${m.evidence}`
+    : ''
+  const header = `[${index}] [${m.type}] ${m.key}  (source: ${source}${evidence}, updated: ${formatCiteDate(m.updatedAt)})`
   return [header, ...formatMemoryBody(m)].join('\n')
 }
 

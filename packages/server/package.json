@@ -1,6 +1,6 @@
 {
   "name": "@tages/server",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "MCP server for persistent AI agent memory",
   "main": "./dist/index.js",
   "bin": {

@@ -142,6 +142,11 @@ program
   .option('-p, --project <slug>', 'Project slug')
   .option('--file-paths <paths...>', 'Related file paths')
   .option('--tags <tags...>', 'Tags for categorization')
+  .option(
+    '--evidence <level>',
+    'How the claim is known: verified | declared | observed | inferred | disputed (default: declared)',
+  )
+  .option('--force', 'Store even if a secret is detected in the key or value')
   .action(rememberCommand)
 
 program

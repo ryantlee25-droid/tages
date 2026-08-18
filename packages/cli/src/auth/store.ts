@@ -43,3 +43,22 @@ export function writeAuthFile(auth: StoredAuth): void {
     fs.closeSync(fd)
   }
 }
+
+/**
+ * Read the stored session, or null when absent/unreadable.
+ *
+ * Deliberately total: every caller treats a missing identity as "unknown", not
+ * as an error. A corrupt auth.json must not take down a command that only
+ * wanted to stamp authorship on a write.
+ */
+export function readAuthFile(): StoredAuth | null {
+  try {
+    const raw = fs.readFileSync(getAuthPath(), 'utf-8')
+    const parsed = JSON.parse(raw) as Partial<StoredAuth>
+    return parsed && typeof parsed.userId === 'string' && parsed.userId
+      ? (parsed as StoredAuth)
+      : null
+  } catch {
+    return null
+  }
+}

@@ -22,6 +22,7 @@ export async function handleRemember(
     crossSystemRefs?: string[]
     examples?: MemoryExample[]
     executionFlow?: ExecutionFlow
+    evidence?: Memory['evidence']
     force?: boolean
   },
   projectId: string,
@@ -87,6 +88,13 @@ export async function handleRemember(
     filePaths: args.filePaths || [],
     tags: args.tags || [],
     confidence: 1.0,
+    // An agent writing about a codebase it just read has, by default,
+    // *concluded* something rather than checked it. `inferred` is the honest
+    // floor: a model that omits the field gets the cautious label, and must
+    // claim `verified` explicitly to get credit for having actually checked.
+    // Defaulting the other way would let every unexamined guess arrive dressed
+    // as a fact, which is the failure this field exists to prevent (0070).
+    evidence: args.evidence ?? 'inferred',
     conditions: args.conditions,
     phases: args.phases,
     crossSystemRefs: args.crossSystemRefs,

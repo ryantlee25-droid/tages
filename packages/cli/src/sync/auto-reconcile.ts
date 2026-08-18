@@ -45,6 +45,49 @@ export function reconcileTtlMs(): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : RECONCILE_TTL_MS
 }
 
+/** Default ceiling on the whole background reconcile, network included. */
+const RECONCILE_TIMEOUT_MS = 3_000
+
+export function reconcileTimeoutMs(): number {
+  const raw = process.env.TAGES_SYNC_TIMEOUT_MS
+  // Same empty-string trap as reconcileTtlMs: Number('') is 0, and a 0ms
+  // ceiling would make every reconcile time out instantly and silently.
+  if (raw === undefined || raw.trim() === '') return RECONCILE_TIMEOUT_MS
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : RECONCILE_TIMEOUT_MS
+}
+
+/** Sentinel, so a timeout is distinguishable from a legitimately undefined result. */
+export const TIMED_OUT = Symbol('reconcile-timed-out')
+
+/**
+ * Runs `work` with a ceiling, resolving to TIMED_OUT if the ceiling wins.
+ *
+ * The loser is not cancelled — there is no AbortSignal threaded through the
+ * Supabase client — so the timer is unref'd and the abandoned promise gets a
+ * no-op catch. Without that catch a later rejection from the abandoned work
+ * would surface as an unhandled rejection long after this function returned,
+ * crashing a command that had already moved on.
+ */
+export async function withTimeout<T>(work: () => Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const started = work().catch((err) => {
+    throw err
+  })
+  started.catch(() => {})
+  try {
+    return await Promise.race([
+      started,
+      new Promise<typeof TIMED_OUT>((resolve) => {
+        timer = setTimeout(() => resolve(TIMED_OUT), ms)
+        if (typeof timer.unref === 'function') timer.unref()
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 /**
  * Commands that must NOT trigger a reconcile.
  *
@@ -173,7 +216,11 @@ export async function autoReconcile(
 ): Promise<void> {
   if (!opts.force && shouldSkipReconcile(commandName)) return
 
-  let ctx: Awaited<ReturnType<typeof openCliSync>> | null = null
+  // A holder rather than a bare `let`, because the open happens inside the
+  // timed closure below. If the timeout wins the race the closure keeps running
+  // and may still open the cache, so the handle has to be reachable from the
+  // `finally` or it leaks an open SQLite connection on every timed-out run.
+  const held: { ctx: Awaited<ReturnType<typeof openCliSync>> | null } = { ctx: null }
   try {
     const config = resolveConfigQuietly(opts.slug)
     const projectId = typeof config?.projectId === 'string' ? config.projectId : null
@@ -189,8 +236,30 @@ export async function autoReconcile(
     }
     recordAttempt(projectId)
 
-    ctx = await openCliSync(config as never)
-    const result = await ctx.reconcile()
+    // Bounded, because "never fails" is not "never blocks". This runs from a
+    // preAction hook in front of nearly every command, and every network call
+    // underneath it — setSession, a possible refreshSession, the count probes,
+    // the select — goes through the global fetch with no AbortSignal. A hard
+    // refusal fails fast, but a captive portal or a firewall that completes the
+    // TCP handshake and then never answers falls through to undici's 300s
+    // headersTimeout, which would hang `tages recall` for five minutes on a
+    // background task the user never asked for.
+    //
+    // Declining is always a safe answer here: the reconcile is opportunistic,
+    // the attempt is already stamped so a burst will not retry it, and the next
+    // command past the TTL tries again.
+    const timed = await withTimeout(async () => {
+      held.ctx = await openCliSync(config as never)
+      return held.ctx.reconcile()
+    }, reconcileTimeoutMs())
+
+    if (timed === TIMED_OUT) {
+      console.error(
+        chalk.dim(`[tages] Background sync: skipped, the server did not respond within ${reconcileTimeoutMs()}ms`),
+      )
+      return
+    }
+    const result = timed
 
     // Only ever a dim note on stderr. This is background maintenance the user
     // did not ask for, so it must not compete with the output of the command
@@ -211,7 +280,7 @@ export async function autoReconcile(
     console.error(chalk.dim(`[tages] Background sync skipped: ${(err as Error).message}`))
   } finally {
     try {
-      ctx?.close()
+      held.ctx?.close()
     } catch {
       /* closing a cache we may never have fully opened is not worth reporting */
     }
