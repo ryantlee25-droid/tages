@@ -6,7 +6,7 @@ import { loadProjectConfig } from '../config/project.js'
 import { getCacheDir } from '../config/paths.js'
 import { generateEmbedding } from '../lib/embedding.js'
 import { sortByTemporalProximity } from '../lib/temporal-sort.js'
-import { evidenceWeight, type EvidenceLevel } from '@tages/shared'
+import { evidenceWeight, judgeRelevance, type EvidenceLevel } from '@tages/shared'
 import { reciprocalRankFusion } from '../lib/rrf.js'
 import { rerankCandidates } from '../lib/reranker.js'
 import { fetchTemporalCandidates } from '../lib/temporal-recall.js'
@@ -329,9 +329,31 @@ export async function recallCommand(query: string | undefined, options: RecallOp
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const chunkRows = (chunkResult.data || []).map((r: any) => ({ ...r, match_type: 'chunk' }))
 
+      // Relevance floor on the SEMANTIC channels only (lib/relevance.ts in
+      // @tages/shared). Measured: the RPCs' absolute `p_threshold` does not
+      // filter anything against this embedding model — pure nonsense scores
+      // 0.775 and "best recipe for sourdough bread" scores 0.725, both clearing
+      // the 0.7 default. So `tages recall <anything>` returned the whole
+      // project, and an agent got irrelevant memories presented as answers.
+      //
+      // Scoped to semantic/chunk deliberately: the trigram channel already has
+      // a real floor (measured 0 rows for the same nonsense queries), so it
+      // needs no help and must not be second-guessed. If the semantic
+      // distribution is flat AND low, that channel contributes nothing and
+      // fusion proceeds on trigram alone — which for a genuinely unanswerable
+      // query means no results at all, the correct answer.
+      const semanticJudged = judgeRelevance(semanticRows.map((r: { similarity?: unknown }) => Number(r.similarity)))
+      const chunkJudged = judgeRelevance(chunkRows.map((r: { similarity?: unknown }) => Number(r.similarity)))
+      if (process.env.TAGES_DEBUG_RECALL === '1') {
+        console.error(
+          `[tages] relevance semantic=${semanticJudged.reason} (top=${semanticJudged.top.toFixed(3)} z=${semanticJudged.z.toFixed(2)}) ` +
+            `chunk=${chunkJudged.reason} (top=${chunkJudged.top.toFixed(3)} z=${chunkJudged.z.toFixed(2)})`,
+        )
+      }
+
       const merged = reciprocalRankFusion<Record<string, unknown> & { id: string }>([
-        semanticRows,
-        chunkRows,
+        semanticJudged.relevant ? semanticRows : [],
+        chunkJudged.relevant ? chunkRows : [],
         trigramRows,
         temporalTagged,
       ])
