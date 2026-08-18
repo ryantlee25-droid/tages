@@ -63,7 +63,9 @@ CREATE TABLE IF NOT EXISTS memories (
   encrypted INTEGER NOT NULL DEFAULT 0,
   referenced_date TEXT,
   relative_date TEXT,
-  evidence TEXT
+  evidence TEXT,
+  created_by TEXT,
+  updated_by TEXT
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS memories_project_key ON memories(project_id, key);
@@ -179,6 +181,12 @@ export class SqliteCache {
       // default and no backfill — NULL means unknown, and inventing a
       // level for rows nobody assessed is the failure it prevents.
       'ALTER TABLE memories ADD COLUMN evidence TEXT',
+      // Authorship (migration 0048). The remote columns and the sync mapper
+      // have carried these since 0048, but the LOCAL cache never had them —
+      // and the CLI syncs from SQLite, so every write dropped its author on
+      // the way out and get_memory_authors reported "Unknown" for everything.
+      'ALTER TABLE memories ADD COLUMN created_by TEXT',
+      'ALTER TABLE memories ADD COLUMN updated_by TEXT',
     ]
     for (const sql of upgrades) {
       try { this.db.exec(sql) } catch { /* already exists */ }
@@ -249,8 +257,8 @@ export class SqliteCache {
 
   upsertMemory(memory: Memory, dirty = true): void {
     const stmt = this.db.prepare(`
-      INSERT INTO memories (id, project_id, key, value, type, source, agent_name, file_paths, tags, confidence, created_at, updated_at, dirty, status, conditions, phases, cross_system_refs, examples, execution_flow, encrypted, referenced_date, relative_date, evidence)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO memories (id, project_id, key, value, type, source, agent_name, file_paths, tags, confidence, created_at, updated_at, dirty, status, conditions, phases, cross_system_refs, examples, execution_flow, encrypted, referenced_date, relative_date, evidence, created_by, updated_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(project_id, key) DO UPDATE SET
         value = excluded.value,
         type = excluded.type,
@@ -270,7 +278,8 @@ export class SqliteCache {
         encrypted = excluded.encrypted,
         referenced_date = excluded.referenced_date,
         relative_date = excluded.relative_date,
-        evidence = excluded.evidence
+        evidence = excluded.evidence,
+        updated_by = excluded.updated_by
     `)
     stmt.run(
       memory.id,
@@ -296,6 +305,8 @@ export class SqliteCache {
       memory.referencedDate || null,
       memory.relativeDate || null,
       memory.evidence || null,
+      memory.createdBy || null,
+      memory.updatedBy || null,
     )
   }
 
@@ -1209,6 +1220,8 @@ interface SqliteMemoryRow {
   referenced_date: string | null
   relative_date: string | null
   evidence: string | null
+  created_by: string | null
+  updated_by: string | null
   embedding: string | null
 }
 
@@ -1234,6 +1247,8 @@ function rowToMemory(row: SqliteMemoryRow): Memory {
     referencedDate: row.referenced_date || undefined,
     relativeDate: row.relative_date || undefined,
     evidence: (row.evidence as Memory['evidence']) || undefined,
+    createdBy: row.created_by || undefined,
+    updatedBy: row.updated_by || undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     encrypted: row.encrypted === 1,

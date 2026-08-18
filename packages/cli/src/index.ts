@@ -146,6 +146,7 @@ program
     '--evidence <level>',
     'How the claim is known: verified | declared | observed | inferred | disputed (default: declared)',
   )
+  .option('--force', 'Store even if a secret is detected in the key or value')
   .action(rememberCommand)
 
 program

@@ -1,9 +1,19 @@
 import chalk from 'chalk'
-import { isEvidenceLevel, EVIDENCE_LEVELS, type Memory, type MemoryType, type EvidenceLevel } from '@tages/shared'
+import {
+  isEvidenceLevel,
+  EVIDENCE_LEVELS,
+  scanForSensitiveData,
+  hasHighSeverity,
+  formatSafetyWarnings,
+  type Memory,
+  type MemoryType,
+  type EvidenceLevel,
+} from '@tages/shared'
 import { createAuthenticatedClient } from '../auth/session.js'
 import { loadProjectConfig } from '../config/project.js'
 import { randomUUID } from 'crypto'
 import { openCliSync, type FlushResult } from '../sync/cli-sync.js'
+import { readAuthFile } from '../auth/store.js'
 import { extractDatesFromMemory } from '../lib/date-extraction.js'
 import { generateEmbedding, generateChunkEmbeddings } from '../lib/embedding.js'
 
@@ -13,6 +23,7 @@ interface RememberOptions {
   filePaths?: string[]
   tags?: string[]
   evidence?: string
+  force?: boolean
 }
 
 /**
@@ -80,6 +91,24 @@ export async function rememberCommand(key: string, value: string, options: Remem
     process.exit(1)
   }
 
+  // Secret/PII scan, mirroring the MCP server's remember tool
+  // (packages/server/src/tools/remember.ts). The CLI previously did not scan at
+  // ALL — the end-to-end suite caught `tages remember` happily persisting an
+  // AWS key that the agent path blocks. That asymmetry is the worst way round:
+  // the human-typed path is the one where a pasted config snippet arrives, and
+  // a stored secret is then readable by every project member and pulled into
+  // every agent's context by recall.
+  //
+  // Fails closed and BEFORE any write, local or remote. `--force` is the same
+  // deliberate override the MCP tool exposes.
+  const warnings = scanForSensitiveData(`${key} ${value}`)
+  if (hasHighSeverity(warnings) && !options.force) {
+    console.error(chalk.red(`Blocked: "${key}" contains detected secrets.`))
+    console.error(formatSafetyWarnings(warnings))
+    console.error(chalk.dim('Nothing was stored. Remove the secret, or pass --force if this is a false positive.'))
+    process.exit(1)
+  }
+
   const now = new Date().toISOString()
 
   // Temporal anchoring (Task C / migration 0060): extract absolute/relative
@@ -87,6 +116,8 @@ export async function rememberCommand(key: string, value: string, options: Remem
   // Runs inline — regex-based extraction is local/cheap with no network
   // call, so it must be set before the memory is constructed/upserted.
   const extractedDates = extractDatesFromMemory(key, value, new Date(now))
+
+  const authorId = readAuthFile()?.userId
 
   const memory: Memory = {
     id: randomUUID(),
@@ -108,9 +139,34 @@ export async function rememberCommand(key: string, value: string, options: Remem
     relativeDate: extractedDates.relativeDate,
     createdAt: now,
     updatedAt: now,
+    // Authorship (migration 0048). The columns have existed since 0048 and the
+    // sync mapper has always carried them, but no CLI write ever populated
+    // them — so `get_memory_authors` returned "Unknown" for everything and a
+    // shared memory could not be attributed to whoever wrote or last edited it.
+    // The server sets these from its callerUserId; the CLI's equivalent is the
+    // signed-in identity in auth.json. `createdBy` is filled in below, only for
+    // rows that do not already exist.
+    ...(authorId ? { updatedBy: authorId } : {}),
   }
 
   const { cache, flush, flushWithResult, close } = await openCliSync(config)
+
+  // createdBy ONLY for a genuinely new key. remoteInsert upserts with
+  // `onConflict: 'project_id,key'`, and a Supabase upsert overwrites every
+  // column it is given — so stamping createdBy on an edit would quietly
+  // reassign authorship of somebody else's memory to whoever last touched it.
+  // updatedBy above is exactly the field that is supposed to move.
+  // createdBy is deliberately NOT set here. Migration 0074 pins it in the
+  // database: filled from auth.uid() on insert, and held to its existing value
+  // on update. The client cannot make this call correctly — deciding whether to
+  // send an id or leave it alone requires knowing whether the row exists
+  // REMOTELY, and the CLI's pull is rate-limited, so a teammate's row may
+  // legitimately be absent from the local cache. Guessing from local state
+  // rewrote a teammate's authorship to the editor.
+  // No local lookup: the database owns created_by outright now, so reading it
+  // back here would be redundant work AND would call getByKey on a path where
+  // it is otherwise only used to resolve a chunk parent id.
+
   let syncResult: FlushResult | undefined
   try {
     // Generate a DURABLE embedding synchronously (await) before this one-shot
