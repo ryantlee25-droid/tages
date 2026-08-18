@@ -34,6 +34,18 @@ export const RememberSchema = z.object({
   crossSystemRefs: z.array(z.string()).optional().describe('Keys of related memories in other systems'),
   examples: z.array(MemoryExampleSchema).optional().describe('Concrete input/output examples'),
   executionFlow: ExecutionFlowSchema.optional().describe('Step-by-step execution pipeline (for execution type)'),
+  // Migration 0070. The description is written for the model that fills it in:
+  // it must choose honestly, and the default when it says nothing is the
+  // cautious one (`inferred`), not the flattering one.
+  evidence: z
+    .enum(['verified', 'declared', 'observed', 'inferred', 'disputed'])
+    .optional()
+    .describe(
+      'How you know this. verified = you checked it against a test, command output, or file. ' +
+        'declared = the user stated it as policy or intent. observed = you saw it happen once. ' +
+        'inferred = you concluded it by reasoning without checking. disputed = it contradicts other evidence. ' +
+        'Omit it if unsure; it defaults to inferred. Do NOT claim verified for something you did not actually check.',
+    ),
   force: z.boolean().optional().default(false).describe('Override secret detection blocking'),
 })
 

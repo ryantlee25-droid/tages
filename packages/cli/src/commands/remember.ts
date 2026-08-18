@@ -1,5 +1,5 @@
 import chalk from 'chalk'
-import type { Memory, MemoryType } from '@tages/shared'
+import { isEvidenceLevel, EVIDENCE_LEVELS, type Memory, type MemoryType, type EvidenceLevel } from '@tages/shared'
 import { createAuthenticatedClient } from '../auth/session.js'
 import { loadProjectConfig } from '../config/project.js'
 import { randomUUID } from 'crypto'
@@ -12,6 +12,7 @@ interface RememberOptions {
   project?: string
   filePaths?: string[]
   tags?: string[]
+  evidence?: string
 }
 
 /**
@@ -62,6 +63,23 @@ export async function rememberCommand(key: string, value: string, options: Remem
     process.exit(1)
   }
 
+  // Reject an unrecognised level before anything is written. A free-text
+  // evidence value is worse than none: the field's only purpose is to be
+  // interpretable by a reader deciding whether to act or check, and it stops
+  // being that the moment arbitrary strings can land in it. Fails closed —
+  // nothing is stored locally or remotely.
+  if (options.evidence !== undefined && !isEvidenceLevel(options.evidence)) {
+    console.error(chalk.red(`Unknown --evidence level: "${options.evidence}"`))
+    console.error(chalk.dim(`Expected one of: ${EVIDENCE_LEVELS.join(', ')}`))
+    console.error(
+      chalk.dim(
+        'verified = checked against something executable · declared = asserted as policy · ' +
+          'observed = seen once · inferred = reasoned, not checked · disputed = contradicted',
+      ),
+    )
+    process.exit(1)
+  }
+
   const now = new Date().toISOString()
 
   // Temporal anchoring (Task C / migration 0060): extract absolute/relative
@@ -81,6 +99,11 @@ export async function rememberCommand(key: string, value: string, options: Remem
     tags: options.tags || [],
     status: 'live',
     confidence: 1.0,
+    // A deliberate human `remember` is a declaration: true because someone
+    // decided it, not because anything checked it. Defaulting to `verified`
+    // would manufacture confidence nobody established, which is the failure
+    // this field exists to prevent (migration 0070).
+    evidence: (options.evidence as EvidenceLevel | undefined) ?? 'declared',
     referencedDate: extractedDates.referencedDate,
     relativeDate: extractedDates.relativeDate,
     createdAt: now,

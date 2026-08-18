@@ -6,6 +6,7 @@ import { loadProjectConfig } from '../config/project.js'
 import { getCacheDir } from '../config/paths.js'
 import { generateEmbedding } from '../lib/embedding.js'
 import { sortByTemporalProximity } from '../lib/temporal-sort.js'
+import { evidenceWeight, type EvidenceLevel } from '@tages/shared'
 import { reciprocalRankFusion } from '../lib/rrf.js'
 import { rerankCandidates } from '../lib/reranker.js'
 import { fetchTemporalCandidates } from '../lib/temporal-recall.js'
@@ -221,7 +222,7 @@ export async function recallCommand(query: string | undefined, options: RecallOp
       // List all memories — no similarity filtering
       let q = supabase
         .from('memories')
-        .select('id, project_id, key, value, type, source, agent_name, file_paths, tags, confidence, conditions, phases, cross_system_refs, examples, execution_flow, created_at, updated_at, referenced_date, relative_date')
+        .select('id, project_id, key, value, type, source, agent_name, file_paths, tags, confidence, conditions, phases, cross_system_refs, examples, execution_flow, created_at, updated_at, referenced_date, relative_date, evidence')
         .eq('project_id', config.projectId)
         .eq('status', 'live')
         .order('type')
@@ -340,13 +341,38 @@ export async function recallCommand(query: string | undefined, options: RecallOp
       // Runs after RRF fusion and before rerank/temporal reordering.
       const contentDeduped = dedupeNearDuplicateContent(merged)
 
+      // Evidence weighting (migration 0070). Applied HERE and not only in the
+      // MCP server: this is a separate ranking implementation, and without it
+      // `tages recall` ordered purely on lexical/semantic fit — so an inferred
+      // guess that happened to match the query better outranked the verified
+      // fact answering the same question, which is precisely what the field
+      // exists to prevent. Measured end to end before this was added.
+      //
+      // A stable sort on the weight alone: RRF has already produced the
+      // relevance order, and this only reorders WITHIN that, so a strongly
+      // relevant inferred row still beats an irrelevant verified one.
+      // The four recall RPCs return a fixed table shape that predates 0070 and
+      // does not carry `evidence`, so the fused rows arrive without it. Widening
+      // those return types means DROP + CREATE on four SECURITY DEFINER
+      // functions that 0066, 0068 and 0072 have each already had to patch — a
+      // large blast radius for a display/ordering field. One supplementary
+      // lookup keyed on the candidate ids is cheaper and carries no RLS risk:
+      // it goes through the ordinary `memories` table policy, so a row the
+      // caller may not read simply comes back absent and stays unweighted.
+      const evidenceById = await fetchEvidenceLevels(supabase, contentDeduped.map((r) => r.id as string))
+      for (const row of contentDeduped) {
+        const level = evidenceById.get(row.id as string)
+        if (level) row.evidence = level
+      }
+      const evidenceOrdered = stableSortByEvidence(contentDeduped)
+
       // Cross-encoder rerank pass (Task 2): only the top RERANK_WINDOW rows
       // are sent to the reranker; rows beyond that window keep their RRF
       // order, appended after the reranked subset.
-      let reranked = contentDeduped
-      if (contentDeduped.length > 0) {
-        const window = contentDeduped.slice(0, RERANK_WINDOW)
-        const rest = contentDeduped.slice(RERANK_WINDOW)
+      let reranked = evidenceOrdered
+      if (evidenceOrdered.length > 0) {
+        const window = evidenceOrdered.slice(0, RERANK_WINDOW)
+        const rest = evidenceOrdered.slice(RERANK_WINDOW)
         const rerankedIds = await rerankCandidates(
           query!,
           window.map((row) => ({ id: row.id as string, text: (row.value as string) || '' })),
@@ -359,7 +385,7 @@ export async function recallCommand(query: string | undefined, options: RecallOp
         // Fail-safe: if the reranker returned an unexpected id set (fewer ids
         // than the window it was given), fall back to the original RRF order
         // rather than silently dropping rows.
-        reranked = rerankedWindow.length === window.length ? [...rerankedWindow, ...rest] : contentDeduped
+        reranked = rerankedWindow.length === window.length ? [...rerankedWindow, ...rest] : evidenceOrdered
       }
 
       // Temporal anchoring (migration 0060): when the query is asking about
@@ -393,7 +419,7 @@ export async function recallCommand(query: string | undefined, options: RecallOp
     console.log(chalk.bold(`Found ${data.length} memories`) + chalk.dim(` (${searchMethod}):\n`))
     for (const row of data) {
       const typeColor = getTypeColor(row.type as string)
-      console.log(`  ${typeColor((row.type as string).padEnd(12))} ${chalk.bold(row.key as string)}`)
+      console.log(`  ${typeColor((row.type as string).padEnd(12))} ${chalk.bold(row.key as string)}${formatEvidence(row.evidence)}`)
       console.log(`  ${chalk.dim('             ')}${row.value}`)
       if (row.similarity !== undefined && row.similarity !== null) {
         const matchType = row.match_type ? ` [${row.match_type}]` : ''
@@ -453,11 +479,73 @@ export async function recallCommand(query: string | undefined, options: RecallOp
     console.log(chalk.bold(`Found ${rows.length} memories`) + chalk.dim(` (${modeLabel}):\n`))
     for (const row of rows) {
       const typeColor = getTypeColor(row.type)
-      console.log(`  ${typeColor(row.type.padEnd(12))} ${chalk.bold(row.key)}`)
+      console.log(`  ${typeColor(row.type.padEnd(12))} ${chalk.bold(row.key)}${formatEvidence((row as { evidence?: string }).evidence)}`)
       console.log(`  ${chalk.dim('             ')}${row.value}`)
       console.log()
     }
   }
+}
+
+/**
+ * Render the evidence level for a result line (migration 0070).
+ *
+ * Mirrors the server's formatPassage so CLI users and MCP-driven agents see the
+ * same signal. Empty when unknown — every row written before 0070 has no
+ * assessment behind it, and printing a label implies one was made. `disputed`
+ * is shouted in red, because a contradicted claim rendered as a plain fact is
+ * worse than no memory at all.
+ */
+function formatEvidence(evidence: unknown): string {
+  if (typeof evidence !== 'string' || !evidence) return ''
+  if (evidence === 'disputed') {
+    return `  ${chalk.red.bold('DISPUTED')}${chalk.red(' — contradicted, re-check before acting')}`
+  }
+  return `  ${chalk.dim(`evidence: ${evidence}`)}`
+}
+
+/**
+ * Reorder a relevance-ranked list so better-established claims come first,
+ * without discarding the relevance ordering (migration 0070).
+ *
+ * Stable, and applied AFTER fusion: it only reorders rows that RRF already
+ * considered comparable, so a highly relevant `inferred` memory still outranks
+ * an irrelevant `verified` one. What it prevents is the case the end-to-end
+ * suite caught — two memories answering the SAME question, where the guess
+ * happened to match the query text slightly better and was therefore served
+ * first to the agent.
+ *
+ * Rows with no level (everything written before 0070) sort at the neutral
+ * weight, so an existing corpus is neither promoted nor buried.
+ */
+/**
+ * Look up evidence levels for a set of memory ids (migration 0070).
+ *
+ * Returns an empty map on any failure — a missing level must degrade to
+ * "unweighted", never break a recall the user asked for.
+ */
+async function fetchEvidenceLevels(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  ids: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  if (ids.length === 0) return out
+  try {
+    const { data } = await supabase.from('memories').select('id, evidence').in('id', ids)
+    for (const row of (data || []) as Array<{ id: string; evidence: string | null }>) {
+      if (row.evidence) out.set(row.id, row.evidence)
+    }
+  } catch {
+    // Unweighted ordering is a degradation, not a failure.
+  }
+  return out
+}
+
+function stableSortByEvidence<T extends Record<string, unknown>>(rows: T[]): T[] {
+  return rows
+    .map((row, index) => ({ row, index, weight: evidenceWeight(row.evidence as EvidenceLevel | undefined) }))
+    .sort((a, b) => b.weight - a.weight || a.index - b.index)
+    .map((entry) => entry.row)
 }
 
 function getTypeColor(type: string) {

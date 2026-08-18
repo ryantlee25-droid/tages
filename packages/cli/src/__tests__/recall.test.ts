@@ -122,7 +122,12 @@ const mockSupabase = {
     })),
   },
 }
-vi.mock('@tages/shared', () => ({
+// importOriginal so real exports (evidenceWeight, EVIDENCE_WEIGHT, …) pass
+// through: recall.ts imports the evidence weighting from here, and a
+// hand-listed mock silently omits anything added later, failing the whole
+// suite on an unrelated change.
+vi.mock('@tages/shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@tages/shared')>()),
   createSupabaseClient: vi.fn(() => mockSupabase),
 }))
 
@@ -802,6 +807,14 @@ describe('recall command', () => {
 
     await recallCommand('authentication', {})
 
-    expect(mockSupabase.from).not.toHaveBeenCalled()
+    // The guarantee is that the TEMPORAL channel does no work for a query that
+    // is not asking about time — not that recall makes no PostgREST calls at
+    // all. Migration 0070 added exactly one more: a primary-key lookup of
+    // evidence levels for the fused candidates, because the four recall RPCs
+    // return a fixed table shape that predates the column. That call is
+    // deliberate and is asserted here rather than blanket-allowed, so a future
+    // change that adds a third query still trips this test.
+    const tables = mockSupabase.from.mock.calls.map((c: unknown[]) => c[0])
+    expect(tables).toEqual(['memories'])
   })
 })
