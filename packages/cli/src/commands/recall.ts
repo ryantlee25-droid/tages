@@ -1,7 +1,7 @@
 import * as fs from 'fs'
 import chalk from 'chalk'
 import Database from 'better-sqlite3'
-import { createAuthenticatedClient } from '../auth/session.js'
+import { createAuthenticatedClientWithStatus } from '../auth/session.js'
 import { loadProjectConfig } from '../config/project.js'
 import { getCacheDir } from '../config/paths.js'
 import { generateEmbedding } from '../lib/embedding.js'
@@ -208,7 +208,19 @@ export async function recallCommand(query: string | undefined, options: RecallOp
   const listAll = options.all || query === '*'
 
   if (config.supabaseUrl && config.supabaseAnonKey) {
-    const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
+    const { supabase, status } = await createAuthenticatedClientWithStatus(
+      config.supabaseUrl,
+      config.supabaseAnonKey,
+    )
+
+    // An expired session returns an anonymous client, and every RLS-protected
+    // read then comes back empty — indistinguishable from "this project has no
+    // memories". Reporting that as a successful empty result (exit 0) is how a
+    // dead session looks like a working one to a human and to a script.
+    if (status === 'expired') {
+      console.error(chalk.red('Cannot recall: your session has expired. Run `tages login`.'))
+      process.exit(1)
+    }
 
     let data: Record<string, unknown>[] | null = null
     let searchMethod = 'trigram'

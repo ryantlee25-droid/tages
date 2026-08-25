@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { findMemberProjectById } from '../project-factory'
+import { findMemberProjectById, createCloudProject } from '../project-factory'
 
 /**
  * Builds a minimal fake Supabase client that satisfies the two calls
@@ -88,5 +88,67 @@ describe('findMemberProjectById', () => {
     const result = await findMemberProjectById('proj-2', USER, client)
 
     expect(result).toEqual({ projectId: 'proj-2', slug: 's', plan: 'free' })
+  })
+})
+
+/**
+ * Builds a fake client whose projects INSERT fails with `message`, so
+ * createCloudProject's error-translation branches can be asserted directly.
+ * The SELECT (find-existing) leg always returns no rows, so the insert runs.
+ */
+function makeFailingInsertClient(message: string) {
+  const builder: Record<string, unknown> = {}
+  builder.select = () => builder
+  builder.eq = () => builder
+  builder.single = () => Promise.resolve({ data: null, error: { message } })
+  builder.insert = () => ({
+    select: () => ({ single: () => Promise.resolve({ data: null, error: { message } }) }),
+  })
+  // find-existing: .select().eq().eq() resolves to an empty list
+  const findBuilder: Record<string, unknown> = {}
+  findBuilder.select = () => findBuilder
+  let eqCalls = 0
+  findBuilder.eq = () => {
+    eqCalls += 1
+    return eqCalls >= 2
+      ? (Promise.resolve({ data: [], error: null }) as unknown as Record<string, unknown>)
+      : findBuilder
+  }
+  findBuilder.insert = builder.insert
+
+  return { from: () => findBuilder } as unknown as SupabaseClient
+}
+
+describe('createCloudProject error translation', () => {
+  it('reports the free-tier cap as 1 project, the number the RLS policy actually enforces', async () => {
+    // supabase/migrations/0002_rls_policies.sql:47 — "free: max 1":
+    // is_pro(uid) OR (count of owned projects) < 1. The message used to say 2,
+    // which matched no limit in the system.
+    const client = makeFailingInsertClient(
+      'new row violates row-level security policy for table "projects"',
+    )
+    await expect(
+      createCloudProject('phoenix', 'user-abc', client, 'https://x.supabase.co', 'anon'),
+    ).rejects.toThrow(/limited to 1 project/)
+  })
+
+  it('names a slug collision as a collision instead of a billing limit', async () => {
+    // A unique violation on `slug` also contains "violates", so it used to be
+    // swallowed by the plan-limit branch and reported as "upgrade to Pro".
+    const client = makeFailingInsertClient(
+      'duplicate key value violates unique constraint "projects_slug_key"',
+    )
+    await expect(
+      createCloudProject('phoenix', 'user-abc', client, 'https://x.supabase.co', 'anon'),
+    ).rejects.toThrow(/slug 'phoenix' is already taken/)
+  })
+
+  it('points a slug collision at `link`, not at an upgrade', async () => {
+    const client = makeFailingInsertClient(
+      'duplicate key value violates unique constraint "projects_slug_key"',
+    )
+    await expect(
+      createCloudProject('phoenix', 'user-abc', client, 'https://x.supabase.co', 'anon'),
+    ).rejects.toThrow(/tages link --project-id/)
   })
 })

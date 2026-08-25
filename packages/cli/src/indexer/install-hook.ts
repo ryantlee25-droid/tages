@@ -4,11 +4,18 @@ import { execSync } from 'child_process'
 
 const HOOK_SCRIPT = `#!/bin/sh
 # Tages auto-indexer — extracts memories from commits
-# Installed by \`tages init\` / \`tages index --install\`
+# Installed by \`tages init\` / \`tages link\` / \`tages index --install\`
 
-# Run tages index in background to avoid blocking commits
-if command -v npx >/dev/null 2>&1; then
-  npx tages index --last-commit &
+# Run tages index in background to avoid blocking commits.
+#
+# Prefer the \`tages\` already on PATH. The fallback is \`npx -y @tages/cli\`,
+# NOT \`npx tages\`: there is no \`tages\` package on npm (404) — the binary is
+# published as part of @tages/cli. Anyone without a global CLI install got a
+# hook that failed silently, because it runs backgrounded with no output.
+if command -v tages >/dev/null 2>&1; then
+  tages index --last-commit &
+elif command -v npx >/dev/null 2>&1; then
+  npx -y @tages/cli index --last-commit &
 fi
 `
 

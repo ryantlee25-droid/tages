@@ -50,9 +50,27 @@ export async function createCloudProject(
 
   if (error || !newProject) {
     const msg = error?.message || 'Unknown error'
-    if (msg.includes('violates') || msg.includes('policy') || msg.includes('row-level')) {
-      throw new Error(`Free tier is limited to 2 projects. Upgrade to Pro for up to 10.`)
+
+    // A unique violation on `slug` also contains the word "violates", and used
+    // to be reported as a plan limit — which sent people to the billing page
+    // over a name collision. Check it first and name the real cause.
+    if (msg.includes('duplicate key') || msg.includes('unique constraint')) {
+      throw new Error(
+        `The slug '${slug}' is already taken. Project slugs are globally unique across all owners. ` +
+          `To JOIN an existing project use \`tages link --project-id <uuid>\`; ` +
+          `to create a separate one, pass \`--slug <other-name>\`.`,
+      )
     }
+
+    if (msg.includes('violates') || msg.includes('policy') || msg.includes('row-level')) {
+      // The policy is "free: max 1" (supabase/migrations/0002_rls_policies.sql):
+      // is_pro(uid) OR count(owned projects) < 1. This said "limited to 2",
+      // which is not the number enforced anywhere.
+      throw new Error(
+        `Free tier is limited to 1 project. Upgrade to Pro (5 seats) or Team to create more.`,
+      )
+    }
+
     throw new Error(msg)
   }
 

@@ -7,6 +7,7 @@ import { createSupabaseClient, createCloudProject, createLocalProject } from '@t
 import { getConfigDir, getProjectsDir, getCacheDir, getAuthPath } from '../config/paths.js'
 import { injectMcpConfig } from '../config/mcp-inject.js'
 import { runGithubOAuth } from '../auth/github-oauth.js'
+import { createAuthenticatedClientWithStatus } from '../auth/session.js'
 import { installPostCommitHook } from '../indexer/install-hook.js'
 
 const DASHBOARD_URL = process.env.TAGES_DASHBOARD_URL || 'https://app.tages.ai'
@@ -100,6 +101,49 @@ export function printServerInvocation(server: ServerInvocation) {
   }
 }
 
+/**
+ * Returns the saved session's tokens when `~/.config/tages/auth.json` still
+ * carries a usable one, or null when the caller must run OAuth.
+ *
+ * Never throws: any failure here means "no reusable session", and the caller
+ * falls back to the browser flow.
+ */
+async function reuseStoredSession(): Promise<
+  { accessToken: string; refreshToken: string; userId: string; email?: string } | null
+> {
+  const authPath = getAuthPath()
+  if (!fs.existsSync(authPath)) return null
+
+  try {
+    const saved = JSON.parse(fs.readFileSync(authPath, 'utf-8'))
+    if (!saved.accessToken || !saved.refreshToken) return null
+
+    // 'authenticated' only — a TAGES_SERVICE_KEY client ('service-key') has no
+    // user to own the project, and 'expired'/'anonymous' cannot create one.
+    const { supabase, status } = await createAuthenticatedClientWithStatus(
+      SUPABASE_URL,
+      SUPABASE_ANON_KEY,
+    )
+    if (status !== 'authenticated') return null
+
+    const { data: userData, error: userError } = await supabase.auth.getUser()
+    if (userError || !userData?.user) return null
+
+    // createAuthenticatedClientWithStatus may have refreshed mid-call, so read
+    // the live tokens back rather than trusting what was on disk a moment ago.
+    const { data: sessionData } = await supabase.auth.getSession()
+
+    return {
+      accessToken: sessionData?.session?.access_token ?? saved.accessToken,
+      refreshToken: sessionData?.session?.refresh_token ?? saved.refreshToken,
+      userId: userData.user.id,
+      email: userData.user.email ?? undefined,
+    }
+  } catch {
+    return null
+  }
+}
+
 interface InitOptions {
   local?: boolean   // opt-out of cloud mode; use local-only mode
   cloud?: boolean   // backward compat alias; same as default (no flags)
@@ -160,23 +204,37 @@ export async function initCommand(options: InitOptions) {
     return
   }
 
-  // Cloud mode (--cloud flag): OAuth → create project → save config → init cache
-  spinner.start('Opening browser for GitHub authentication...')
-
+  // Cloud mode (--cloud flag): auth → create project → save config → init cache
   let accessToken: string
   let refreshToken: string
   let userId: string
 
-  try {
-    const auth = await runGithubOAuth(DASHBOARD_URL)
-    accessToken = auth.accessToken
-    refreshToken = auth.refreshToken
-    userId = auth.userId
-    spinner.succeed('Authenticated with GitHub')
-  } catch (err) {
-    spinner.fail('Authentication failed')
-    console.error(chalk.red(`  ${(err as Error).message}`))
-    process.exit(1)
+  // Reuse a saved session before opening a browser. This used to call
+  // runGithubOAuth() unconditionally, so `init` demanded a fresh OAuth
+  // round-trip even immediately after a successful `tages login` — and failed
+  // outright after a 5-minute browser timeout on any headless or
+  // already-authenticated run. `link` has always reused the session; `init` now
+  // matches it.
+  const stored = await reuseStoredSession()
+
+  if (stored) {
+    accessToken = stored.accessToken
+    refreshToken = stored.refreshToken
+    userId = stored.userId
+    console.log(chalk.green('  Using saved session:'), stored.email ?? userId)
+  } else {
+    spinner.start('Opening browser for GitHub authentication...')
+    try {
+      const auth = await runGithubOAuth(DASHBOARD_URL)
+      accessToken = auth.accessToken
+      refreshToken = auth.refreshToken
+      userId = auth.userId
+      spinner.succeed('Authenticated with GitHub')
+    } catch (err) {
+      spinner.fail('Authentication failed')
+      console.error(chalk.red(`  ${(err as Error).message}`))
+      process.exit(1)
+    }
   }
 
   // Save auth credentials

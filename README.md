@@ -147,6 +147,23 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-08-25 — `v0.5.5`: six onboarding defects, found while provisioning a real team project
+
+Every item here was found by actually provisioning a new project and inviting two teammates, not by reading the code. All six are on the first-run path, which is why none of the 1,500+ unit tests caught them.
+
+- **`tages init` ignored a valid saved session.** It called `runGithubOAuth()` unconditionally (`packages/cli/src/commands/init.ts`), so it demanded a fresh browser round-trip even immediately after a successful `tages login`, and failed outright after a 5-minute OAuth timeout on any headless run. `link` had always reused the session; `init` now matches it, falling back to the browser only when the stored session is expired, absent, or a `TAGES_SERVICE_KEY` client with no user to own the project.
+- **The session-expiry message pointed at the one destructive command.** `packages/cli/src/auth/session.ts` and both sites in `commands/link.ts` said *"Run `tages init` to re-authenticate."* `init` **creates a project** — running it to fix auth trips the global slug-unique constraint or drops you into a `local-<slug>` store that then blocks `link`. Now `tages login`, which has existed since 0.5.0.
+- **`tages recall` exited `0` on a dead session.** An expired session yields an anonymous client, every RLS-protected read returns zero rows, and the command printed "No memories found" — indistinguishable from an empty project, to a human and to a script. `createAuthenticatedClient` now reports a `SessionStatus`, and `recall` fails loudly on `expired` while leaving `anonymous` (legitimate local-only use) working.
+- **"Free tier is limited to 2 projects" was never the enforced number.** The RLS policy is `is_pro(uid) OR (projects you own) < 1` (`supabase/migrations/0002_rls_policies.sql`) — a cap of **1**. The message now says 1.
+- **A slug collision was reported as a billing limit.** Slugs are globally unique across all owners, and a unique violation also contains the word `violates`, so it fell into the plan-limit branch and told you to upgrade over a name clash. It is now detected first, named as a collision, and points at `tages link --project-id <uuid>` for the case where you meant to join rather than create.
+- **The installed post-commit hook invoked a package that does not exist.** It ran `npx tages index --last-commit`; there is no `tages` package on npm (404) — the binary ships inside `@tages/cli`. It resolved only on machines with a global CLI install already on PATH, and failed silently everywhere else because it runs backgrounded. Now prefers `tages` on PATH and falls back to `npx -y @tages/cli`.
+
+**Docs:** `docs/quickstart.md` and `docs/team-onboarding.md` both told new users *"do not install from npm, `@tages/cli` is 0.2.1, build from source"* and to `git checkout release/2026-08-13-onboarding` — a branch that merged long ago. Both now lead with `npm install -g @tages/cli`, with the source build as an optional aside for Tages developers. Also corrected there: the team seat limit is `LEAST(subscription_quantity, 20)` (`supabase/migrations/0049`), **not** a flat 25 — a `team` profile with a null `subscription_quantity` resolves to **1 seat**; the "no periodic pull" trap now distinguishes the CLI (reconciles automatically on every memory command) from MCP (hydrates at boot only, so an agent still needs a session restart); and the stale `tages doctor` caveat is gone, since `doctor` has probed the project-scoped `.mcp.json` first since 0.4.0.
+
+**Versions:** `@tages/cli` 0.5.5, `@tages/shared` 0.2.3. `@tages/server` is unchanged at 0.3.4. The CLI bundles `@tages/shared` from source at build time, so the `project-factory` fixes ship inside `@tages/cli` regardless of what the registry holds.
+
+**Tests:** +15 CLI, +3 shared. The `init` session-reuse tests were verified by reintroducing the bug — 2 of 6 failed, and the 4 fallback cases correctly stayed green.
+
 ### 2026-08-18 — Recall relevance floor: `recall` can now answer "nothing"
 
 - **`tages recall <anything>` returned the whole project.** The recall RPCs filter on an absolute cosine threshold (`p_threshold`, 0.7 or 0.3), which against the hosted embedding model filters nothing: measured, pure nonsense (`wibbleflux ganthorpe zzzqx`) scores **0.775** against unrelated memories and *"what is the best recipe for sourdough bread"* scores **0.725** — both clear 0.7. Agents were receiving irrelevant memories presented as answers, and every positive recall result was therefore uninformative.

@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-08-25 — `@tages/cli` 0.5.5 · `@tages/shared` 0.2.3
+
+Six first-run defects found while provisioning a real team project and inviting two teammates. All six sit on the onboarding path, which is why 1,500+ unit tests missed every one. See `README.md` "Release Notes" for the full detail.
+
+### Auth
+- **`tages init` now reuses a saved session** instead of calling `runGithubOAuth()` unconditionally. It previously forced a browser round-trip even right after `tages login`, and died on a 5-minute OAuth timeout in any headless run. Falls back to the browser only when the stored session is expired, absent, or a service-key client.
+- **The expiry message names `tages login`, not `tages init`.** `init` creates a project; pointing an expired user at it produced duplicate-slug failures and silent `local-<slug>` stores.
+- **`tages recall` exits non-zero on an expired session.** It printed "No memories found" and exited `0`, making a dead session indistinguishable from an empty project. `createAuthenticatedClient` now reports a `SessionStatus`; `anonymous` (local-only use) still works.
+
+### Errors
+- **The free-tier cap is reported as 1 project**, the number `supabase/migrations/0002_rls_policies.sql` actually enforces. The message said 2.
+- **Slug collisions are named as collisions.** A unique violation contains "violates" and fell into the plan-limit branch, telling you to upgrade over a name clash. Now points at `tages link --project-id <uuid>`.
+
+### Indexing
+- **The post-commit hook no longer invokes `npx tages`** — no such package exists on npm (404); the binary ships in `@tages/cli`. It failed silently for anyone without a global CLI install. Now prefers `tages` on PATH, falling back to `npx -y @tages/cli`.
+
+### Docs
+- `docs/quickstart.md` and `docs/team-onboarding.md` no longer tell new users npm is stale and to build from a merged release branch. Both lead with `npm install -g @tages/cli`. Corrected alongside: team seats are `LEAST(subscription_quantity, 20)` not a flat 25; the "no periodic pull" trap now separates CLI (auto-reconciles) from MCP (boot-only hydration); the stale `tages doctor` caveat is removed.
+
+
 ## 2026-07-14 — `@tages/cli` 0.3.0 · `@tages/server` 0.2.0 · `@tages/shared` 0.1.2
 
 First npm release since 0.1.0 (2026-04-10). Rolls up three months of retrieval-quality, memory-correctness, and team/harness work. See `README.md` "Release Notes" for the full per-change detail.

@@ -143,7 +143,7 @@ async function linkByProjectId(projectId: string, slugOverride: string | undefin
       if (!auth.userId) throw new Error('missing userId')
       userId = auth.userId
     } catch {
-      console.error(chalk.red('  Stored auth is corrupt. Run `tages init` to re-authenticate.'))
+      console.error(chalk.red('  Stored auth is corrupt. Run `tages login` to re-authenticate.'))
       process.exit(1)
     }
   } else {
@@ -185,7 +185,7 @@ async function linkByProjectId(projectId: string, slugOverride: string | undefin
     if (!userError && !userData?.user) {
       spinner.fail('Session expired')
       console.error(chalk.red('  Your session has expired or could not be established.'))
-      console.error(chalk.dim('  Run `tages init` to re-authenticate, then try again.'))
+      console.error(chalk.dim('  Run `tages login` to re-authenticate, then try again.'))
       process.exit(1)
     }
   }
