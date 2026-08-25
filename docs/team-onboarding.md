@@ -13,55 +13,40 @@ Read step 2 before you start. It is the one step people get wrong, and getting i
 
 You need:
 
-- **Node.js**, **pnpm**, and `git`. The repo pins `pnpm@10.33.0` via `packageManager`; this sequence was verified on Node 24.11.1 with pnpm 10.33.0. There is no `engines` field, so older Node versions are untested rather than known-bad.
+- **Node.js** and `git`. Verified on Node 24.11.1. There is no `engines` field, so older Node versions are untested rather than known-bad.
 - **A project ID** (a UUID) from the project owner.
 - **An invite, with the `admin` role.** A plain `member` can read but cannot write — see [Roles](#roles-you-need-admin-not-member). Ask the owner to confirm they invited you as `admin` from the dashboard.
 
-> **Do not install from npm.** The published `@tages/cli` is **0.2.1** (April) and has no `--project-id` flag at all; `@tages/server` on npm is **0.1.1**. `npm install -g @tages/cli` will not get you a working team setup. Build from source, as below.
-
 ---
 
-## 1. Build the CLI from source
+## 1. Install the CLI
 
-Clone Tages somewhere you keep source checkouts. **This clone is a build artifact, not your workspace** — you will never work inside it.
+```bash
+npm install -g @tages/cli
+tages --version
+# 0.5.4
+```
+
+The published packages are current (`@tages/cli` 0.5.4, `@tages/server` 0.3.4) and are what the end-to-end release suite actually tests — it drives the published artifacts, not the source tree, precisely because a defect that killed an earlier release candidate was invisible to 1,200+ unit tests and only appeared when the built entrypoint was run by `node`.
+
+You do **not** need a source clone. Your agent will be wired to `npx -y @tages/server`.
+
+<details>
+<summary>Building from source instead (only if you are developing Tages itself)</summary>
 
 ```bash
 git clone https://github.com/ryantlee25-droid/tages.git ~/src/tages
 cd ~/src/tages
-git checkout release/2026-08-13-onboarding
 pnpm install --frozen-lockfile
 pnpm -r build
+cd packages/cli && pnpm link --global
 ```
 
-> **The `git checkout` line is required until this branch merges to `main`.** The join path
-> (`tages link --project-id`) does not work on `main` — on that build it crashes with
-> `ReferenceError: exports is not defined in ES module scope`. Once the branch is merged,
-> drop the checkout line and clone `main` as usual.
+Link from `packages/cli`, **not** the repo root — the root package is private and exposes no `tages` binary. With a built clone present, `link` wires your agent to `~/src/tages/packages/server/dist/index.js` instead of npm, so deleting or un-building the clone then breaks every project you set up.
 
-Then link the CLI globally. Run this from `packages/cli`, **not** from the repo root — the root package is private and exposes no `tages` binary:
+**Already linked `tages` before 0.4.0? Re-link it.** The CLI now builds to a single bundled `dist/index.js`; it used to build to `dist/packages/cli/src/index.js`, and a stale global link points at the old path and fails with `command not found`.
 
-```bash
-cd ~/src/tages/packages/cli
-pnpm link --global
-```
-
-Verify:
-
-```bash
-tages --version
-# 0.4.0
-```
-
-If you get anything other than `0.4.0`, you are running a stale npm copy. Remove it (`npm uninstall -g @tages/cli`) and re-link.
-
-**Already linked `tages` before? Re-link it.** The CLI now builds to a single bundled `dist/index.js`; it used to build to `dist/packages/cli/src/index.js`. An existing global link still points at the old path, so after you pull and rebuild, `tages` fails with `command not found` or `No such file or directory`. Re-running the link above from `packages/cli` fixes it:
-
-```bash
-cd ~/src/tages/packages/cli
-pnpm link --global
-```
-
-Leave the built clone in place. Your agent will be wired to the server binary inside it (`~/src/tages/packages/server/dist/index.js`), so deleting or un-building the clone breaks every project you set up.
+</details>
 
 ---
 
@@ -99,14 +84,14 @@ Optional: register the project under a different local name with `--slug <alias>
 
 ### Confirm which server you were wired to
 
-`link` prints one of these. You want the first:
+`link` prints one of these:
 
 ```
-MCP server: node /Users/you/src/tages/packages/server/dist/index.js (local build)
 MCP server: npx -y @tages/server (published package)
+MCP server: node /Users/you/src/tages/packages/server/dist/index.js (local build)
 ```
 
-If you got the `npx` line, the local build was not found — re-run `pnpm -r build` in your tages clone, then re-run `tages link --project-id <uuid>`. The published package is **0.1.1** and will not behave like this repo.
+On an npm install you get the first, and that is correct — it resolves `@tages/server` 0.3.4, the same artifact the release suite gates on. You only get the second if you built from source, in which case `link` prefers your local build.
 
 ---
 
@@ -153,13 +138,15 @@ Finally, **restart Claude Code** in your repo so it picks up the new `.mcp.json`
 
 ## Traps
 
-### Never run `tages init` to join an existing project
+### Never run `tages init` to join an existing project — or to fix a login
 
 Use `tages link --project-id`. Full stop. `init` is for *creating* a project.
 
+The same applies to an expired session: the fix is **`tages login`**, never `init`. (CLI builds before 0.5.5 printed "Session expired. Run `tages init` to re-authenticate", which pointed you straight at the trap below. If you see that message, upgrade.)
+
 Project slugs are **globally unique across all owners** (`supabase/migrations/0001_initial_schema.sql:17` — `slug text not null unique`). Running `init` in a directory whose name matches your team's existing project tries to insert a second row with that slug and hits a unique violation. What happens next is genuinely hard to diagnose:
 
-- **On the CLI path**, the unique-violation message contains the word `violates`, which `createCloudProject` matches against its RLS-denial branch (`packages/shared/src/project-factory.ts:51-56`). You are told *"Free tier is limited to 2 projects. Upgrade to Pro for up to 10."* It is not a billing problem. Nothing is wrong with your plan.
+- **On the CLI path**, the unique-violation message contains the word `violates`, which older builds matched against the RLS-denial branch in `createCloudProject` — so a name collision was reported as *"Free tier is limited to 2 projects"*. It was neither a billing problem nor the right number: the policy is `free: max 1` (`supabase/migrations/0002_rls_policies.sql`). Current builds name the collision and point at `tages link --project-id` instead.
 - **On the MCP path** it is worse and silent. The server's auto-create falls back to a local-only project (`packages/server/src/config.ts:230-247`), writing `~/.config/tages/projects/<slug>.json` with `projectId: "local-<slug>"`. The only notice goes to stderr, which you will not see. From then on you are quietly writing to a private local store.
 - **That config then blocks the fix.** `tages link --project-id` refuses to overwrite a local config pointing at a different project (`packages/cli/src/commands/link.ts:240-245`) and exits 1 with *"already linked locally to a different project (local-...)"*.
 
@@ -185,9 +172,12 @@ The dashboard invite route calls `supabase.auth.admin.inviteUserByEmail` and sen
 
 ### There is no periodic pull — restart to see a teammate's memory
 
-Sync is **push-only on a timer**. The 60s interval in the MCP server (`packages/server/src/sync/supabase-sync.ts:151-154`) only flushes *your* dirty rows upward. The download half, `hydrate()`, is called from exactly one place: MCP server boot (`packages/server/src/index.ts:178-188`).
+This applies to **the MCP path only**. The CLI half changed when bidirectional sync shipped.
 
-So after a teammate writes a memory, **your agent will not see it until you restart your Claude Code session.** There is no `tages pull`, `tages sync`, or `tages fetch` (`tages harness sync` is unrelated — it pushes telemetry, not memories).
+- **CLI: pulls automatically.** Every memory command reconciles first — push your dirty rows, then pull remote state (`packages/cli/src/sync/cli-sync.ts`, invoked from `packages/cli/src/index.ts`). A teammate's memory reaches your terminal on your next command.
+- **MCP: boot-time only.** The 60s interval in the server (`packages/server/src/sync/supabase-sync.ts`) only flushes *your* dirty rows upward. The download half, `hydrate()`, is called from exactly one place: server boot (`packages/server/src/index.ts`).
+
+So after a teammate writes a memory, **your agent will not see it until you restart your Claude Code session** — even though `tages recall` in a terminal shows it immediately. There is still no `tages pull`, `tages sync`, or `tages fetch` command; the CLI reconcile is automatic, not something you invoke (`tages harness sync` is unrelated — it pushes telemetry, not memories).
 
 Two details worth knowing:
 
@@ -198,7 +188,7 @@ This is a known limitation, not a broken install.
 
 ### Free tier seats
 
-Free is **the owner plus 2 teammates** (`seat_limit_for_project` returns 2 for free, 5 for pro, 25 for team; `supabase/migrations/0046_seat_limits.sql:5-14`). Only `active` members consume a seat — pending invites do not. The fourth person on a free project will fail to join.
+Free is **the owner plus 2 teammates**. `seat_limit_for_project` (`supabase/migrations/0049_stripe_subscription_state.sql`) returns 2 for free, 5 for pro, and for team `LEAST(COALESCE(subscription_quantity, 1), 20)` — **not** a flat 25. A `team` profile whose `subscription_quantity` was never set resolves to **1 seat**, which looks like a broken invite rather than a plan limit. Only `active` members consume a seat; pending invites do not.
 
 ---
 

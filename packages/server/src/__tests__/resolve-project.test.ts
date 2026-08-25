@@ -323,7 +323,7 @@ describe('resolveProject()', () => {
           auth: { setSession: vi.fn().mockResolvedValue({}) },
         }
         mockCreateSupabaseClient.mockReturnValue(mockSupabase)
-        mockCreateCloudProject.mockRejectedValue(new Error('Free tier is limited to 2 projects.'))
+        mockCreateCloudProject.mockRejectedValue(new Error('Free tier is limited to 1 project.'))
         mockCreateLocalProject.mockReturnValue({
           projectId: 'local-new-project',
           slug: 'new-project',
