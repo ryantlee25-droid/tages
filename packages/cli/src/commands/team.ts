@@ -1,5 +1,5 @@
 import chalk from 'chalk'
-import { createAuthenticatedClient } from '../auth/session.js'
+import { createAuthenticatedClientWithStatus, requireLiveSession } from '../auth/session.js'
 import { loadProjectConfig } from '../config/project.js'
 import { getAuthPath } from '../config/paths.js'
 import { inviteTeamMembers } from '../auth/invite.js'
@@ -47,7 +47,11 @@ export async function teamInviteCommand(email: string, options: TeamOptions) {
   const role = rawRole as ValidRole
 
   const auth = JSON.parse(fs.readFileSync(getAuthPath(), 'utf-8'))
-  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
+  const { supabase, status } = await createAuthenticatedClientWithStatus(
+    config.supabaseUrl,
+    config.supabaseAnonKey,
+  )
+  requireLiveSession(status, 'invite')
 
   const result = await inviteTeamMembers(supabase, config.projectId, [email], auth.userId, role)
 
@@ -66,7 +70,11 @@ export async function teamListCommand(options: TeamOptions) {
     process.exit(1)
   }
 
-  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
+  const { supabase, status } = await createAuthenticatedClientWithStatus(
+    config.supabaseUrl,
+    config.supabaseAnonKey,
+  )
+  requireLiveSession(status, 'list the team')
 
   const { data: members, error } = await supabase
     .from('team_members')
@@ -104,7 +112,11 @@ export async function teamRemoveCommand(emailOrId: string, options: TeamOptions)
     process.exit(1)
   }
 
-  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
+  const { supabase, status } = await createAuthenticatedClientWithStatus(
+    config.supabaseUrl,
+    config.supabaseAnonKey,
+  )
+  requireLiveSession(status, 'remove a member')
 
   // Soft-revoke: update status to 'revoked' instead of hard delete
   const { error } = await supabase
@@ -133,7 +145,11 @@ export async function teamRoleCommand(emailOrId: string, role: string, options: 
     process.exit(1)
   }
 
-  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
+  const { supabase, status } = await createAuthenticatedClientWithStatus(
+    config.supabaseUrl,
+    config.supabaseAnonKey,
+  )
+  requireLiveSession(status, 'change a role')
 
   const { error } = await supabase
     .from('team_members')

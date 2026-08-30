@@ -17,3 +17,12 @@ export {
   RELEVANCE_MIN_CANDIDATES,
 } from './relevance'
 export type { RelevanceVerdict } from './relevance'
+
+export {
+  writeAuthFile,
+  readAuthFile,
+  getAuthPath,
+  getConfigDir,
+} from './auth-store'
+export type { StoredAuth } from './auth-store'
+export { persistSessionOnRefresh, persistRotatedTokens } from './auth-persist'
