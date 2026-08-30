@@ -4,6 +4,7 @@ import * as path from 'path'
 import {
   setupTempConfigDir,
   writeProjectConfig,
+  writeAuthConfig,
   captureConsole,
   TEST_PROJECT_CONFIG,
   TEST_LOCAL_CONFIG,
@@ -26,12 +27,28 @@ Object.defineProperty(mockChain, 'then', {
   },
 })
 
+// `status` now refuses to run on a session that cannot read through RLS, so
+// these tests have to present a live one. Without the `auth` surface below the
+// real session resolver reports `anonymous`, and the command correctly exits 1
+// rather than printing counts an anonymous client could never have fetched.
 const mockSupabase = {
   from: vi.fn().mockReturnValue(mockChain),
   rpc: vi.fn(),
+  auth: {
+    setSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'm' } }, error: null }),
+    getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'm' } }, error: null }),
+    refreshSession: vi
+      .fn()
+      .mockResolvedValue({ data: { session: { access_token: 'm', refresh_token: 'm' } }, error: null }),
+    onAuthStateChange: vi.fn(() => ({ data: { subscription: { unsubscribe: vi.fn() } } })),
+  },
 }
 
-vi.mock('@tages/shared', () => ({
+// Partial mock: a whole-module replacement has to be updated every time
+// `shared` grows an export the CLI reaches, and the breakage shows up as an
+// unrelated command test rather than a missing import.
+vi.mock('@tages/shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@tages/shared')>()),
   createSupabaseClient: vi.fn(() => mockSupabase),
 }))
 
@@ -55,6 +72,7 @@ describe('status command', () => {
     const setup = setupTempConfigDir()
     tempConfigDir = setup.configDir
     cleanupFn = setup.cleanup
+    writeAuthConfig(tempConfigDir)
     console_ = captureConsole()
     vi.clearAllMocks()
     // Reset mock data

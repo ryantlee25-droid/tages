@@ -7,6 +7,7 @@ import { createSupabaseClient, createCloudProject, createLocalProject } from '@t
 import { getConfigDir, getProjectsDir, getCacheDir, getAuthPath } from '../config/paths.js'
 import { injectMcpConfig } from '../config/mcp-inject.js'
 import { runGithubOAuth } from '../auth/github-oauth.js'
+import { writeAuthFile } from '../auth/store.js'
 import { createAuthenticatedClientWithStatus } from '../auth/session.js'
 import { installPostCommitHook } from '../indexer/install-hook.js'
 
@@ -237,9 +238,13 @@ export async function initCommand(options: InitOptions) {
     }
   }
 
-  // Save auth credentials
-  const authData = { accessToken, refreshToken, userId }
-  fs.writeFileSync(getAuthPath(), JSON.stringify(authData, null, 2) + '\n', { mode: 0o600 })
+  // Save auth credentials through the shared writer, never `writeFileSync`
+  // directly: its `mode` is the open(2) CREATION mode, so on a pre-existing
+  // 0644 auth.json it is ignored and a live refresh token lands world-readable.
+  // The write also has to be atomic now that the MCP server writes this file on
+  // its own schedule — a truncate-then-write racing the server's rename drops
+  // these freshly-minted tokens into an orphaned inode and reports success.
+  writeAuthFile({ accessToken, refreshToken, userId })
 
   // Create or find project in Supabase
   spinner.start('Setting up project...')

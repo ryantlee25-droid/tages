@@ -6,6 +6,7 @@ import { createAuthenticatedClient } from '../auth/session.js'
 import { loadProjectConfig } from '../config/project.js'
 import { getProjectsDir, getCacheDir, getAuthPath } from '../config/paths.js'
 import { runGithubOAuth } from '../auth/github-oauth.js'
+import { writeAuthFile } from '../auth/store.js'
 
 const DASHBOARD_URL = process.env.TAGES_DASHBOARD_URL || 'https://app.tages.ai'
 const SUPABASE_URL = process.env.TAGES_SUPABASE_URL || 'https://wezagdgpvwfywjoxztfs.supabase.co'
@@ -63,7 +64,9 @@ export async function migrateCommand(options: MigrateOptions) {
       userId = auth.userId
       spinner.succeed('Authenticated')
 
-      fs.writeFileSync(authPath, JSON.stringify({ accessToken, refreshToken, userId }, null, 2) + '\n', { mode: 0o600 })
+      // Shared writer: atomic, and it sets 0600 unconditionally rather than
+      // relying on writeFileSync's creation-only `mode`. See auth/store.ts.
+      writeAuthFile({ accessToken, refreshToken, userId })
     } catch (err) {
       spinner.fail('Authentication failed')
       console.error(chalk.red(`  ${(err as Error).message}`))

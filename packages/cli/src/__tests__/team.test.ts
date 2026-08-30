@@ -8,20 +8,41 @@ import {
 } from './helpers.js'
 
 // vi.mock factories are hoisted — use vi.hoisted() to share mocks.
-const { mockLoadProjectConfig, mockCreateAuthenticatedClient, mockInviteTeamMembers } =
-  vi.hoisted(() => {
-    const mockLoadProjectConfig = vi.fn()
-    const mockCreateAuthenticatedClient = vi.fn()
-    const mockInviteTeamMembers = vi.fn()
-    return { mockLoadProjectConfig, mockCreateAuthenticatedClient, mockInviteTeamMembers }
-  })
+const {
+  mockLoadProjectConfig,
+  mockCreateAuthenticatedClient,
+  mockInviteTeamMembers,
+  sessionStatus,
+} = vi.hoisted(() => {
+  const mockLoadProjectConfig = vi.fn()
+  const mockCreateAuthenticatedClient = vi.fn()
+  const mockInviteTeamMembers = vi.fn()
+  // Boxed so a test can flip it after the hoisted mock factory has run.
+  const sessionStatus = {
+    value: 'authenticated' as 'authenticated' | 'expired' | 'anonymous',
+  }
+  return {
+    mockLoadProjectConfig,
+    mockCreateAuthenticatedClient,
+    mockInviteTeamMembers,
+    sessionStatus,
+  }
+})
 
 vi.mock('../config/project.js', () => ({
   loadProjectConfig: mockLoadProjectConfig,
 }))
 
-vi.mock('../auth/session.js', () => ({
+// Partial mock so `requireLiveSession` stays REAL. Stubbing it would make these
+// tests pass against a guard that does nothing; only the client resolution is
+// faked here, and the guard runs for real against `sessionStatus`.
+vi.mock('../auth/session.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../auth/session.js')>()),
   createAuthenticatedClient: mockCreateAuthenticatedClient,
+  createAuthenticatedClientWithStatus: async (...args: unknown[]) => ({
+    supabase: await mockCreateAuthenticatedClient(...args),
+    status: sessionStatus.value,
+  }),
 }))
 
 vi.mock('../auth/invite.js', () => ({
@@ -38,7 +59,7 @@ vi.mock('../config/paths.js', () => ({
   getCacheDir: () => path.join(tempConfigDir, 'cache'),
 }))
 
-import { teamInviteCommand } from '../commands/team.js'
+import { teamInviteCommand, teamListCommand } from '../commands/team.js'
 
 describe('teamInviteCommand — invitable roles', () => {
   let console_: ReturnType<typeof captureConsole>
@@ -206,5 +227,81 @@ describe('teamInviteCommand — invitable roles', () => {
     expect(console_.errors.join('\n')).toContain(
       'Only project owners can grant the admin role',
     )
+  })
+})
+
+describe('teamListCommand — expired session', () => {
+  let console_: ReturnType<typeof captureConsole>
+  let cleanupFn: () => void
+
+  beforeEach(() => {
+    const setup = setupTempConfigDir()
+    tempConfigDir = setup.configDir
+    cleanupFn = setup.cleanup
+    writeAuthConfig(tempConfigDir)
+    console_ = captureConsole()
+    mockLoadProjectConfig.mockReturnValue(TEST_PROJECT_CONFIG)
+  })
+
+  afterEach(() => {
+    sessionStatus.value = 'authenticated'
+    console_.restore()
+    cleanupFn()
+    vi.clearAllMocks()
+  })
+
+  it.each([
+    ['expired', /session has expired/i],
+    ['anonymous', /not signed in/i],
+  ] as const)('fails loudly on a %s session instead of reporting an empty team', async (
+    state,
+    expected,
+  ) => {
+    // `anonymous` matters as much as `expired`: it is one step away via
+    // `tages logout && tages team list`, and it produces byte-identical
+    // output through a different door.
+    sessionStatus.value = state
+    mockCreateAuthenticatedClient.mockResolvedValue({
+      from: () => {
+        throw new Error('must not query without a live session')
+      },
+    })
+
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit')
+    }) as never)
+
+    await expect(teamListCommand({} as never)).rejects.toThrow('process.exit')
+
+    expect(exit).toHaveBeenCalledWith(1)
+    const output = console_.errors.join('\n') + console_.logs.join('\n')
+    expect(output).toMatch(expected)
+    expect(output).not.toMatch(/No team members/)
+    exit.mockRestore()
+  })
+
+  it('fails loudly instead of reporting an empty team', async () => {
+    // The bug this pins: an expired session hands back an anonymous client,
+    // RLS returns zero rows, and `team list` printed
+    // "No team members. Run `tages team invite <email>` to add one."
+    // for a project that had two pending invites — then exited 0.
+    sessionStatus.value = 'expired'
+    mockCreateAuthenticatedClient.mockResolvedValue({
+      from: () => {
+        throw new Error('must not query on an expired session')
+      },
+    })
+
+    const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit')
+    }) as never)
+
+    await expect(teamListCommand({} as never)).rejects.toThrow('process.exit')
+
+    expect(exit).toHaveBeenCalledWith(1)
+    const output = console_.errors.join('\n') + console_.logs.join('\n')
+    expect(output).toMatch(/session has expired/i)
+    expect(output).not.toMatch(/No team members/)
+    exit.mockRestore()
   })
 })
