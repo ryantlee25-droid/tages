@@ -306,12 +306,24 @@ export async function handleImportClaudeMd(
   }
 
   // Embeddings, after the push (remoteUpdateEmbedding needs the remote row).
+  // One row at a time under ONE shared deadline: an import can be dozens of
+  // rows, and firing them all at once bursts the hosted embed function (546 /
+  // 429), whose bounded retry then yields null for most of them. Rows still
+  // unembedded at the deadline are started in the background; the boot
+  // backfill picks up any that do not finish.
   // Chunk rows are keyed by the LOCAL row id, which can differ from the
   // remote id when the cache already held the key.
-  await Promise.all(written.map((memory) => {
+  const deadline = Date.now() + EMBED_TIMEOUT_MS
+  for (const memory of written) {
     const localId = cache.getByKey(args.projectId, memory.key)?.id ?? memory.id
-    return embedOnWrite({ ...memory, id: localId }, memory.value, cache, sync, supabaseClient, { timeoutMs: EMBED_TIMEOUT_MS })
-  }))
+    const job = { ...memory, id: localId }
+    const left = deadline - Date.now()
+    if (left <= 0) {
+      void embedOnWrite(job, memory.value, cache, sync, supabaseClient)
+      continue
+    }
+    await embedOnWrite(job, memory.value, cache, sync, supabaseClient, { timeoutMs: left })
+  }
 
   const notes: string[] = []
   if (remoteUnavailable) {
