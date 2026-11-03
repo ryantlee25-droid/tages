@@ -276,6 +276,7 @@ program
   .option('-p, --project <slug>', 'Project slug')
   .option('-o, --output <path>', 'Output file path')
   .option('-f, --format <format>', 'Format: claude-md, architecture-md, json', 'claude-md')
+  .option('--force', 'Overwrite the output file if it already exists')
   .action(exportCommand)
 
 program
