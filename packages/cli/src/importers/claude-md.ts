@@ -20,6 +20,10 @@ const SECTION_TYPE_MAP: Record<string, MemoryType> = {
   lessons: 'lesson',
 }
 
+// Checked before SECTION_TYPE_MAP: "Anti-patterns" contains "pattern", and
+// `tages export` writes Don't/Never rules under "## Anti-patterns (Don't / Never)".
+const ANTI_PATTERN_HEADER = /anti[-_ ]?pattern|don'?t|\bnever\b|\bavoid\b/
+
 export function parseCLAUDEmd(filePath: string): ImportedMemory[] {
   if (!fs.existsSync(filePath)) {
     throw new Error(`File not found: ${filePath}`)
@@ -31,7 +35,19 @@ export function parseCLAUDEmd(filePath: string): ImportedMemory[] {
   let currentKey = ''
   let currentLines: string[] = []
 
+  let inFence = false
   for (const line of content.split('\n')) {
+    // A `##` inside a fenced code block is code, not a section heading.
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence
+      if (currentKey) currentLines.push(line)
+      continue
+    }
+    if (inFence) {
+      if (currentKey) currentLines.push(line)
+      continue
+    }
+
     // H2 header — detect type from header text
     const h2Match = line.match(/^## (.+)/)
     if (h2Match) {
@@ -46,7 +62,9 @@ export function parseCLAUDEmd(filePath: string): ImportedMemory[] {
 
       const header = h2Match[1].trim().toLowerCase()
       // Try to match header to a memory type
-      for (const [keyword, type] of Object.entries(SECTION_TYPE_MAP)) {
+      if (ANTI_PATTERN_HEADER.test(header)) {
+        currentType = 'anti_pattern'
+      } else for (const [keyword, type] of Object.entries(SECTION_TYPE_MAP)) {
         if (header.includes(keyword)) {
           currentType = type
           break

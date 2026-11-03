@@ -114,7 +114,7 @@ export async function run(ctx) {
     const statuses = [...new Set(rows.map(r => r.status))]
     report.check('RECORDED: imported rows are created status=live, source=import (so they are visible to recall immediately)', statuses.length === 1 && statuses[0] === 'live', `statuses: ${statuses.join(',')}; sources: ${[...new Set(rows.map(r => r.source))].join(',')}`)
     const noEmb = rows.filter(r => r.embedding == null).length
-    const embedded = await poll(async () => ((await cloudRows('id,embedding')).every(r => r.embedding != null) ? true : null), { timeoutMs: 30000, intervalMs: 3000 })
+    const embedded = await poll(async () => ((await cloudRows('id,key,embedding')).every(r => r.embedding != null) ? true : null), { timeoutMs: 30000, intervalMs: 3000 })
     report.check('imported memories get embeddings (otherwise paraphrased recall cannot find them)', embedded.ok, embedded.ok ? 'all embedded' : `${noEmb}/${rows.length} rows still have embedding NULL after 30s; import-claude-md.ts never requests one`)
     state.importedIds = Object.fromEntries(rows.map(r => [r.key, r.id]))
 

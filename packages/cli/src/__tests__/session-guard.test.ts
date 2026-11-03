@@ -169,7 +169,9 @@ describe('every CLI caller goes through the dead-session guard', () => {
   it('WithStatus callers check the status themselves', () => {
     // init creates a session (it runs before one exists); recall checks
     // `status === 'expired'` inline. Everyone else must call requireLiveSession.
-    const SELF_CHECKED = new Set(['commands/init.ts', 'commands/recall.ts'])
+    // sync/cli-sync.ts: a dead session goes local-only with a warning (writes stay
+    // dirty and push after login), so the background reconcile never exits.
+    const SELF_CHECKED = new Set(['commands/init.ts', 'commands/recall.ts', 'sync/cli-sync.ts'])
     const offenders = files.filter((f) => {
       const src = read(f)
       if (!/createAuthenticatedClientWithStatus\(/.test(src)) return false

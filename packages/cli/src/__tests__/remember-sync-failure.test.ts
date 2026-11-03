@@ -63,8 +63,15 @@ vi.mock('../lib/embedding.js', () => ({
 
 // Only used by the integration block at the bottom, which loads the REAL
 // cli-sync module. remember.ts never imports this.
+// cli-sync reads the session status itself (0.5.7) so a dead session stays
+// local instead of exiting. `mockSessionStatus.value` drives that status.
+const mockSessionStatus = vi.hoisted(() => ({ value: 'authenticated' as string }))
 vi.mock('../auth/session.js', () => ({
   createAuthenticatedClient: mockCreateAuthenticatedClient,
+  createAuthenticatedClientWithStatus: async (...args: unknown[]) => ({
+    supabase: await mockCreateAuthenticatedClient(...args),
+    status: mockSessionStatus.value,
+  }),
 }))
 
 let tempConfigDir: string
@@ -312,6 +319,29 @@ describe('openCliSync flushWithResult against a real cache + real SupabaseSync',
       expect(result.ok).toBe(false)
       expect(result.error).toContain('no auth token')
     } finally {
+      ctx.close()
+    }
+  })
+
+  it('a dead session keeps the write local and dirty, reports ok:false, never exits', async () => {
+    mockCreateAuthenticatedClient.mockResolvedValue(fakeSupabase(null))
+    mockSessionStatus.value = 'expired'
+    const exitSpy = vi.spyOn(process, 'exit')
+    const openCliSync = await realOpenCliSync()
+    const ctx = await openCliSync({ ...CLOUD_CONFIG, slug: `expired-${Date.now()}` })
+
+    try {
+      ctx.cache.upsertMemory(makeMemory('written-while-expired'), true)
+      const result = await ctx.flushWithResult()
+
+      expect(exitSpy).not.toHaveBeenCalled()
+      expect(result.ok).toBe(false)
+      expect(result.error).toContain('tages login')
+      // still dirty: it pushes after the user logs in
+      expect(ctx.cache.getDirty().map((m: { key: string }) => m.key)).toContain('written-while-expired')
+    } finally {
+      mockSessionStatus.value = 'authenticated'
+      exitSpy.mockRestore()
       ctx.close()
     }
   })
