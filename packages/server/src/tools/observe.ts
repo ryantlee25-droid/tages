@@ -2,9 +2,10 @@ import { randomUUID } from 'crypto'
 import type { Memory, MemoryType } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
-import { scanForSensitiveData } from './safety'
+import { scanForSensitiveData, formatSafetyWarnings } from './safety'
 import { tokenize } from '../search/tokenizer'
 import { embedOnWrite } from './embed-on-write'
+import { getEncryptionKey, encryptValue } from '../crypto/encryption'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 /** Capped await: phase tests spawn a short-lived server per call, so fire-and-forget would be cut off. */
@@ -54,7 +55,8 @@ export async function handleObserve(
     return { content: [{ type: 'text', text: 'Observation noted.' }] }
   }
 
-  // Check for sensitive data
+  // Same secret gate as `remember` (no --force here): a high-severity secret
+  // is never stored, synced or sent to the embedding provider.
   const warnings = scanForSensitiveData(text)
   if (warnings.some(w => w.severity === 'high')) {
     return {
@@ -100,6 +102,14 @@ export async function handleObserve(
     createdAt: now,
     updatedAt: now,
     ...(callerUserId ? { createdBy: callerUserId, updatedBy: callerUserId } : {}),
+  }
+
+  // Encrypt at rest exactly as `remember` does. The token index and the
+  // embedder below get the plaintext `text`, never the ciphertext.
+  const encKey = getEncryptionKey()
+  if (encKey) {
+    memory.value = encryptValue(text, encKey)
+    memory.encrypted = true
   }
 
   cache.upsertMemory(memory, true)
@@ -161,7 +171,7 @@ export async function handleObserve(
     return {
       content: [{
         type: 'text',
-        text: `Staged and auto-saved "${key}" (${matchedType}) — confidence ${Math.round(memory.confidence * 100)}% met auto-save threshold.`,
+        text: `Staged and auto-saved "${key}" (${matchedType}) — confidence ${Math.round(memory.confidence * 100)}% met auto-save threshold.${formatSafetyWarnings(warnings)}`,
       }],
     }
   }
@@ -172,7 +182,7 @@ export async function handleObserve(
   return {
     content: [{
       type: 'text',
-      text: `Staged memory '${key}' for review. Run \`tages pending\` to verify or approve in bulk.${localNote}`,
+      text: `Staged memory '${key}' for review. Run \`tages pending\` to verify or approve in bulk.${localNote}${formatSafetyWarnings(warnings)}`,
     }],
   }
 }
