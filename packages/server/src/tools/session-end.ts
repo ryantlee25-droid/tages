@@ -5,7 +5,6 @@ import type { SupabaseSync } from '../sync/supabase-sync'
 import { extractMemoriesFromSummary } from './session-extract'
 import { embedOnWrite } from './embed-on-write'
 import { scanForSensitiveData, hasHighSeverity, formatSafetyWarnings, type SafetyWarning } from './safety'
-import { getEncryptionKey, encryptValue } from '../crypto/encryption'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 /** Capped await: short-lived servers would otherwise exit before the embedding lands. */
@@ -48,7 +47,6 @@ export async function handleSessionEnd(
 
   if (shouldExtract && accepted.length > 0) {
     const now = new Date().toISOString()
-    const encKey = getEncryptionKey()
     const written: Array<{ memory: Memory; plaintext: string }> = []
     for (const mem of accepted) {
       const memory: Memory = {
@@ -66,11 +64,10 @@ export async function handleSessionEnd(
         updatedAt: now,
         ...(callerUserId ? { createdBy: callerUserId, updatedBy: callerUserId } : {}),
       }
-      // Encrypt at rest exactly as `remember` does; the embedder gets plaintext.
-      if (encKey) {
-        memory.value = encryptValue(mem.value, encKey)
-        memory.encrypted = true
-      }
+      // Stored readable on purpose (as before 0.5.7): no read path for these rows
+      // decrypts (conventions, project_brief, resources, the review queue, the
+      // dashboard), so ciphertext here would make imported rules and pending
+      // memories unreadable to agents and reviewers. Known gap; see CHANGELOG.
 
       cache.upsertMemory(memory, true)
       if (sync) {

@@ -23,6 +23,8 @@ const WATERMARK_CLAMP_EPSILON_MS = 1_000
 const DEFAULT_QUERY_TIMEOUT_MS = 10_000
 /** S2: max dirty keys excluded from the count comparison by name (they go in the URL). */
 const DIRTY_EXCLUDE_MAX = 100
+/** Encoded `not.in` list budget; well under common 8 KB proxy URL limits. */
+const DIRTY_EXCLUDE_MAX_URL_CHARS = 4000
 
 export class SupabaseSync {
   private timer: ReturnType<typeof setInterval> | null = null
@@ -179,7 +181,11 @@ export class SupabaseSync {
 
         // S2: dirty keys leave both counts (bounded: the list goes in the URL).
         const dirtyKeys = this.cache.getSyncIndex(this.projectId).filter((r) => r.dirty).map((r) => r.key)
-        const exclude = dirtyKeys.length <= DIRTY_EXCLUDE_MAX ? new Set(dirtyKeys) : new Set<string>()
+        // Cap by URL length too: 100 long keys can pass a proxy's URL limit
+        // (414), which would turn every 15s freshen into a full pull.
+        const exclude = dirtyKeys.length <= DIRTY_EXCLUDE_MAX && pgInList(dirtyKeys).length <= DIRTY_EXCLUDE_MAX_URL_CHARS
+          ? new Set(dirtyKeys)
+          : new Set<string>()
         const comparableLocal = () =>
           exclude.size === 0
             ? this.cache.getMemoryCount(this.projectId)
@@ -695,11 +701,11 @@ export class SupabaseSync {
 
   private async _remoteUpdateEmbedding(projectId: string, key: string, embedding: number[]): Promise<boolean> {
     try {
-      const { error } = await this.supabase
+      const { error } = await this.timed(this.supabase
         .from('memories')
         .update({ embedding: embeddingToPgVector(embedding) })
         .eq('project_id', projectId)
-        .eq('key', key)
+        .eq('key', key))
       if (error) {
         console.error('[tages] Remote embedding update failed:', error.message)
         return false
@@ -754,12 +760,12 @@ export class SupabaseSync {
       // eval, 42 local chunk rows / 0 remote. Same id-divergence class as
       // PR #70's embedding-update bug; same fix (resolve via project+key).
       // This resolution doubles as the concurrent-parent-delete race guard.
-      const { data: parent, error: parentError } = await this.supabase
+      const { data: parent, error: parentError } = await this.timed(this.supabase
         .from('memories')
         .select('id')
         .eq('project_id', projectId)
         .eq('key', key)
-        .maybeSingle()
+        .maybeSingle())
       if (parentError) {
         console.error('[tages] Remote chunk parent resolve failed:', parentError.message)
         return false
@@ -770,10 +776,10 @@ export class SupabaseSync {
       }
       const remoteMemoryId = (parent as { id: string }).id
 
-      const { error: deleteError } = await this.supabase
+      const { error: deleteError } = await this.timed(this.supabase
         .from('memory_chunks')
         .delete()
-        .eq('memory_id', remoteMemoryId)
+        .eq('memory_id', remoteMemoryId))
       if (deleteError) {
         console.error('[tages] Remote chunk delete failed:', deleteError.message)
         return false
@@ -789,7 +795,7 @@ export class SupabaseSync {
         embedding: embeddingToPgVector(chunk.embedding),
       }))
       const { error: insertError } = await Promise.resolve(
-        this.supabase.from('memory_chunks').insert(rows),
+        this.timed(this.supabase.from('memory_chunks').insert(rows)),
       )
       if (insertError) {
         console.error('[tages] Remote chunk insert failed:', insertError.message)
@@ -813,11 +819,11 @@ export class SupabaseSync {
    */
   private async _remoteDelete(projectId: string, key: string): Promise<boolean> {
     try {
-      const { error, count } = await this.supabase
+      const { error, count } = await this.timed(this.supabase
         .from('memories')
         .delete({ count: 'exact' })
         .eq('project_id', projectId)
-        .eq('key', key)
+        .eq('key', key))
 
       if (error) {
         console.error('[tages] Remote delete failed:', error.message)
@@ -991,11 +997,11 @@ export class SupabaseSync {
    */
   private async remoteKeyVisible(projectId: string, key: string): Promise<boolean | null> {
     try {
-      const { count, error } = await this.supabase
+      const { count, error } = await this.timed(this.supabase
         .from('memories')
         .select('id', { count: 'exact', head: true })
         .eq('project_id', projectId)
-        .eq('key', key)
+        .eq('key', key))
       if (error || typeof count !== 'number') return null
       return count > 0
     } catch {

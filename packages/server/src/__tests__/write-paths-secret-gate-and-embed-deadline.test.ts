@@ -38,7 +38,6 @@ import { SqliteCache } from '../cache/sqlite'
 import { handleObserve } from '../tools/observe'
 import { handleSessionEnd } from '../tools/session-end'
 import { handleImportClaudeMd } from '../tools/import-claude-md'
-import { decryptValue } from '../crypto/encryption'
 
 const PROJECT = 'w5-project'
 // Built by concatenation so push protection never sees a literal key.
@@ -164,32 +163,34 @@ describe('W5 write paths', () => {
     })
   })
 
-  describe('W5b: encryption at rest matches remember', () => {
+  // Even with TAGES_ENCRYPTION_KEY set, these agent paths store the value
+  // readable: no read path for these rows decrypts (conventions, project_brief,
+  // resources, the review queue, the dashboard), so ciphertext here would make
+  // imported rules and pending memories unreadable to agents and reviewers.
+  describe('W5b: with an encryption key set, agent paths stay readable', () => {
     const KEY_HEX = 'cd'.repeat(32)
-    const key = () => Buffer.from(KEY_HEX, 'hex')
 
-    it('observe stores ciphertext and embeds plaintext', async () => {
+    it('observe stores readable text and embeds plaintext', async () => {
       process.env.TAGES_ENCRYPTION_KEY = KEY_HEX
       const obs = 'We always use PascalCase for React component filenames.'
       await handleObserve({ observation: obs }, PROJECT, cache, null)
       const [row] = rawRows(cache)
-      expect(row.encrypted).toBe(1)
-      expect(row.value.startsWith('enc:v1:')).toBe(true)
-      expect(decryptValue(row.value, key())).toBe(obs)
+      expect(row.encrypted).toBe(0)
+      expect(row.value).toBe(obs)
       expect(embed.calls[0].plaintext).toBe(obs)
     })
 
-    it('session_end stores ciphertext and embeds plaintext', async () => {
+    it('session_end stores readable text and embeds plaintext', async () => {
       process.env.TAGES_ENCRYPTION_KEY = KEY_HEX
       const line = 'I decided to use PostgreSQL for the main database.'
       await handleSessionEnd({ summary: line }, PROJECT, cache, null)
       const [row] = rawRows(cache)
-      expect(row.encrypted).toBe(1)
-      expect(decryptValue(row.value, key())).toBe(line)
+      expect(row.encrypted).toBe(0)
+      expect(row.value).toBe(line)
       expect(embed.calls[0].plaintext).toBe(line)
     })
 
-    it('import_claude_md stores ciphertext (new and overwrite) and embeds plaintext', async () => {
+    it('import_claude_md stores readable text (new and overwrite) and embeds plaintext', async () => {
       process.env.TAGES_ENCRYPTION_KEY = KEY_HEX
       await handleImportClaudeMd({ content: '## Conventions\n- use pnpm everywhere\n', projectId: PROJECT }, cache, null)
       await handleImportClaudeMd(
@@ -197,8 +198,8 @@ describe('W5 write paths', () => {
       )
       const rows = rawRows(cache)
       expect(rows).toHaveLength(1)
-      expect(rows[0].encrypted).toBe(1)
-      expect(decryptValue(rows[0].value, key())).toBe('use pnpm everywhere')
+      expect(rows[0].encrypted).toBe(0)
+      expect(rows[0].value).toBe('use pnpm everywhere')
       expect(embed.calls.map(c => c.plaintext)).toEqual(['use pnpm everywhere', 'use pnpm everywhere'])
     })
   })

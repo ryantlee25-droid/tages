@@ -8,7 +8,6 @@ import type { SupabaseSync } from '../sync/supabase-sync'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { embedOnWrite } from './embed-on-write'
 import { scanForSensitiveData, hasHighSeverity, formatSafetyWarnings, type SafetyWarning } from './safety'
-import { getEncryptionKey, encryptValue } from '../crypto/encryption'
 
 type ImportStrategy = 'skip' | 'overwrite'
 
@@ -257,12 +256,13 @@ export async function handleImportClaudeMd(
   const remoteUnavailable = sync !== null && deduped.length > 0 && remote === null
 
   const written: Memory[] = []
-  // Plaintext per key, for the embedder: values are encrypted at rest below
-  // when TAGES_ENCRYPTION_KEY is set, exactly as `remember` stores them.
+  // Plaintext per key, for the embedder.
   const plaintextByKey = new Map<string, string>()
-  const encKey = getEncryptionKey()
-  const atRest = (plaintext: string): { value: string; encrypted: boolean } =>
-    encKey ? { value: encryptValue(plaintext, encKey), encrypted: true } : { value: plaintext, encrypted: false }
+  // Stored readable on purpose (as before 0.5.7): no read path for these rows
+  // decrypts (conventions, project_brief, resources, the review queue, the
+  // dashboard), so ciphertext here would make imported rules and pending
+  // memories unreadable to agents and reviewers. Known gap; see CHANGELOG.
+  const atRest = (plaintext: string): { value: string; encrypted: boolean } => ({ value: plaintext, encrypted: false })
 
   for (const item of deduped) {
     const local = cache.getByKey(args.projectId, item.key)

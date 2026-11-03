@@ -32,7 +32,7 @@ export async function exportCommand(options: ExportOptions) {
 
   // An unknown format is an error, not CLAUDE.md: a typo must never aim the
   // write at the one file people care most about.
-  if (options.format && !FORMAT_FILENAMES[options.format]) {
+  if (options.format && !Object.hasOwn(FORMAT_FILENAMES, options.format)) {
     console.error(chalk.red(`  Unknown --format "${options.format}". Use one of: ${Object.keys(FORMAT_FILENAMES).join(', ')}.`))
     process.exit(1)
   }

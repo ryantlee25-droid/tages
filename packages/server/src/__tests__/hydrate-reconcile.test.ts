@@ -783,6 +783,20 @@ describe('hydrate reconcile (0.5.7 Task 1a)', () => {
       expect(await sync.hydrate()).toBe(1)
     }, 3000)
 
+    it('W3: a hung embedding update or delete times out instead of pinning the queue hydrate waits on', async () => {
+      const fake = makeFake()
+      fake.addRow({ key: 'a' })
+      const sync = makeSync(fake)
+      sync.queryTimeoutMs = 50
+      fake.setHang(true)
+      const t0 = Date.now()
+      expect(await sync.remoteUpdateEmbedding(PROJECT, 'a', [0.1, 0.2])).toBe(false)
+      expect(await sync.remoteDelete(PROJECT, 'a')).toBe(false)
+      expect(Date.now() - t0).toBeLessThan(1000)
+      fake.setHang(false)
+      expect(await sync.hydrate()).toBe(1)
+    }, 3000)
+
     it('W3: a hung stale run costs one timeout in total, not one per read', async () => {
       const fake = makeFake()
       const sync = makeSync(fake)

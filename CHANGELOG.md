@@ -31,7 +31,8 @@ Fixes found by new end-to-end phases 12-16 (approval queue, CLAUDE.md, recency, 
 - **A teammate's fast clock can no longer hide edits or archives.** The sync watermark is clamped to local time and re-checks a 10-minute window, so a retracted memory is not served as live.
 - **Deletion sync never removes a row that was just pushed**, and listings page by id so a concurrent delete cannot skip rows.
 - **No more hangs on a bad network.** Every Supabase call in sync times out after 10s, and a stalled boot costs one wait, not one per read.
-- **Secret scanning and encryption on every write path.** `session_end` and `import_claude_md` now run the same secret gate as `remember`, and all three agent paths encrypt at rest when `TAGES_ENCRYPTION_KEY` is set. With a key set, `tages pending` and the dashboard show those pending values as ciphertext.
+- **Secret scanning on every write path.** `session_end` and `import_claude_md` now run the same secret gate as `remember` (`observe` already did). High-severity secrets are refused before anything is stored or sent to the embedding provider.
+- **Known gap:** `observe`, `session_end`, and `import_claude_md` store values readable even when `TAGES_ENCRYPTION_KEY` is set, as before 0.5.7. No read path for those rows decrypts (conventions, `project_brief`, the review queue, the dashboard), so encrypting them made imported rules and pending memories unreadable.
 - **An edit made while a flush is in flight stays queued** instead of being marked synced.
 - **`tages export --format <typo>` is an error**, and an export-then-import round trip keeps every memory type.
 

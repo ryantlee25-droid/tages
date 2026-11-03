@@ -5,7 +5,6 @@ import type { SupabaseSync } from '../sync/supabase-sync'
 import { scanForSensitiveData, formatSafetyWarnings } from './safety'
 import { tokenize } from '../search/tokenizer'
 import { embedOnWrite } from './embed-on-write'
-import { getEncryptionKey, encryptValue } from '../crypto/encryption'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 /** Capped await: phase tests spawn a short-lived server per call, so fire-and-forget would be cut off. */
@@ -104,13 +103,10 @@ export async function handleObserve(
     ...(callerUserId ? { createdBy: callerUserId, updatedBy: callerUserId } : {}),
   }
 
-  // Encrypt at rest exactly as `remember` does. The token index and the
-  // embedder below get the plaintext `text`, never the ciphertext.
-  const encKey = getEncryptionKey()
-  if (encKey) {
-    memory.value = encryptValue(text, encKey)
-    memory.encrypted = true
-  }
+  // Stored readable on purpose (as before 0.5.7): no read path for these rows
+  // decrypts (conventions, project_brief, resources, the review queue, the
+  // dashboard), so ciphertext here would make imported rules and pending
+  // memories unreadable to agents and reviewers. Known gap; see CHANGELOG.
 
   cache.upsertMemory(memory, true)
 
