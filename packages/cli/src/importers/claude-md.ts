@@ -18,6 +18,10 @@ const SECTION_TYPE_MAP: Record<string, MemoryType> = {
   entities: 'entity',
   lesson: 'lesson',
   lessons: 'lesson',
+  // The remaining headings `tages export` writes (OTHER_TYPE_HEADINGS).
+  execution: 'execution',
+  operational: 'operational',
+  environment: 'environment',
 }
 
 // Checked before SECTION_TYPE_MAP: "Anti-patterns" contains "pattern", and
@@ -61,7 +65,10 @@ export function parseCLAUDEmd(filePath: string): ImportedMemory[] {
       }
 
       const header = h2Match[1].trim().toLowerCase()
-      // Try to match header to a memory type
+      // Try to match header to a memory type. Reset first: an unrecognised
+      // heading must not inherit the previous section's type (after the
+      // Anti-patterns section that turned ordinary facts into prohibitions).
+      currentType = 'convention'
       if (ANTI_PATTERN_HEADER.test(header)) {
         currentType = 'anti_pattern'
       } else for (const [keyword, type] of Object.entries(SECTION_TYPE_MAP)) {

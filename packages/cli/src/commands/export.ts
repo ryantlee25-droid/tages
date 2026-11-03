@@ -30,7 +30,13 @@ export async function exportCommand(options: ExportOptions) {
     process.exit(1)
   }
 
-  const format = options.format && FORMAT_FILENAMES[options.format] ? options.format : 'claude-md'
+  // An unknown format is an error, not CLAUDE.md: a typo must never aim the
+  // write at the one file people care most about.
+  if (options.format && !FORMAT_FILENAMES[options.format]) {
+    console.error(chalk.red(`  Unknown --format "${options.format}". Use one of: ${Object.keys(FORMAT_FILENAMES).join(', ')}.`))
+    process.exit(1)
+  }
+  const format = options.format ?? 'claude-md'
   const outputPath = path.resolve(options.output || path.join(process.cwd(), FORMAT_FILENAMES[format]))
 
   // Never destroy an existing file (a hand-written CLAUDE.md, most often).

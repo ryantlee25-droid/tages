@@ -107,6 +107,15 @@ describe('tages export: safety and content', () => {
     expect(mocks.createAuthenticatedClient).not.toHaveBeenCalled()
   })
 
+  it('rejects an unknown --format instead of falling back to CLAUDE.md', async () => {
+    const target = path.join(workDir, 'CLAUDE.md')
+    await expect(exportCommand({ format: 'claudemd', force: true })).rejects.toThrow('process.exit called')
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(console_.errors.join('\n')).toContain('Unknown --format')
+    expect(fs.existsSync(target)).toBe(false)
+    expect(mocks.createAuthenticatedClient).not.toHaveBeenCalled()
+  })
+
   it('overwrites an existing CLAUDE.md with --force', async () => {
     const target = path.join(workDir, 'CLAUDE.md')
     fs.writeFileSync(target, HAND_WRITTEN)
