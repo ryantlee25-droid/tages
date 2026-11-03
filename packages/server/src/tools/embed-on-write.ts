@@ -15,13 +15,11 @@ export interface EmbedOnWriteOptions {
  * Callers that were never threaded one (observe, session_end, verify_memory,
  * import_claude_md are wired in index.ts without it) would otherwise get no
  * embedding at all in production. SupabaseSync is built from that same
- * authenticated client, so reuse it. `supabase` is a TS-private constructor
- * field, present at runtime; replace this with a public getter once
- * supabase-sync.ts exposes one.
+ * authenticated client, so reuse it through its public `client` getter.
  */
 function resolveClient(sync: SupabaseSync | null, supabaseClient?: SupabaseClient): SupabaseClient | undefined {
   if (supabaseClient) return supabaseClient
-  return (sync as unknown as { supabase?: SupabaseClient } | null)?.supabase
+  return sync?.client
 }
 
 /**

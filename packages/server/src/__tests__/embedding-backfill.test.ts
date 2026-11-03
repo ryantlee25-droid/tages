@@ -1,0 +1,119 @@
+/**
+ * 0.5.7 Task 1b (bug 1): bounded boot embedding backfill.
+ */
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
+import { randomUUID } from 'crypto'
+import type { Memory } from '@tages/shared'
+
+const gen = vi.hoisted(() => ({ generateEmbedding: vi.fn(), generateChunkEmbeddings: vi.fn() }))
+vi.mock('../embeddings', () => gen)
+
+import { SqliteCache } from '../cache/sqlite'
+import type { SupabaseSync } from '../sync/supabase-sync'
+import { runEmbeddingBackfill, BACKFILL_LIMIT } from '../sync/embedding-backfill'
+
+const PROJECT = 'backfill-project'
+
+function mem(over: Partial<Memory> = {}): Memory {
+  const now = new Date().toISOString()
+  return {
+    id: randomUUID(), projectId: PROJECT, key: `k-${randomUUID().slice(0, 8)}`, value: 'use pnpm',
+    type: 'convention', source: 'manual', status: 'live', confidence: 1,
+    filePaths: [], tags: [], createdAt: now, updatedAt: now, ...over,
+  }
+}
+
+function embeddingOf(cache: SqliteCache, key: string): number[] | null {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const row = (cache as any).db.prepare('SELECT embedding FROM memories WHERE project_id = ? AND key = ?').get(PROJECT, key) as { embedding: string | null } | undefined
+  return row?.embedding ? JSON.parse(row.embedding) : null
+}
+
+function fakeSync() {
+  return {
+    remoteUpdateEmbedding: vi.fn(async () => true),
+    remoteUpsertChunks: vi.fn(async () => true),
+    client: undefined,
+  }
+}
+
+describe('runEmbeddingBackfill', () => {
+  let cache: SqliteCache
+  let dbPath: string
+
+  beforeEach(() => {
+    dbPath = path.join(os.tmpdir(), `tages-backfill-${randomUUID()}.db`)
+    cache = new SqliteCache(dbPath)
+    gen.generateEmbedding.mockReset().mockResolvedValue([0.1, 0.2, 0.3])
+    gen.generateChunkEmbeddings.mockReset().mockResolvedValue(null)
+  })
+
+  afterEach(() => {
+    cache.close()
+    for (const p of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) if (fs.existsSync(p)) fs.rmSync(p)
+  })
+
+  it('embeds a live row with no embedding, locally and through remoteUpdateEmbedding', async () => {
+    cache.upsertMemory(mem({ key: 'needs-vector' }), false)
+    const sync = fakeSync()
+    const n = await runEmbeddingBackfill(PROJECT, cache, sync as unknown as SupabaseSync)
+    expect(n).toBe(1)
+    expect(embeddingOf(cache, 'needs-vector')).toEqual([0.1, 0.2, 0.3])
+    expect(sync.remoteUpdateEmbedding).toHaveBeenCalledWith(PROJECT, 'needs-vector', [0.1, 0.2, 0.3])
+    expect(gen.generateEmbedding.mock.calls[0][0]).toBe('use pnpm')
+  })
+
+  it('processes at most 20 rows by default', async () => {
+    for (let i = 0; i < 25; i++) cache.upsertMemory(mem(), false)
+    const n = await runEmbeddingBackfill(PROJECT, cache, fakeSync() as unknown as SupabaseSync)
+    expect(BACKFILL_LIMIT).toBe(20)
+    expect(n).toBe(20)
+    expect(gen.generateEmbedding).toHaveBeenCalledTimes(20)
+    expect(cache.getLiveMissingEmbedding(PROJECT, 100)).toHaveLength(5)
+  })
+
+  it('honours a custom limit', async () => {
+    for (let i = 0; i < 5; i++) cache.upsertMemory(mem(), false)
+    expect(await runEmbeddingBackfill(PROJECT, cache, fakeSync() as unknown as SupabaseSync, undefined, { limit: 2 })).toBe(2)
+  })
+
+  it('skips pending rows and rows that already have an embedding', async () => {
+    cache.upsertMemory(mem({ key: 'pending', status: 'pending' }), false)
+    cache.upsertMemory(mem({ key: 'has' }), false)
+    cache.setEmbedding(PROJECT, 'has', [9, 9])
+    expect(await runEmbeddingBackfill(PROJECT, cache, fakeSync() as unknown as SupabaseSync)).toBe(0)
+    expect(gen.generateEmbedding).not.toHaveBeenCalled()
+  })
+
+  it('a null embedding writes nothing and does not push', async () => {
+    gen.generateEmbedding.mockResolvedValue(null)
+    cache.upsertMemory(mem({ key: 'nullvec' }), false)
+    const sync = fakeSync()
+    await runEmbeddingBackfill(PROJECT, cache, sync as unknown as SupabaseSync)
+    expect(embeddingOf(cache, 'nullvec')).toBeNull()
+    expect(sync.remoteUpdateEmbedding).not.toHaveBeenCalled()
+  })
+
+  it('never rejects: provider throws, or the cache read throws', async () => {
+    gen.generateEmbedding.mockRejectedValue(new Error('provider down'))
+    cache.upsertMemory(mem(), false)
+    await expect(runEmbeddingBackfill(PROJECT, cache, fakeSync() as unknown as SupabaseSync)).resolves.toBe(1)
+
+    const broken = { getLiveMissingEmbedding: () => { throw new Error('db closed') } } as unknown as SqliteCache
+    await expect(runEmbeddingBackfill(PROJECT, broken, null)).resolves.toBe(0)
+  })
+
+  it('one hung row does not stall the batch (per-row cap)', async () => {
+    cache.upsertMemory(mem({ key: 'a', updatedAt: '2026-11-03T10:00:02.000Z' }), false)
+    cache.upsertMemory(mem({ key: 'b', updatedAt: '2026-11-03T10:00:01.000Z' }), false)
+    gen.generateEmbedding
+      .mockImplementationOnce(() => new Promise(() => {}))
+      .mockResolvedValue([1, 2])
+    const n = await runEmbeddingBackfill(PROJECT, cache, fakeSync() as unknown as SupabaseSync, undefined, { rowTimeoutMs: 20 })
+    expect(n).toBe(2)
+    expect(embeddingOf(cache, 'b')).toEqual([1, 2])
+  })
+})

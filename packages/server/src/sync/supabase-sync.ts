@@ -34,6 +34,15 @@ export class SupabaseSync {
     }
   }
 
+  /**
+   * The authenticated client this sync was built from. Callers that were not
+   * threaded a client (embedOnWrite from observe/session_end/verify) reuse it
+   * so the hosted embedding provider gets the caller's session.
+   */
+  get client(): SupabaseClient {
+    return this.supabase
+  }
+
   /** Enqueue work on the flush serialisation queue (prevents resurrection races). */
   private enqueue<T>(fn: () => Promise<T>): Promise<T> {
     const result = this.flushQueue.then(fn)
@@ -185,11 +194,12 @@ export class SupabaseSync {
       const rows = await this.pageAll<DbRow>((q) => q.order('id'))
       if (rows === null) return 0
       if (rows.length === 0) {
-        // Never mass-delete on an empty answer: a dead session under RLS reads
-        // as an empty project, and wiping a teammate's cache on that would be
-        // silent data loss. A genuinely emptied project costs one stale cache.
+        // An empty answer alone never mass-deletes: a dead session under RLS
+        // reads as an empty project. Only a separate exact count of 0 under a
+        // verified session reconciles (a teammate forgot the last memory).
+        const deleted = await this.reconcileConfirmedEmpty()
         this.lastHydrateOkAt = Date.now()
-        return 0
+        return deleted
       }
       const memories = rows.map(dbRowToMemory)
       const result = this.cache.hydrateFromRemote(memories)
@@ -249,6 +259,42 @@ export class SupabaseSync {
   }
 
   /**
+   * The remote listing came back empty. Delete clean local rows only when the
+   * project is CONFIRMED empty: a separate exact head count that succeeded
+   * with 0, under a session the auth server accepts. A dead or anonymous
+   * session also counts 0 under RLS, so any auth doubt, count error, or
+   * non-zero count deletes nothing. Dirty rows are always kept (they are
+   * unsynced local writes). Returns rows deleted.
+   */
+  private async reconcileConfirmedEmpty(): Promise<number> {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const auth = (this.supabase as any).auth
+      if (!auth || typeof auth.getUser !== 'function') return 0
+      const { data: userData, error: userError } = await auth.getUser()
+      if (userError || !userData?.user?.id) return 0
+
+      const { count, error } = await this.supabase
+        .from('memories')
+        .select('id', { count: 'exact', head: true })
+        .eq('project_id', this.projectId)
+      if (error || count !== 0) return 0
+
+      const gone = this.cache
+        .getSyncIndex(this.projectId)
+        .filter((r) => !r.dirty)
+        .map((r) => r.key)
+      if (gone.length === 0) return 0
+      const deleted = this.cache.deleteCleanByKeys(this.projectId, gone)
+      if (deleted > 0) console.error(`[tages] Removed ${deleted} memories deleted from the shared store (project is now empty)`)
+      return deleted
+    } catch (err) {
+      console.error('[tages] Empty-project confirm failed, keeping cache:', (err as Error).message)
+      return 0
+    }
+  }
+
+  /**
    * Count-mismatch reconcile. Lists remote `(key, updated_at)`, deletes clean
    * local rows the remote no longer has, and fetches rows that are missing
    * locally or whose `updated_at` differs. Returns null when the listing failed
@@ -264,7 +310,9 @@ export class SupabaseSync {
     const listing = await this.pageAll<{ key: string; updated_at: string }>((q) => q.order('key'), 'key, updated_at')
     if (listing === null || listing.length !== expectedTotal) return null
     // Same empty-answer guard as the full pull.
-    if (listing.length === 0) return { applied: 0, deleted: 0, held: 0, maxUpdatedAt: null }
+    if (listing.length === 0) {
+      return { applied: 0, deleted: await this.reconcileConfirmedEmpty(), held: 0, maxUpdatedAt: null }
+    }
 
     const remote = new Map(listing.map((r) => [r.key, r.updated_at]))
     const local = this.cache.getSyncIndex(this.projectId)
