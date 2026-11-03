@@ -191,14 +191,13 @@ export async function run(ctx) {
     const warmA = await mcpRecall(bins, A, rq)
     report.check(`${kind}: control — both agents have it cached`, has(warmB.text, mark) && has(warmA.text, mark), `A:${has(warmA.text, mark)} B:${has(warmB.text, mark)}`)
 
-    let act = await mcpOne(bins.serverBin, A, tool, { key }, { graceful: true })
-    if (/requires Tages Pro/i.test(act.text)) {
-      // archive_memory is Pro-gated and this fixture project is on the free plan.
-      // Recorded as its own finding; the retraction path is exercised the way the
-      // dashboard does it, an owner setting status='archived' on the row.
-      report.skip(`${kind}: \`${tool}\` on the free plan`, `tool replied "${head(act.text, 1)}" — a free-plan team can only archive through the dashboard or \`pending --reject-all\``)
-      await api.rest(`/memories?project_id=eq.${project.id}&key=eq.${encodeURIComponent(key)}`, { method: 'PATCH', body: { status: 'archived' }, as: asA })
-    }
+    const act = await mcpOne(bins.serverBin, A, tool, { key }, { graceful: true })
+    // archive_memory is Pro-gated by design, and this phase runs it on a
+    // paid-plan fixture (set up below, before the first retired() call). A
+    // "requires Tages Pro" reply here means the fixture did not take, which is
+    // a failure, never a skip with a back-door PATCH.
+    const gated = /requires Tages Pro/i.test(act.text)
+    report.check(`${kind}: \`${tool}\` runs on the paid-plan fixture (not refused by the tier gate)`, !gated, gated ? `tool replied "${head(act.text, 1)}"` : 'accepted')
     const gone = await poll(async () => {
       const r = await cloud(key)
       return kind === 'archive' ? (r?.status === 'archived' ? true : null) : r ? null : true
@@ -225,6 +224,37 @@ export async function run(ctx) {
     const conv = await converge(() => mcpRecall(bins, B, rq), r => r.ok && !r.text.includes(mark), { timeoutMs: 100000 })
     report.check(`${kind}: teammate's agent stops serving it within 100s of restarts`, conv.ok, conv.ok ? `${conv.ms}ms` : `never stopped; per-restart cache log: ${conv.trail.join(' | ')}${kind === 'forget' ? ' (SupabaseSync.hydrate only upserts remote rows; nothing ever deletes a local row the cloud no longer has)' : ''}`)
   }
-  await retired('archive', 'archive_memory')
-  await retired('forget', 'forget')
+
+  // ---- paid-plan fixture for the retraction block ---------------------------
+  // `archive_memory` is Pro-gated, and the fixture owner is on the free plan.
+  // With the service key (fixture setup only, never an authorization check),
+  // put the owner and the fixture project on `team` for the two retired()
+  // calls, then restore the saved values so phases 15, 16 and 99 still see the
+  // free-plan fixture. These are this run's own test users and project, never a
+  // real account. Each MCP call boots a fresh server, which reads
+  // `projects.plan` at boot, so no cache sits between the PATCH and the gate.
+  const profilePath = `/user_profiles?user_id=eq.${A.userId}`
+  const projectPath = `/projects?id=eq.${project.id}`
+  const profileCols = 'plan,is_pro,subscription_quantity,subscription_status'
+  const savedProfile = (await api.rest(`${profilePath}&select=${profileCols}`)).body?.[0] ?? null
+  const savedProject = (await api.rest(`${projectPath}&select=plan`)).body?.[0] ?? null
+  try {
+    await api.rest(profilePath, { method: 'PATCH', body: { plan: 'team', is_pro: true, subscription_quantity: 5, subscription_status: 'active' } })
+    await api.rest(projectPath, { method: 'PATCH', body: { plan: 'team' } })
+    const readProfile = (await api.rest(`${profilePath}&select=${profileCols}`)).body?.[0] ?? null
+    const readProject = (await api.rest(`${projectPath}&select=plan`)).body?.[0] ?? null
+    const paid = readProfile?.plan === 'team' && readProfile?.is_pro === true && readProject?.plan === 'team'
+    report.check(
+      'paid-plan fixture: the owner and the project read back as `team` before archive runs',
+      paid,
+      `profile ${JSON.stringify(readProfile && { plan: readProfile.plan, is_pro: readProfile.is_pro })}, project ${JSON.stringify(readProject)}${savedProfile ? '' : ' (no user_profiles row to patch)'}`,
+    )
+    await retired('archive', 'archive_memory')
+    await retired('forget', 'forget')
+  } finally {
+    if (savedProfile) await api.rest(profilePath, { method: 'PATCH', body: savedProfile })
+    if (savedProject) await api.rest(projectPath, { method: 'PATCH', body: savedProject })
+    const back = (await api.rest(`${projectPath}&select=plan`)).body?.[0] ?? null
+    report.check('paid-plan fixture: the project plan is restored afterwards', !savedProject || back?.plan === savedProject.plan, `project plan now ${back?.plan}, saved ${savedProject?.plan}`)
+  }
 }
