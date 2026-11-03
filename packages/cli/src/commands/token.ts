@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import chalk from 'chalk'
 import { createAuthenticatedClient } from '../auth/session.js'
+import { assertRowsAffected } from '../lib/write-guard.js'
 import { getAuthPath } from '../config/paths.js'
 import { loadProjectConfig } from '../config/project.js'
 import { generateToken } from '../auth/token-auth.js'
@@ -144,15 +145,15 @@ export async function tokenRotateCommand(options: TokenRotateOptions) {
     expires_at: expiresAt,
   }
 
-  const { error: updateError } = await supabase
+  // `.select('id')`: without it an RLS-filtered update printed a NEW token
+  // that was never stored, while the old one kept working.
+  const updateResult = await supabase
     .from('api_tokens')
     .update(updatePayload)
     .eq('id', existing.id)
+    .select('id')
 
-  if (updateError) {
-    console.error(chalk.red(`Failed to rotate token: ${updateError.message}`))
-    process.exit(1)
-  }
+  assertRowsAffected(updateResult, { action: 'rotate this token' })
 
   console.log()
   console.log(chalk.green(`  Token "${tokenName}" rotated`))

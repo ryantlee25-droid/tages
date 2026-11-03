@@ -14,32 +14,62 @@ export async function forgetCommand(key: string, options: ForgetOptions) {
     process.exit(1)
   }
 
+  // Build the cloud client BEFORE touching the cache: on a dead session the
+  // central guard exits here, with nothing deleted anywhere.
+  const supabase =
+    config.supabaseUrl && config.supabaseAnonKey
+      ? await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey, {
+          action: 'delete a memory',
+        })
+      : null
+
+  let cloudFailure: string | null = null
   const { cache, close } = await openCliSync(config)
   try {
     // Primary delete: SQLite first
     cache.deleteByKey(config.projectId, key)
 
-    // Best-effort cloud delete — never fatal
-    if (config.supabaseUrl && config.supabaseAnonKey) {
+    if (supabase) {
       try {
-        const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
-        const { error } = await supabase
+        // `.select('id')` so an RLS-filtered delete (read-only member) is
+        // visible as zero rows instead of reading as success.
+        const { data, error } = await supabase
           .from('memories')
           .delete()
           .eq('project_id', config.projectId)
           .eq('key', key)
+          .select('id')
 
         if (error) {
-          console.error(chalk.dim(`[tages] Cloud delete warning: ${error.message}`))
+          cloudFailure = error.message
+        } else if (!Array.isArray(data) || data.length === 0) {
+          // Zero rows: either the row never reached the cloud (fine) or RLS
+          // hid it from the delete. Tell them apart with a read, which
+          // members ARE allowed.
+          const { data: still } = await supabase
+            .from('memories')
+            .select('id')
+            .eq('project_id', config.projectId)
+            .eq('key', key)
+          if (Array.isArray(still) && still.length > 0) {
+            cloudFailure = 'your role cannot delete memories on this project (read-only members cannot delete)'
+          }
         }
       } catch (err) {
-        console.error(chalk.dim(`[tages] Cloud delete warning: ${(err as Error).message}`))
+        cloudFailure = (err as Error).message
       }
     }
   } finally {
     close()
   }
 
+  if (cloudFailure) {
+    console.error(
+      chalk.red(`Could not delete "${key}" from the shared store: ${cloudFailure}.`),
+      chalk.dim('It was removed from your local cache only and will return on the next sync.'),
+    )
+    process.exit(1)
+  }
+
   console.log(chalk.green('Deleted:'), `"${key}"`)
 }
-
