@@ -125,8 +125,8 @@ export async function handleObserve(
   // promote it to live without waiting for the next sweep.
   if (autoSaveThreshold != null && memory.confidence >= autoSaveThreshold) {
     const promotedAt = new Date().toISOString()
-    // Local cache is correctly keyed by the local row id.
-    cache.updateMemoryStatus(memory.id, 'live', promotedAt)
+    // Promote remotely FIRST and only then locally (as verify.ts does), so a
+    // refused promotion never leaves a pending row with verified_at set.
     let promotedRemotely = true
     if (sync) {
       // Best-effort remote promotion; sync.flush() will catch any remaining
@@ -144,8 +144,7 @@ export async function handleObserve(
     }
     if (!promotedRemotely) {
       // The shared store refused (RLS: read-only member) or matched zero rows.
-      // Do not leave the local cache claiming a promotion that did not happen.
-      cache.updateMemoryStatus(memory.id, 'pending')
+      // The local row was never touched, so it is still pending.
       return {
         isError: true,
         content: [{
@@ -156,6 +155,8 @@ export async function handleObserve(
         }],
       }
     }
+    // Local cache is correctly keyed by the local row id.
+    cache.updateMemoryStatus(memory.id, 'live', promotedAt)
     console.error(`[tages] Auto-saved observed memory "${key}" (confidence ${memory.confidence} >= threshold ${autoSaveThreshold})`)
     return {
       content: [{

@@ -201,7 +201,7 @@ The dashboard invite route calls `supabase.auth.admin.inviteUserByEmail` and sen
 
 - **CLI: pulls automatically.** Every memory command reconciles first: push your dirty rows, then pull remote state (`packages/cli/src/sync/cli-sync.ts`). A teammate's memory reaches your terminal on your next command.
 - **MCP: refreshes before it reads (0.5.7+).** The server pulls at every boot, and `recall`, `conventions`, and `project_brief` re-pull first when the cache is more than 15 seconds old. New, updated, approved, forgotten, and archived memories all reach your agent within about 15 seconds, without restarting Claude Code. Before 0.5.7 the agent only pulled at boot and skipped even that if the cache was under 60 seconds old.
-- **Expired session:** `remember` and `forget` keep the change locally, tell you to run `tages login`, and push it after you log in. Read commands exit non-zero with the same message instead of reporting an empty project.
+- **Expired session:** `remember` keeps the memory locally, tells you to run `tages login`, and pushes it after you log in. `forget` refuses and deletes nothing until you log in. Read commands exit non-zero with the same message instead of reporting an empty project.
 
 There is still no `tages pull` command; the reconcile is automatic.
 

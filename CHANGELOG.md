@@ -25,7 +25,7 @@ Fixes found by new end-to-end phases 12-16 (approval queue, CLAUDE.md, recency, 
 - **`tages link` / `tages init`** print a clear error on an unparsable `.mcp.json` instead of a stack trace.
 
 ### Sessions
-- **Every cloud command fails loudly on a dead session** (central guard in `createAuthenticatedClient`; `doctor` opts out). `remember`/`forget` keep the change locally and push after `tages login`.
+- **Every cloud command fails loudly on a dead session** (central guard in `createAuthenticatedClient`; `doctor` opts out). `remember` keeps the memory locally and pushes it after `tages login`; `forget` refuses and deletes nothing, since a local-only delete would come back on the next pull.
 
 ## 2026-08-25 — `@tages/cli` 0.5.5 · `@tages/shared` 0.2.3
 

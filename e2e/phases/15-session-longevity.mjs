@@ -24,6 +24,7 @@ import * as fs from 'fs'
 import { head, tail } from '../lib/harness.mjs'
 import { cli, mcpOne } from '../lib/cli.mjs'
 import { cloneIdentity } from '../lib/identity.mjs'
+import { localMemory } from '../lib/localdb.mjs'
 
 export const id = '15-session-longevity'
 export const title = '15 · SESSION LONGEVITY — the login survives the agent refreshing it, and dies loudly when dead'
@@ -120,6 +121,25 @@ export async function run(ctx) {
   // Named in the PR as not yet covered ("29 other commands"): the review queue
   // is the core of the new-team workflow, so it is held to the same standard.
   loud('pending', ['pending'])
+
+  // Writes on a dead session: `remember` must keep the memory locally (dirty,
+  // so it pushes after `tages login`) and say why; it must not exit before
+  // the local write. `forget` must refuse and delete nothing, because a
+  // local-only delete would be undone by the next pull.
+  const deadKey = `${ctx.fixturePrefix}-dead-session-write`
+  const rem = cli(bins.cliBin, D, ['remember', deadKey, 'Written while the session was dead.', '--type', 'lesson'])
+  const kept = localMemory(D, project.slug, deadKey)
+  report.check(
+    'dead session: `tages remember` keeps the memory locally, queued to sync, and says to log in',
+    kept != null && Number(kept.dirty) === 1 && /log ?in/i.test(rem.out),
+    kept ? `exit ${rem.code}, local row dirty=${kept.dirty}: ${head(rem.out, 1)}` : `exit ${rem.code}, NOT stored locally: ${head(rem.out, 2)}`,
+  )
+  const fg = cli(bins.cliBin, D, ['forget', deadKey])
+  report.check(
+    'dead session: `tages forget` exits non-zero, says to log in, and deletes nothing locally',
+    fg.code !== 0 && /expired|log ?in|not signed in/i.test(fg.out) && localMemory(D, project.slug, deadKey) != null,
+    `exit ${fg.code}: ${head(fg.out, 1)}`,
+  )
 
   // Signed out is the other way to be anonymous.
   const O = await cloneIdentity(api, ids.B, 'B15out', { password: ctx.password, root: ctx.root })

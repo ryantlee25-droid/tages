@@ -187,6 +187,8 @@ describe('MCP write tools: denied writes and embed-on-write wiring', () => {
       const rows = cache.getAllForProject(PROJECT)
       expect(rows).toHaveLength(1)
       expect(rows[0].status).toBe('pending')
+      // A refused promotion must not leave verified_at behind for the next flush.
+      expect(rows[0].verifiedAt ?? null).toBeNull()
     })
 
     it('auto-save allowed: row is live', async () => {

@@ -161,9 +161,11 @@ describe('every CLI caller goes through the dead-session guard', () => {
     expect(files).toContain('commands/pending.ts')
   })
 
-  it('only doctor opts out with allowDeadSession', () => {
+  it('only doctor and the remember token lookup opt out with allowDeadSession', () => {
+    // remember.ts: the hosted-embed token lookup only reads a token; exiting
+    // there would kill `remember` before its local write on a dead session.
     const optOuts = files.filter((f) => /allowDeadSession/.test(read(f)))
-    expect(optOuts).toEqual(['commands/doctor.ts'])
+    expect([...optOuts].sort()).toEqual(['commands/doctor.ts', 'commands/remember.ts'])
   })
 
   it('WithStatus callers check the status themselves', () => {

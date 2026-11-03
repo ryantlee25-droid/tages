@@ -155,7 +155,7 @@ Five new e2e phases (85 checks) exercised the approval queue, CLAUDE.md import/e
 - **Retraction propagates.** `hydrate()` deletes local rows that are gone or no longer live in the cloud, skips dirty rows, never mass-deletes on an empty or failed answer, and clears the last memory only after an authenticated exact count of 0.
 - **Freshness.** Boot always hydrates without blocking the MCP handshake; read tools call `hydrateIfStale(15_000)`. The 60s skip is gone.
 - **Denied writes fail.** `assertRowsAffected` (CLI) and zero-row checks in `remoteVerifyMemory`/`remoteDelete` (server) turn RLS no-ops into permission errors.
-- **Dead sessions.** `createAuthenticatedClient` exits 1 on an expired or signed-out session. `openCliSync` instead goes local-only with a warning so writes stay dirty and the background reconcile never fails a command.
+- **Dead sessions.** `createAuthenticatedClient` exits 1 on an expired or signed-out session. `openCliSync` instead goes local-only with a warning, so `remember` stays dirty and pushes after login and the background reconcile never fails a command. `forget` refuses on a dead session and deletes nothing.
 - **Recall ranking.** Evidence multiplies the fused score (`packages/cli/src/commands/recall.ts`); bug 13 was this sort, not the HNSW index, so no migration.
 - **CLAUDE.md safety.** `export` needs `--force` to overwrite; Don't/Never rules survive the round trip; fenced `##` lines no longer split sections.
 - **Unchanged:** `@tages/shared` stays 0.2.4. `archive_memory` stays Pro-gated by design.
