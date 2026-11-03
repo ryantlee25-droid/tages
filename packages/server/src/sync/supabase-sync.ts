@@ -8,6 +8,21 @@ const SYNC_INTERVAL_MS = 60_000
 const PAGE_SIZE = 1000
 /** remoteGetByKeys batch size (keeps the `in.(...)` URL well under limits). */
 const KEY_BATCH = 100
+/**
+ * W1 skew window. INSERT keeps the writer's `updated_at` (the trigger is
+ * BEFORE UPDATE only) and `now()` is the transaction start, so a row can sit
+ * at or below the watermark although we have not seen it. 10 minutes is twice
+ * the 5-minute clock-skew bound Kerberos and most auth stacks tolerate, and
+ * dwarfs Supabase's 8s statement timeout for the `authenticated` role (the
+ * longest a transaction's now() can trail its commit).
+ */
+export const SKEW_MARGIN_MS = 10 * 60_000
+/** W1 clamp: the stored watermark never exceeds the local clock by more than this. */
+const WATERMARK_CLAMP_EPSILON_MS = 1_000
+/** W3: per-request abort timeout on hydrate's Supabase queries. */
+const DEFAULT_QUERY_TIMEOUT_MS = 10_000
+/** S2: max dirty keys excluded from the count comparison by name (they go in the URL). */
+const DIRTY_EXCLUDE_MAX = 100
 
 export class SupabaseSync {
   private timer: ReturnType<typeof setInterval> | null = null
@@ -22,6 +37,12 @@ export class SupabaseSync {
   private lastHydrateOkAt = 0
   /** ms epoch of the last hydrateIfStale attempt (success or failure). */
   private lastHydrateAttemptAt = 0
+  /** ms epoch the in-flight staleRun started (W3: callers share its wait budget). */
+  private staleRunStartedAt = 0
+  /** Local ms epoch the last skew-window (or full) listing started (W1). 0 = never in this process. */
+  private windowCheckedAt = 0
+  /** Per-request abort timeout for hydrate's queries (W3). Tests lower it. */
+  queryTimeoutMs = DEFAULT_QUERY_TIMEOUT_MS
 
   constructor(
     private supabase: SupabaseClient,
@@ -101,23 +122,36 @@ export class SupabaseSync {
    * local rows changed (upserted + deleted); 0 means the cache was current or
    * the pull failed (failures are logged, never thrown).
    *
-   * Order and rules (0.5.7, bugs 2 and 3):
+   * Order and rules (0.5.7, bugs 2 and 3, review W1-W3, S2):
    * 1. Push first (`flush()`, on the same queue as remoteDelete), so clean rows
    *    legitimately lose to remote state and an in-flight forget lands before
    *    we pull. Whatever is still dirty afterwards failed to push and is never
    *    overwritten or deleted.
    * 2. Fast path: nothing changed since the watermark and the row counts match.
-   * 3. Delta: page through rows with `updated_at > watermark`. Status changes
-   *    (archive, pending) arrive here: the `memories_updated_at` trigger bumps
+   *    Dirty keys are excluded from both sides of the count (S2), so a
+   *    read-only member's unpushable writes do not force a listing forever.
+   * 3. Delta: rows with `updated_at > watermark`. Status changes (archive,
+   *    pending) arrive here: the `memories_updated_at` trigger bumps
    *    `updated_at` on every UPDATE.
-   * 4. Reconcile when the counts differ: list remote `(key, updated_at)`,
-   *    delete clean local rows the remote no longer has (a teammate's forget),
-   *    and fetch any key that is missing or differs locally.
-   * 5. Full pull when there is no usable watermark: paginated (PostgREST caps a
-   *    response at 1000 rows), then the same deletion reconcile.
+   * 4. Skew window (W1): `updated_at` on INSERT is the writer's clock, and
+   *    `now()` is the transaction START, not its commit. Either can put a
+   *    later edit at or below the watermark. Until a listing has run at least
+   *    SKEW_MARGIN_MS (local clock) past the watermark, the delta lists
+   *    `(key, updated_at)` from `watermark - SKEW_MARGIN_MS` and fetches only
+   *    the keys that differ from the cache.
+   * 5. Reconcile when the counts differ: list remote keys, delete clean local
+   *    rows the remote no longer has (a teammate's forget), and fetch any key
+   *    that is missing or differs locally.
+   * 6. Full pull when there is no usable watermark, then the same deletion
+   *    reconcile.
    *
-   * The watermark is the max SERVER `updated_at` applied, never the local
-   * clock, and it is held when a row was skipped to protect a dirty edit.
+   * Listings page by keyset on `id` (W2), and deletions skip rows synced
+   * after the listing started (W2). Every request carries an abort timeout
+   * (W3) so a hung connection cannot pin the single-flight run forever.
+   *
+   * The watermark is the max SERVER `updated_at` applied, clamped to the
+   * local clock (W1), and held when a row was skipped to protect a dirty
+   * edit.
    *
    * Single-flight: concurrent callers share one run.
    */
@@ -138,18 +172,42 @@ export class SupabaseSync {
       const localCount = this.cache.getMemoryCount(this.projectId)
 
       if (watermark && localCount > 0) {
-        const { count: changed, error: changedError } = await this.supabase
-          .from('memories')
-          .select('*', { count: 'exact', head: true })
-          .eq('project_id', this.projectId)
-          .gt('updated_at', watermark)
-        const { count: remoteTotal, error: totalError } = await this.supabase
-          .from('memories')
-          .select('*', { count: 'exact', head: true })
-          .eq('project_id', this.projectId)
+        const startedAt = Date.now()
+        const wmMs = Date.parse(watermark)
+        // Hot until a window listing has started SKEW_MARGIN_MS past the watermark.
+        const hot = Number.isNaN(wmMs) || this.windowCheckedAt < wmMs + SKEW_MARGIN_MS
 
-        if (!changedError && !totalError && typeof changed === 'number' && typeof remoteTotal === 'number') {
-          if (changed === 0 && remoteTotal === localCount) {
+        // S2: dirty keys leave both counts (bounded: the list goes in the URL).
+        const dirtyKeys = this.cache.getSyncIndex(this.projectId).filter((r) => r.dirty).map((r) => r.key)
+        const exclude = dirtyKeys.length <= DIRTY_EXCLUDE_MAX ? new Set(dirtyKeys) : new Set<string>()
+        const comparableLocal = () =>
+          exclude.size === 0
+            ? this.cache.getMemoryCount(this.projectId)
+            : this.cache.getSyncIndex(this.projectId).filter((r) => !exclude.has(r.key)).length
+
+        // Hot runs list the window anyway, so they skip the delta head count.
+        let changed: number | null = null
+        let changedFailed = false
+        if (!hot) {
+          const res = await this.timed(
+            this.supabase
+              .from('memories')
+              .select('*', { count: 'exact', head: true })
+              .eq('project_id', this.projectId)
+              .gt('updated_at', watermark),
+          )
+          changed = typeof res.count === 'number' ? res.count : null
+          changedFailed = !!res.error || changed === null
+        }
+        let totalQuery = this.supabase
+          .from('memories')
+          .select('*', { count: 'exact', head: true })
+          .eq('project_id', this.projectId)
+        if (exclude.size > 0) totalQuery = totalQuery.not('key', 'in', pgInList([...exclude]))
+        const { count: remoteTotal, error: totalError } = await this.timed(totalQuery)
+
+        if (!changedFailed && !totalError && typeof remoteTotal === 'number') {
+          if (!hot && changed === 0 && remoteTotal === comparableLocal()) {
             console.error(`[tages] Cache is current (${localCount} memories, watermark: ${watermark})`)
             this.lastHydrateOkAt = Date.now()
             return 0
@@ -159,19 +217,35 @@ export class SupabaseSync {
           let held = 0
           let maxSeen: string | null = null
 
-          if (changed > 0) {
+          if (hot) {
+            const win = await this.reconcileWindow(shiftTimestamp(watermark, -SKEW_MARGIN_MS))
+            if (win === null) {
+              held += 1
+            } else {
+              touched += win.applied
+              held += win.held
+              maxSeen = maxTimestamp(maxSeen, win.maxUpdatedAt ? [win.maxUpdatedAt] : [])
+              this.windowCheckedAt = startedAt
+            }
+          } else if (changed !== null && changed > 0) {
             console.error(`[tages] Delta sync: ${changed} memories changed since ${watermark}`)
-            const rows = await this.pageAll<DbRow>((q) => q.gt('updated_at', watermark).order('updated_at').order('id'))
+            const rows = await this.pageAll<DbRow>((q) => q.gt('updated_at', watermark))
             if (rows === null) return 0
-            const memories = rows.map(dbRowToMemory)
+            const local = new Map(this.cache.getSyncIndex(this.projectId).map((r) => [r.key, r]))
+            // A row the cache already holds at this revision (the W1 clamp can
+            // re-match it) is not re-applied.
+            const memories = rows.map(dbRowToMemory).filter((m) => {
+              const l = local.get(m.key)
+              return !l || l.dirty || !sameInstant(l.updatedAt, m.updatedAt)
+            })
             const result = this.cache.hydrateFromRemote(memories)
             touched += result.applied
             held += result.skipped.length
-            maxSeen = maxTimestamp(maxSeen, memories.map((m) => m.updatedAt))
+            maxSeen = maxTimestamp(maxSeen, rows.map((r) => r.updated_at))
           }
 
-          if (remoteTotal !== this.cache.getMemoryCount(this.projectId)) {
-            const rec = await this.reconcileByListing(remoteTotal)
+          if (remoteTotal !== comparableLocal()) {
+            const rec = await this.reconcileByListing(remoteTotal, exclude)
             if (rec === null) {
               // Listing failed or raced a concurrent write: keep what was
               // applied, hold the watermark, retry next time.
@@ -191,13 +265,14 @@ export class SupabaseSync {
       }
 
       // Full hydration: first run, legacy local-clock watermark, or count failure.
-      const rows = await this.pageAll<DbRow>((q) => q.order('id'))
+      const startedAt = Date.now()
+      const rows = await this.pageAll<DbRow>((q) => q)
       if (rows === null) return 0
       if (rows.length === 0) {
         // An empty answer alone never mass-deletes: a dead session under RLS
         // reads as an empty project. Only a separate exact count of 0 under a
         // verified session reconciles (a teammate forgot the last memory).
-        const deleted = await this.reconcileConfirmedEmpty()
+        const deleted = await this.reconcileConfirmedEmpty(startedAt)
         this.lastHydrateOkAt = Date.now()
         return deleted
       }
@@ -208,9 +283,10 @@ export class SupabaseSync {
         .getSyncIndex(this.projectId)
         .filter((r) => !r.dirty && !remoteKeys.has(r.key))
         .map((r) => r.key)
-      const deleted = this.cache.deleteCleanByKeys(this.projectId, gone)
+      const deleted = this.cache.deleteCleanByKeys(this.projectId, gone, { syncedBefore: startedAt })
       if (deleted > 0) console.error(`[tages] Removed ${deleted} memories deleted from the shared store`)
       this.advanceWatermark(maxTimestamp(null, memories.map((m) => m.updatedAt)), result.skipped.length)
+      this.windowCheckedAt = startedAt
       this.lastHydrateOkAt = Date.now()
       return result.applied + deleted
     } catch (err) {
@@ -225,6 +301,13 @@ export class SupabaseSync {
    * push that revision outside every future `updated_at > watermark` window,
    * and the fast path would then report the key current forever. Holding costs
    * one redundant delta query.
+   *
+   * W1 clamp: never store a watermark later than the local clock (plus a
+   * small epsilon). A teammate whose clock runs ahead inserts rows with a
+   * future `updated_at`; storing that would hide every edit whose server
+   * `now()` is below it, well past the skew window. A clamped watermark can
+   * re-match such a row; the delta skips rows the cache already holds at that
+   * revision.
    */
   private advanceWatermark(maxSeen: string | null, held: number): void {
     if (held > 0) {
@@ -234,20 +317,41 @@ export class SupabaseSync {
       return
     }
     if (!maxSeen) return
-    this.cache.setRemoteWatermark(this.projectId, maxSeen, this.cache.getMemoryCount(this.projectId))
+    const ceiling = Date.now() + WATERMARK_CLAMP_EPSILON_MS
+    const value = Date.parse(maxSeen) > ceiling ? new Date(ceiling).toISOString() : maxSeen
+    this.cache.setRemoteWatermark(this.projectId, value, this.cache.getMemoryCount(this.projectId))
+  }
+
+  /**
+   * Attach the per-request abort timeout (W3). postgrest-js resolves an
+   * aborted request as `{ error }`, so callers take their normal error path.
+   * Builders without `abortSignal` (minimal test doubles) pass through.
+   */
+  private timed<Q>(q: Q): Q {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const b = q as any
+    if (b && typeof b.abortSignal === 'function') {
+      return b.abortSignal(AbortSignal.timeout(this.queryTimeoutMs)) as Q
+    }
+    return q
   }
 
   /**
    * Page through `memories` for this project PAGE_SIZE rows at a time (the
-   * PostgREST default cap; a single request silently truncates). Returns null
+   * PostgREST default cap; a single request silently truncates). Keyset
+   * pagination on `id` (W2): with offset paging, a row deleted from an
+   * earlier page between requests shifts the next page and silently skips a
+   * live row, which a deletion reconcile then deletes locally. Returns null
    * on any error so callers never act on a partial listing.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private async pageAll<T>(shape: (q: any) => any, columns = '*'): Promise<T[] | null> {
+  private async pageAll<T extends { id: string }>(filter: (q: any) => any, columns = '*'): Promise<T[] | null> {
     const out: T[] = []
-    for (let from = 0; ; from += PAGE_SIZE) {
-      const base = this.supabase.from('memories').select(columns).eq('project_id', this.projectId)
-      const { data, error } = await shape(base).range(from, from + PAGE_SIZE - 1)
+    let lastId: string | null = null
+    for (;;) {
+      let q = filter(this.supabase.from('memories').select(columns).eq('project_id', this.projectId))
+      if (lastId !== null) q = q.gt('id', lastId)
+      const { data, error } = await this.timed(q.order('id').limit(PAGE_SIZE))
       if (error) {
         console.error('[tages] Hydration page failed:', error.message)
         return null
@@ -255,6 +359,7 @@ export class SupabaseSync {
       const page = (data || []) as T[]
       out.push(...page)
       if (page.length < PAGE_SIZE) return out
+      lastId = page[page.length - 1].id
     }
   }
 
@@ -264,20 +369,28 @@ export class SupabaseSync {
    * with 0, under a session the auth server accepts. A dead or anonymous
    * session also counts 0 under RLS, so any auth doubt, count error, or
    * non-zero count deletes nothing. Dirty rows are always kept (they are
-   * unsynced local writes). Returns rows deleted.
+   * unsynced local writes), and so are rows synced after `listingStartedAt`.
+   * Returns rows deleted.
    */
-  private async reconcileConfirmedEmpty(): Promise<number> {
+  private async reconcileConfirmedEmpty(listingStartedAt: number): Promise<number> {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const auth = (this.supabase as any).auth
       if (!auth || typeof auth.getUser !== 'function') return 0
-      const { data: userData, error: userError } = await auth.getUser()
+      const user = await withTimeout(Promise.resolve(auth.getUser()), this.queryTimeoutMs)
+      if (user === TIMED_OUT) return 0
+      const { data: userData, error: userError } = user as {
+        data?: { user?: { id?: string } | null }
+        error?: unknown
+      }
       if (userError || !userData?.user?.id) return 0
 
-      const { count, error } = await this.supabase
-        .from('memories')
-        .select('id', { count: 'exact', head: true })
-        .eq('project_id', this.projectId)
+      const { count, error } = await this.timed(
+        this.supabase
+          .from('memories')
+          .select('id', { count: 'exact', head: true })
+          .eq('project_id', this.projectId),
+      )
       if (error || count !== 0) return 0
 
       const gone = this.cache
@@ -285,7 +398,7 @@ export class SupabaseSync {
         .filter((r) => !r.dirty)
         .map((r) => r.key)
       if (gone.length === 0) return 0
-      const deleted = this.cache.deleteCleanByKeys(this.projectId, gone)
+      const deleted = this.cache.deleteCleanByKeys(this.projectId, gone, { syncedBefore: listingStartedAt })
       if (deleted > 0) console.error(`[tages] Removed ${deleted} memories deleted from the shared store (project is now empty)`)
       return deleted
     } catch (err) {
@@ -295,23 +408,65 @@ export class SupabaseSync {
   }
 
   /**
+   * W1 skew window. Lists `(key, updated_at)` for rows newer than `lower` and
+   * fetches only keys that are missing locally or whose `updated_at` differs.
+   * Dirty keys are held, never overwritten. Null on any failure.
+   */
+  private async reconcileWindow(lower: string): Promise<{
+    applied: number
+    held: number
+    maxUpdatedAt: string | null
+  } | null> {
+    const listing = await this.pageAll<{ id: string; key: string; updated_at: string }>(
+      (q) => q.gt('updated_at', lower),
+      'id, key, updated_at',
+    )
+    if (listing === null) return null
+    const local = new Map(this.cache.getSyncIndex(this.projectId).map((r) => [r.key, r]))
+    const toFetch: string[] = []
+    let held = 0
+    for (const r of listing) {
+      const l = local.get(r.key)
+      if (!l) {
+        toFetch.push(r.key)
+      } else if (!sameInstant(l.updatedAt, r.updated_at)) {
+        if (l.dirty) held++
+        else toFetch.push(r.key)
+      }
+    }
+    let applied = 0
+    if (toFetch.length > 0) {
+      console.error(`[tages] Delta sync: ${toFetch.length} memories changed since ${lower}`)
+      const fetched = await this.remoteGetByKeys(this.projectId, toFetch)
+      if (fetched === null) return null
+      const result = this.cache.hydrateFromRemote([...fetched.values()])
+      applied = result.applied
+      held += result.skipped.length
+    }
+    return { applied, held, maxUpdatedAt: maxTimestamp(null, listing.map((r) => r.updated_at)) }
+  }
+
+  /**
    * Count-mismatch reconcile. Lists remote `(key, updated_at)`, deletes clean
    * local rows the remote no longer has, and fetches rows that are missing
    * locally or whose `updated_at` differs. Returns null when the listing failed
    * or did not match `expectedTotal` (a write raced the listing), in which case
-   * nothing is deleted.
+   * nothing is deleted. `excluded` keys (dirty locally) were left out of
+   * `expectedTotal`, so they are left out of the length check the same way.
    */
-  private async reconcileByListing(expectedTotal: number): Promise<{
+  private async reconcileByListing(expectedTotal: number, excluded: Set<string> = new Set()): Promise<{
     applied: number
     deleted: number
     held: number
     maxUpdatedAt: string | null
   } | null> {
-    const listing = await this.pageAll<{ key: string; updated_at: string }>((q) => q.order('key'), 'key, updated_at')
-    if (listing === null || listing.length !== expectedTotal) return null
+    const startedAt = Date.now()
+    const listing = await this.pageAll<{ id: string; key: string; updated_at: string }>((q) => q, 'id, key, updated_at')
+    if (listing === null) return null
+    if (listing.filter((r) => !excluded.has(r.key)).length !== expectedTotal) return null
     // Same empty-answer guard as the full pull.
     if (listing.length === 0) {
-      return { applied: 0, deleted: await this.reconcileConfirmedEmpty(), held: 0, maxUpdatedAt: null }
+      return { applied: 0, deleted: await this.reconcileConfirmedEmpty(startedAt), held: 0, maxUpdatedAt: null }
     }
 
     const remote = new Map(listing.map((r) => [r.key, r.updated_at]))
@@ -319,7 +474,7 @@ export class SupabaseSync {
     const localByKey = new Map(local.map((r) => [r.key, r]))
 
     const gone = local.filter((r) => !r.dirty && !remote.has(r.key)).map((r) => r.key)
-    const deleted = this.cache.deleteCleanByKeys(this.projectId, gone)
+    const deleted = this.cache.deleteCleanByKeys(this.projectId, gone, { syncedBefore: startedAt })
     if (deleted > 0) console.error(`[tages] Removed ${deleted} memories deleted from the shared store`)
 
     const toFetch: string[] = []
@@ -352,16 +507,23 @@ export class SupabaseSync {
    * call). Never throws: on timeout or error the caller serves the cache.
    *
    * A failed attempt also backs off for `maxAgeMs`, so an offline session does
-   * not pay the timeout on every read.
+   * not pay the timeout on every read. W3: a caller joining an in-flight run
+   * waits only for what is left of that run's `timeoutMs` budget, so a hung
+   * run costs one timeout in total, not one per read.
    */
   async hydrateIfStale(maxAgeMs: number, timeoutMs = 2000): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
       const now = Date.now()
-      if (!this.staleRun) {
+      let wait = timeoutMs
+      if (this.staleRun) {
+        wait = this.staleRunStartedAt + timeoutMs - now
+        if (wait <= 0) return
+      } else {
         if (now - this.lastHydrateOkAt < maxAgeMs) return
         if (now - this.lastHydrateAttemptAt < maxAgeMs) return
         this.lastHydrateAttemptAt = now
+        this.staleRunStartedAt = now
         this.staleRun = this.hydrate()
           .then(() => undefined, () => undefined)
           .finally(() => {
@@ -370,7 +532,7 @@ export class SupabaseSync {
       }
       const run = this.staleRun
       const timeout = new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, Math.max(0, timeoutMs))
+        timer = setTimeout(resolve, Math.max(0, wait))
         timer.unref?.()
       })
       await Promise.race([run, timeout])
@@ -420,16 +582,19 @@ export class SupabaseSync {
         const { id: _id, ...rest } = memoryToDbRow(m)
         return rest
       })
-      const { error } = await this.supabase
-        .from('memories')
-        .upsert(rows, { onConflict: 'project_id,key' })
+      const { error } = await this.timed(
+        this.supabase
+          .from('memories')
+          .upsert(rows, { onConflict: 'project_id,key' }),
+      )
 
       if (error) {
         console.error('[tages] Sync flush failed:', error.message)
         return
       }
 
-      this.cache.markSynced(dirty.map(m => m.id))
+      // Q2: a row edited during the upsert await keeps its dirty flag.
+      this.cache.markSyncedIfUnchanged(dirty)
 
       // Mark WAL entries complete after successful sync
       if (this.wal) {
@@ -850,11 +1015,13 @@ export class SupabaseSync {
     try {
       for (let i = 0; i < unique.length; i += KEY_BATCH) {
         const batch = unique.slice(i, i + KEY_BATCH)
-        const { data, error } = await this.supabase
-          .from('memories')
-          .select('*')
-          .eq('project_id', projectId)
-          .in('key', batch)
+        const { data, error } = await this.timed(
+          this.supabase
+            .from('memories')
+            .select('*')
+            .eq('project_id', projectId)
+            .in('key', batch),
+        )
         if (error) {
           console.error('[tages] Remote get-by-keys failed:', error.message)
           return null
@@ -975,6 +1142,35 @@ export function maxTimestamp(current: string | null, candidates: string[]): stri
     if (Number.isNaN(b) || a > b || (a === b && c > best)) best = c
   }
   return best
+}
+
+/** `ts` moved by `deltaMs`, as ISO (sub-ms precision is dropped: callers use it as a loose bound). */
+function shiftTimestamp(ts: string, deltaMs: number): string {
+  const t = Date.parse(ts)
+  return Number.isNaN(t) ? ts : new Date(t + deltaMs).toISOString()
+}
+
+/** PostgREST `in` list literal: every value double-quoted, with `\` and `"` escaped. */
+export function pgInList(values: string[]): string {
+  return `(${values.map((v) => `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`).join(',')})`
+}
+
+const TIMED_OUT = Symbol('timed-out')
+
+/** Resolve with `p`, or TIMED_OUT after `ms`. */
+async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      p,
+      new Promise<typeof TIMED_OUT>((resolve) => {
+        timer = setTimeout(() => resolve(TIMED_OUT), ms)
+        timer.unref?.()
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 /** Same instant at ms precision, tolerant of 'Z' vs '+00:00' formatting. */

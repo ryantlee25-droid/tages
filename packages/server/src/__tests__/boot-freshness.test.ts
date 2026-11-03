@@ -99,6 +99,29 @@ describe('createReadFreshener', () => {
     expect(hydrateIfStale).toHaveBeenCalledTimes(1)
   })
 
+  it('W3: a hung boot hydrate costs the cap once, not on every read', async () => {
+    const hang = new Promise<void>(() => {})
+    const freshen = createReadFreshener({ hydrateIfStale: async () => {} }, hang, { bootWaitMs: 300 })
+    const t0 = Date.now()
+    await freshen()
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(280)
+    const t1 = Date.now()
+    await freshen()
+    await freshen()
+    expect(Date.now() - t1).toBeLessThan(150)
+  })
+
+  it('W3: concurrent reads during boot share one deadline', async () => {
+    const hang = new Promise<void>(() => {})
+    const freshen = createReadFreshener({ hydrateIfStale: async () => {} }, hang, { bootWaitMs: 300 })
+    const t0 = Date.now()
+    const first = freshen()
+    await new Promise((r) => setTimeout(r, 200))
+    await Promise.all([first, freshen()])
+    // A private 300ms cap for the second reader would end at ~500ms.
+    expect(Date.now() - t0).toBeLessThan(440)
+  })
+
   it('is a no-op without sync, and never throws', async () => {
     await expect(createReadFreshener(null, null)()).resolves.toBeUndefined()
     const freshen = createReadFreshener({ hydrateIfStale: async () => { throw new Error('x') } }, null)
