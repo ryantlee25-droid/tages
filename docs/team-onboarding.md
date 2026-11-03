@@ -24,10 +24,10 @@ You need:
 ```bash
 npm install -g @tages/cli
 tages --version
-# 0.5.6
+# 0.5.7
 ```
 
-The published packages are current (`@tages/cli` 0.5.6, `@tages/server` 0.3.5) and are what the end-to-end release suite actually tests — it drives the published artifacts, not the source tree, precisely because a defect that killed an earlier release candidate was invisible to 1,200+ unit tests and only appeared when the built entrypoint was run by `node`.
+The published packages are current (`@tages/cli` 0.5.7, `@tages/server` 0.3.6) and are what the end-to-end release suite actually tests — it drives the published artifacts, not the source tree, precisely because a defect that killed an earlier release candidate was invisible to 1,200+ unit tests and only appeared when the built entrypoint was run by `node`.
 
 You do **not** need a source clone. Your agent will be wired to `npx -y @tages/server`.
 
@@ -91,7 +91,7 @@ MCP server: npx -y @tages/server (published package)
 MCP server: node /Users/you/src/tages/packages/server/dist/index.js (local build)
 ```
 
-On an npm install you get the first, and that is correct — it resolves `@tages/server` 0.3.5, the same artifact the release suite gates on. You only get the second if you built from source, in which case `link` prefers your local build.
+On an npm install you get the first, and that is correct — it resolves `@tages/server` 0.3.6, the same artifact the release suite gates on. You only get the second if you built from source, in which case `link` prefers your local build.
 
 ---
 
@@ -197,21 +197,13 @@ The dashboard invite route calls `supabase.auth.admin.inviteUserByEmail` and sen
 
 `tages team invite` **notifies nobody.** It only inserts a `status: 'pending'` row into `team_members` (`packages/cli/src/auth/invite.ts:21-32`), then prints `Invited <email> (pending)`, which reads as though something was sent. If you use it, you must tell the person out-of-band, and the pending row expires after 30 days.
 
-### There is no periodic pull — restart to see a teammate's memory
+### How teammate memories reach you
 
-This applies to **the MCP path only**. The CLI half changed when bidirectional sync shipped.
+- **CLI: pulls automatically.** Every memory command reconciles first: push your dirty rows, then pull remote state (`packages/cli/src/sync/cli-sync.ts`). A teammate's memory reaches your terminal on your next command.
+- **MCP: refreshes before it reads (0.5.7+).** The server pulls at every boot, and `recall`, `conventions`, and `project_brief` re-pull first when the cache is more than 15 seconds old. New, updated, approved, forgotten, and archived memories all reach your agent within about 15 seconds, without restarting Claude Code. Before 0.5.7 the agent only pulled at boot and skipped even that if the cache was under 60 seconds old.
+- **Expired session:** `remember` and `forget` keep the change locally, tell you to run `tages login`, and push it after you log in. Read commands exit non-zero with the same message instead of reporting an empty project.
 
-- **CLI: pulls automatically.** Every memory command reconciles first — push your dirty rows, then pull remote state (`packages/cli/src/sync/cli-sync.ts`, invoked from `packages/cli/src/index.ts`). A teammate's memory reaches your terminal on your next command.
-- **MCP: boot-time only.** The 60s interval in the server (`packages/server/src/sync/supabase-sync.ts`) only flushes *your* dirty rows upward. The download half, `hydrate()`, is called from exactly one place: server boot (`packages/server/src/index.ts`).
-
-So after a teammate writes a memory, **your agent will not see it until you restart your Claude Code session** — even though `tages recall` in a terminal shows it immediately. There is still no `tages pull`, `tages sync`, or `tages fetch` command; the CLI reconcile is automatic, not something you invoke (`tages harness sync` is unrelated — it pushes telemetry, not memories).
-
-Two details worth knowing:
-
-- Hydration is skipped if your cache is under 60s old (`HYDRATION_TTL_MS`, `packages/server/src/index.ts:68`). A restart immediately after another restart pulls nothing — wait a minute and restart again.
-- **`tages recall` from the terminal is always live** — it queries Supabase directly and never touches the local cache. So if you want to confirm a teammate's memory exists *right now* without restarting, run `tages recall "<query>"` in a shell. That is the practical workaround.
-
-This is a known limitation, not a broken install.
+There is still no `tages pull` command; the reconcile is automatic.
 
 ### Free tier seats
 

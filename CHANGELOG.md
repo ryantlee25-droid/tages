@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-11-03 — `@tages/cli` 0.5.7 · `@tages/server` 0.3.6
+
+Fixes found by new end-to-end phases 12-16 (approval queue, CLAUDE.md, recency, session longevity, onboarding smoke), written before a team rollout. See `README.md` "Release Notes" for detail.
+
+### Approval queue
+- **Approved, observed, session-extracted, and imported memories get embeddings.** They were stored without one, and the agent's cache only recalls embedded rows, so they never reached any agent's recall.
+- **A read-only member can no longer "approve".** `tages verify`, `tages pending --approve-all`, `tages settings auto-save`, and MCP `verify_memory` printed success while RLS changed nothing. Every write path now checks rows affected and exits 1 (CLI) or returns an error (MCP).
+- **Session summaries stay pending.** The auto-save sweep promoted `session_end` rows; it now skips the `session-extract` tag.
+- **Pending and archived rows no longer appear** in `tages onboard`, `tages export`, MCP `project_brief`, or `memory://` resources.
+
+### Freshness and retraction
+- **Forgotten and archived memories leave teammates' caches.** Hydrate only upserted, so a retracted memory was served forever. It now reconciles deletions (never touching unsynced local rows), carries cloud embeddings, pages past 1,000 rows, and uses the server's `updated_at` as its watermark.
+- **Agents see teammate changes within ~15 seconds.** Boot always hydrates (in the background), and `recall`, `conventions`, and `project_brief` re-hydrate when the cache is older than 15s.
+- **Live rows missing an embedding are backfilled** after boot, 20 at a time.
+
+### Recall
+- **Exact matches are no longer buried.** CLI recall sorted by evidence level alone; evidence now weights the relevance score, as the server already did.
+- **The newer of two identical memories wins**, and ties break on `updated_at` then `id` everywhere.
+
+### CLAUDE.md
+- **`tages export` refuses to overwrite** an existing file without `--force`, keeps Don't/Never rules, and exports live memories only.
+- **`import_claude_md`** strips fenced code before splitting on headings, and `skip` checks the shared store, not just the local cache. The CLI importer reads exported anti-patterns back correctly.
+- **`tages link` / `tages init`** print a clear error on an unparsable `.mcp.json` instead of a stack trace.
+
+### Sessions
+- **Every cloud command fails loudly on a dead session** (central guard in `createAuthenticatedClient`; `doctor` opts out). `remember`/`forget` keep the change locally and push after `tages login`.
+
 ## 2026-08-25 — `@tages/cli` 0.5.5 · `@tages/shared` 0.2.3
 
 Six first-run defects found while provisioning a real team project and inviting two teammates. All six sit on the onboarding path, which is why 1,500+ unit tests missed every one. See `README.md` "Release Notes" for the full detail.

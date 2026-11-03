@@ -7,10 +7,10 @@ This is the path for **creating a new project**. Joining a project a teammate al
 ```bash
 npm install -g @tages/cli
 tages --version
-# 0.5.6
+# 0.5.7
 ```
 
-That is the whole install. The published packages are current — `@tages/cli` 0.5.6, `@tages/server` 0.3.5, `@tages/shared` 0.2.4 — and the end-to-end suite gates every release against the **published** artifacts, not the source tree, so npm is the path that is actually tested.
+That is the whole install. The published packages are current — `@tages/cli` 0.5.7, `@tages/server` 0.3.6, `@tages/shared` 0.2.4 — and the end-to-end suite gates every release against the **published** artifacts, not the source tree, so npm is the path that is actually tested.
 
 Your agent is wired to `npx -y @tages/server`, which needs no clone. Nothing to keep on disk, nothing to rebuild.
 
@@ -77,9 +77,9 @@ Open Claude Code in your project. The MCP tools are already configured by `init`
 **The CLI and your agent see teammate writes on different schedules.**
 
 - **CLI commands pull.** Every memory command reconciles first — push your dirty rows, then pull remote state (`packages/cli/src/sync/cli-sync.ts`). `tages recall` additionally queries the cloud directly. So a terminal command sees a teammate's memory immediately.
-- **The MCP tools do not.** The server hydrates its local cache once at boot (`packages/server/src/index.ts`); its 60s timer only flushes upward. **Your agent will not see a teammate's new memory until you restart the Claude Code session.**
+- **The MCP tools refresh before they read.** The server pulls at every boot, and `recall`, `conventions`, and `project_brief` re-pull first when the cache is more than 15 seconds old (`packages/server/src/index.ts`). Your agent sees a teammate's new, changed, or forgotten memory within about 15 seconds, with no restart.
 
-There is still no `tages pull` command — the reconcile is automatic, not something you invoke. See [Team Onboarding](team-onboarding.md#there-is-no-periodic-pull--restart-to-see-a-teammates-memory).
+There is still no `tages pull` command — the reconcile is automatic, not something you invoke. See [Team Onboarding](team-onboarding.md#how-teammate-memories-reach-you).
 
 ## Commands
 
