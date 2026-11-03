@@ -17,6 +17,7 @@ Store the keys once (see [Keys](#keys)), then:
 ```bash
 node e2e/run.mjs                      # published packages, prod  (the release gate)
 node e2e/run.mjs --mode local         # this working tree's dist/  (the dev loop)
+node e2e/run.mjs --version 0.5.5 --server-version 0.3.4   # pin an older published pair (versioned independently)
 node e2e/run.mjs --target dev         # dev database
 node e2e/run.mjs --stop-after 05      # run through phase 05, then stop
 node e2e/run.mjs --keep               # leave fixtures behind to debug a failure
@@ -103,6 +104,11 @@ every child process, and why phase 99 verifies that the stripping worked.
 | 07 persistence | After wiping the local SQLite cache, a teammate still recalls everything — proving *stored*, not *cached*. Restarting the agent surfaces newer writes. |
 | 08 isolation | An outsider is refused the join and gets zero rows from **all four** recall RPCs, cannot claim a teammate's invite, and an admin cannot promote themselves. A revoked member loses access immediately. |
 | 09 lifecycle | `forget` removes the row from shared storage, and the **teammate** stops seeing it too. Repeating it is a no-op. |
+| 12 pending queue | `observe` / `session_end` rows stay pending and invisible; `verify` / `--approve-all` make them live for the whole team (including agents with a cached copy); a member who cannot approve is **told**; auto-save promotes only rows at or above the threshold and never `session_end` rows. |
+| 13 CLAUDE.md | `import_claude_md` produces typed, shared, de-duplicated memories and strips code; `tages export` does not destroy a hand-written CLAUDE.md and does not publish pending or archived rows; `link` merges into an existing `.mcp.json` and leaves CLAUDE.md and `.claude/settings*.json` alone. |
+| 14 recency | Every read surface serves the newest value of an updated key (including an agent's warm cache); tied memories come back in a stable, newer-first order; archived and forgotten memories leave every surface for every identity. |
+| 15 session longevity | After the MCP server rotates the refresh token, the CLI still works (the PR #79 bug); a genuinely dead session makes `recall`, `status`, `team list`, `onboard`, `pending` exit non-zero with a login message. |
+| 16 onboarding smoke | A fresh `$HOME`: `--version`, `link`, the `.mcp.json` command and `npx -y @tages/server` boot and list tools, `doctor` passes, `onboard` prints the team's memories. |
 | 99 controls | The suite is capable of failing. |
 
 ### Why phase 99 exists
