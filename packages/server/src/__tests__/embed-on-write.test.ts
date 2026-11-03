@@ -179,7 +179,7 @@ describe('embedOnWrite', () => {
       supabaseUrl: 'https://sync-client.supabase.co',
       auth: { getSession: async () => ({ data: { session: { access_token: 'tok' } } }) },
     }
-    const sync = makeSync({ supabase: client })
+    const sync = makeSync({ client })
     const mem = makeMemory('Hosted embedding via the sync client.')
     cache.upsertMemory(mem, true)
 
