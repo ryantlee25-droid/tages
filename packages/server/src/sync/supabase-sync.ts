@@ -565,6 +565,18 @@ export class SupabaseSync {
    * This is an `.update()`, never an `.upsert()`: a non-matching row is a
    * no-op, so a `forget`-deleted memory is never resurrected.
    */
+  // STUB (0.5.7 Step 0 contract): Task 1a fills the body.
+  // null on any error. Batches of 100 keys. Map key = memory.key.
+  async remoteGetByKeys(_projectId: string, _keys: string[]): Promise<Map<string, Memory> | null> {
+    return null
+  }
+
+  // STUB (0.5.7 Step 0 contract): Task 1a fills the body.
+  // Single-flight, fail-open; no-op if the last hydrate is younger than maxAgeMs.
+  async hydrateIfStale(_maxAgeMs: number, _timeoutMs = 2000): Promise<void> {
+    return
+  }
+
   async remoteVerifyMemory(projectId: string, key: string, verifiedAt: string): Promise<boolean> {
     try {
       const { error } = await this.supabase

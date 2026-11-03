@@ -658,6 +658,12 @@ export class SqliteCache {
     return row.cnt
   }
 
+  // STUB (0.5.7 Step 0 contract): Task 1a fills the body.
+  // status='live' AND embedding IS NULL, ordered updated_at DESC, id ASC.
+  getLiveMissingEmbedding(_projectId: string, _limit: number): Memory[] {
+    return []
+  }
+
   getPendingMemories(projectId: string): Memory[] {
     const rows = this.db.prepare(
       'SELECT * FROM memories WHERE project_id = ? AND status = ? ORDER BY created_at DESC'
