@@ -4,12 +4,24 @@ import type { SqliteCache } from '../cache/sqlite'
 import { SyncWAL } from '../cache/sync-wal'
 
 const SYNC_INTERVAL_MS = 60_000
+/** PostgREST's default max rows per response. */
+const PAGE_SIZE = 1000
+/** remoteGetByKeys batch size (keeps the `in.(...)` URL well under limits). */
+const KEY_BATCH = 100
 
 export class SupabaseSync {
   private timer: ReturnType<typeof setInterval> | null = null
   private wal: SyncWAL | null = null
   /** Simple promise-chain mutex to prevent flush() racing with remoteDelete(). */
   private flushQueue: Promise<void> = Promise.resolve()
+  /** In-flight hydrate, shared by concurrent callers. */
+  private hydrating: Promise<number> | null = null
+  /** In-flight hydrateIfStale run (wraps hydrate, never rejects). */
+  private staleRun: Promise<void> | null = null
+  /** ms epoch of the last hydrate that completed without error. */
+  private lastHydrateOkAt = 0
+  /** ms epoch of the last hydrateIfStale attempt (success or failure). */
+  private lastHydrateAttemptAt = 0
 
   constructor(
     private supabase: SupabaseClient,
@@ -76,95 +88,248 @@ export class SupabaseSync {
   }
 
   /**
-   * Smart hydration: checks if anything changed since last sync.
-   * If no changes, skips the full pull — reads from local SQLite cache.
-   * Returns number of memories synced (0 = cache was current).
+   * Bring the local cache in line with the shared store. Returns the number of
+   * local rows changed (upserted + deleted); 0 means the cache was current or
+   * the pull failed (failures are logged, never thrown).
+   *
+   * Order and rules (0.5.7, bugs 2 and 3):
+   * 1. Push first (`flush()`, on the same queue as remoteDelete), so clean rows
+   *    legitimately lose to remote state and an in-flight forget lands before
+   *    we pull. Whatever is still dirty afterwards failed to push and is never
+   *    overwritten or deleted.
+   * 2. Fast path: nothing changed since the watermark and the row counts match.
+   * 3. Delta: page through rows with `updated_at > watermark`. Status changes
+   *    (archive, pending) arrive here: the `memories_updated_at` trigger bumps
+   *    `updated_at` on every UPDATE.
+   * 4. Reconcile when the counts differ: list remote `(key, updated_at)`,
+   *    delete clean local rows the remote no longer has (a teammate's forget),
+   *    and fetch any key that is missing or differs locally.
+   * 5. Full pull when there is no usable watermark: paginated (PostgREST caps a
+   *    response at 1000 rows), then the same deletion reconcile.
+   *
+   * The watermark is the max SERVER `updated_at` applied, never the local
+   * clock, and it is held when a row was skipped to protect a dirty edit.
+   *
+   * Single-flight: concurrent callers share one run.
    */
   async hydrate(): Promise<number> {
+    if (this.hydrating) return this.hydrating
+    const run = this._hydrate().finally(() => {
+      this.hydrating = null
+    })
+    this.hydrating = run
+    return run
+  }
+
+  private async _hydrate(): Promise<number> {
     try {
-      const lastSynced = this.cache.getLastSyncedAt(this.projectId)
+      await this.flush()
+
+      const watermark = this.cache.getRemoteWatermark(this.projectId)
       const localCount = this.cache.getMemoryCount(this.projectId)
 
-      // If we have a local cache, check if anything changed
-      if (lastSynced && localCount > 0) {
-        const { count, error: countError } = await this.supabase
+      if (watermark && localCount > 0) {
+        const { count: changed, error: changedError } = await this.supabase
           .from('memories')
           .select('*', { count: 'exact', head: true })
           .eq('project_id', this.projectId)
-          .gt('updated_at', lastSynced)
+          .gt('updated_at', watermark)
+        const { count: remoteTotal, error: totalError } = await this.supabase
+          .from('memories')
+          .select('*', { count: 'exact', head: true })
+          .eq('project_id', this.projectId)
 
-        if (!countError && count === 0) {
-          // Also verify total count matches (catches deletes)
-          const { count: totalCount } = await this.supabase
-            .from('memories')
-            .select('*', { count: 'exact', head: true })
-            .eq('project_id', this.projectId)
-
-          if (totalCount === localCount) {
-            console.error(`[tages] Cache is current (${localCount} memories, last sync: ${lastSynced})`)
+        if (!changedError && !totalError && typeof changed === 'number' && typeof remoteTotal === 'number') {
+          if (changed === 0 && remoteTotal === localCount) {
+            console.error(`[tages] Cache is current (${localCount} memories, watermark: ${watermark})`)
+            this.lastHydrateOkAt = Date.now()
             return 0
           }
-        }
 
-        // Delta sync: only pull changed memories
-        if (!countError && count !== null && count > 0 && count < localCount) {
-          console.error(`[tages] Delta sync: ${count} memories changed since ${lastSynced}`)
-          const { data } = await this.supabase
-            .from('memories')
-            .select('*')
-            .eq('project_id', this.projectId)
-            .gt('updated_at', lastSynced)
+          let touched = 0
+          let held = 0
+          let maxSeen: string | null = null
 
-          if (data && data.length > 0) {
-            const memories: Memory[] = data.map(dbRowToMemory)
+          if (changed > 0) {
+            console.error(`[tages] Delta sync: ${changed} memories changed since ${watermark}`)
+            const rows = await this.pageAll<DbRow>((q) => q.gt('updated_at', watermark).order('updated_at').order('id'))
+            if (rows === null) return 0
+            const memories = rows.map(dbRowToMemory)
             const result = this.cache.hydrateFromRemote(memories)
-            // Only advance the watermark when everything was applied. A row
-            // skipped to protect an unsynced local edit is still pending, and
-            // moving `last_synced_at` past it would push that revision outside
-            // every future `updated_at > lastSynced` window — the local copy of
-            // that key could then never be refreshed again, silently, because
-            // the "cache is current" fast path would report it up to date
-            // forever. Holding the watermark costs one redundant delta query.
-            if (!result?.skipped?.length) {
-              this.cache.setLastSyncedAt(this.projectId, new Date().toISOString(), this.cache.getMemoryCount(this.projectId))
-            } else {
-              console.error(
-                `[tages] Held sync watermark: ${result.skipped.length} remote update(s) deferred behind unsynced local edits`,
-              )
-            }
-            return result?.applied ?? memories.length
+            touched += result.applied
+            held += result.skipped.length
+            maxSeen = maxTimestamp(maxSeen, memories.map((m) => m.updatedAt))
           }
+
+          if (remoteTotal !== this.cache.getMemoryCount(this.projectId)) {
+            const rec = await this.reconcileByListing(remoteTotal)
+            if (rec === null) {
+              // Listing failed or raced a concurrent write: keep what was
+              // applied, hold the watermark, retry next time.
+              held += 1
+            } else {
+              touched += rec.applied + rec.deleted
+              held += rec.held
+              maxSeen = maxTimestamp(maxSeen, rec.maxUpdatedAt ? [rec.maxUpdatedAt] : [])
+            }
+          }
+
+          this.advanceWatermark(maxSeen, held)
+          this.lastHydrateOkAt = Date.now()
+          return touched
         }
+        // A count query failed: fall through to the full pull.
       }
 
-      // Full hydration (first run or cache invalid)
-      const { data, error } = await this.supabase
-        .from('memories')
-        .select('*')
-        .eq('project_id', this.projectId)
-
-      if (error) {
-        console.error('[tages] Hydration failed:', error.message)
+      // Full hydration: first run, legacy local-clock watermark, or count failure.
+      const rows = await this.pageAll<DbRow>((q) => q.order('id'))
+      if (rows === null) return 0
+      if (rows.length === 0) {
+        // Never mass-delete on an empty answer: a dead session under RLS reads
+        // as an empty project, and wiping a teammate's cache on that would be
+        // silent data loss. A genuinely emptied project costs one stale cache.
+        this.lastHydrateOkAt = Date.now()
         return 0
       }
-
-      if (data && data.length > 0) {
-        const memories: Memory[] = data.map(dbRowToMemory)
-        const result = this.cache.hydrateFromRemote(memories)
-        // Same watermark rule as the delta path above.
-        if (!result?.skipped?.length) {
-          this.cache.setLastSyncedAt(this.projectId, new Date().toISOString(), memories.length)
-        } else {
-          console.error(
-            `[tages] Held sync watermark: ${result.skipped.length} remote update(s) deferred behind unsynced local edits`,
-          )
-        }
-        return result?.applied ?? memories.length
-      }
-      return 0
+      const memories = rows.map(dbRowToMemory)
+      const result = this.cache.hydrateFromRemote(memories)
+      const remoteKeys = new Set(memories.map((m) => m.key))
+      const gone = this.cache
+        .getSyncIndex(this.projectId)
+        .filter((r) => !r.dirty && !remoteKeys.has(r.key))
+        .map((r) => r.key)
+      const deleted = this.cache.deleteCleanByKeys(this.projectId, gone)
+      if (deleted > 0) console.error(`[tages] Removed ${deleted} memories deleted from the shared store`)
+      this.advanceWatermark(maxTimestamp(null, memories.map((m) => m.updatedAt)), result.skipped.length)
+      this.lastHydrateOkAt = Date.now()
+      return result.applied + deleted
     } catch (err) {
       console.error('[tages] Hydration error:', (err as Error).message)
       return 0
+    }
+  }
+
+  /**
+   * Advance the watermark to the max server `updated_at` applied, unless a
+   * row was skipped to protect an unsynced local edit. Advancing past it would
+   * push that revision outside every future `updated_at > watermark` window,
+   * and the fast path would then report the key current forever. Holding costs
+   * one redundant delta query.
+   */
+  private advanceWatermark(maxSeen: string | null, held: number): void {
+    if (held > 0) {
+      console.error(
+        `[tages] Held sync watermark: ${held} remote update(s) deferred behind unsynced local edits or an incomplete reconcile`,
+      )
+      return
+    }
+    if (!maxSeen) return
+    this.cache.setRemoteWatermark(this.projectId, maxSeen, this.cache.getMemoryCount(this.projectId))
+  }
+
+  /**
+   * Page through `memories` for this project PAGE_SIZE rows at a time (the
+   * PostgREST default cap; a single request silently truncates). Returns null
+   * on any error so callers never act on a partial listing.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async pageAll<T>(shape: (q: any) => any, columns = '*'): Promise<T[] | null> {
+    const out: T[] = []
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const base = this.supabase.from('memories').select(columns).eq('project_id', this.projectId)
+      const { data, error } = await shape(base).range(from, from + PAGE_SIZE - 1)
+      if (error) {
+        console.error('[tages] Hydration page failed:', error.message)
+        return null
+      }
+      const page = (data || []) as T[]
+      out.push(...page)
+      if (page.length < PAGE_SIZE) return out
+    }
+  }
+
+  /**
+   * Count-mismatch reconcile. Lists remote `(key, updated_at)`, deletes clean
+   * local rows the remote no longer has, and fetches rows that are missing
+   * locally or whose `updated_at` differs. Returns null when the listing failed
+   * or did not match `expectedTotal` (a write raced the listing), in which case
+   * nothing is deleted.
+   */
+  private async reconcileByListing(expectedTotal: number): Promise<{
+    applied: number
+    deleted: number
+    held: number
+    maxUpdatedAt: string | null
+  } | null> {
+    const listing = await this.pageAll<{ key: string; updated_at: string }>((q) => q.order('key'), 'key, updated_at')
+    if (listing === null || listing.length !== expectedTotal) return null
+    // Same empty-answer guard as the full pull.
+    if (listing.length === 0) return { applied: 0, deleted: 0, held: 0, maxUpdatedAt: null }
+
+    const remote = new Map(listing.map((r) => [r.key, r.updated_at]))
+    const local = this.cache.getSyncIndex(this.projectId)
+    const localByKey = new Map(local.map((r) => [r.key, r]))
+
+    const gone = local.filter((r) => !r.dirty && !remote.has(r.key)).map((r) => r.key)
+    const deleted = this.cache.deleteCleanByKeys(this.projectId, gone)
+    if (deleted > 0) console.error(`[tages] Removed ${deleted} memories deleted from the shared store`)
+
+    const toFetch: string[] = []
+    let held = 0
+    for (const [key, updatedAt] of remote) {
+      const l = localByKey.get(key)
+      if (!l) {
+        toFetch.push(key)
+      } else if (!sameInstant(l.updatedAt, updatedAt)) {
+        if (l.dirty) held++
+        else toFetch.push(key)
+      }
+    }
+    let applied = 0
+    if (toFetch.length > 0) {
+      const fetched = await this.remoteGetByKeys(this.projectId, toFetch)
+      if (fetched === null) return null
+      const result = this.cache.hydrateFromRemote([...fetched.values()])
+      applied = result.applied
+      held += result.skipped.length
+    }
+    return { applied, deleted, held, maxUpdatedAt: maxTimestamp(null, listing.map((r) => r.updated_at)) }
+  }
+
+  /**
+   * Fetch-on-read freshness for long-lived MCP sessions. Shares one in-flight
+   * hydrate across concurrent callers, does nothing when the last successful
+   * hydrate is younger than `maxAgeMs`, and resolves after at most `timeoutMs`
+   * (the hydrate keeps running in the background and is reused by the next
+   * call). Never throws: on timeout or error the caller serves the cache.
+   *
+   * A failed attempt also backs off for `maxAgeMs`, so an offline session does
+   * not pay the timeout on every read.
+   */
+  async hydrateIfStale(maxAgeMs: number, timeoutMs = 2000): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const now = Date.now()
+      if (!this.staleRun) {
+        if (now - this.lastHydrateOkAt < maxAgeMs) return
+        if (now - this.lastHydrateAttemptAt < maxAgeMs) return
+        this.lastHydrateAttemptAt = now
+        this.staleRun = this.hydrate()
+          .then(() => undefined, () => undefined)
+          .finally(() => {
+            this.staleRun = null
+          })
+      }
+      const run = this.staleRun
+      const timeout = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, Math.max(0, timeoutMs))
+        timer.unref?.()
+      })
+      await Promise.race([run, timeout])
+    } catch {
+      // fail open: serve the cache
+    } finally {
+      if (timer) clearTimeout(timer)
     }
   }
 
@@ -428,17 +593,29 @@ export class SupabaseSync {
     return this.enqueue(() => this._remoteDelete(projectId, key))
   }
 
+  /**
+   * true = the row is gone remotely afterwards (deleted now, or never existed).
+   * false = error, or zero rows deleted while the row is still visible: RLS
+   * refusing a read-only member, which PostgREST reports as success (bug 5).
+   */
   private async _remoteDelete(projectId: string, key: string): Promise<boolean> {
     try {
-      const { error } = await this.supabase
+      const { error, count } = await this.supabase
         .from('memories')
-        .delete()
+        .delete({ count: 'exact' })
         .eq('project_id', projectId)
         .eq('key', key)
 
       if (error) {
         console.error('[tages] Remote delete failed:', error.message)
         return false
+      }
+      if (count === 0) {
+        const visible = await this.remoteKeyVisible(projectId, key)
+        if (visible !== false) {
+          console.error(`[tages] Remote delete refused: "${key}" still exists (permission denied)`)
+          return false
+        }
       }
       return true
     } catch {
@@ -564,33 +741,85 @@ export class SupabaseSync {
    *
    * This is an `.update()`, never an `.upsert()`: a non-matching row is a
    * no-op, so a `forget`-deleted memory is never resurrected.
+   *
+   * Returns false on error, and when the update changed zero rows although a
+   * row with that key is visible: that is RLS refusing a read-only member
+   * (bug 5), which PostgREST reports as success with no rows. A key with no
+   * visible remote row (not pushed yet) returns true; the dirty flush carries
+   * the local status up.
    */
-  // STUB (0.5.7 Step 0 contract): Task 1a fills the body.
-  // null on any error. Batches of 100 keys. Map key = memory.key.
-  async remoteGetByKeys(_projectId: string, _keys: string[]): Promise<Map<string, Memory> | null> {
-    return null
-  }
-
-  // STUB (0.5.7 Step 0 contract): Task 1a fills the body.
-  // Single-flight, fail-open; no-op if the last hydrate is younger than maxAgeMs.
-  async hydrateIfStale(_maxAgeMs: number, _timeoutMs = 2000): Promise<void> {
-    return
-  }
-
   async remoteVerifyMemory(projectId: string, key: string, verifiedAt: string): Promise<boolean> {
     try {
-      const { error } = await this.supabase
+      const { error, count } = await this.supabase
         .from('memories')
-        .update({ status: 'live', verified_at: verifiedAt })
+        .update({ status: 'live', verified_at: verifiedAt }, { count: 'exact' })
         .eq('project_id', projectId)
         .eq('key', key)
       if (error) {
         console.error('[tages] Remote verify failed:', error.message)
         return false
       }
+      if (count === 0) {
+        const visible = await this.remoteKeyVisible(projectId, key)
+        if (visible !== false) {
+          console.error(`[tages] Remote verify refused: "${key}" exists but 0 rows were updated (permission denied)`)
+          return false
+        }
+      }
       return true
     } catch {
       return false
+    }
+  }
+
+  /**
+   * true/false = whether a row with this key is visible to the caller;
+   * null = the probe itself failed (callers treat that as "cannot confirm").
+   */
+  private async remoteKeyVisible(projectId: string, key: string): Promise<boolean | null> {
+    try {
+      const { count, error } = await this.supabase
+        .from('memories')
+        .select('id', { count: 'exact', head: true })
+        .eq('project_id', projectId)
+        .eq('key', key)
+      if (error || typeof count !== 'number') return null
+      return count > 0
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Fetch full rows for specific keys, in batches of KEY_BATCH. Map key is
+   * `memory.key`; values are exactly what dbRowToMemory returns (encrypted
+   * values stay encrypted). Null on any error, so a caller never mistakes a
+   * failed lookup for "no such key".
+   */
+  async remoteGetByKeys(projectId: string, keys: string[]): Promise<Map<string, Memory> | null> {
+    const out = new Map<string, Memory>()
+    const unique = [...new Set(keys)]
+    try {
+      for (let i = 0; i < unique.length; i += KEY_BATCH) {
+        const batch = unique.slice(i, i + KEY_BATCH)
+        const { data, error } = await this.supabase
+          .from('memories')
+          .select('*')
+          .eq('project_id', projectId)
+          .in('key', batch)
+        if (error) {
+          console.error('[tages] Remote get-by-keys failed:', error.message)
+          return null
+        }
+        for (const row of (data || []) as DbRow[]) {
+          const memory = dbRowToMemory(row)
+          out.set(memory.key, memory)
+        }
+      }
+      return out
+    } catch (err) {
+      console.error('[tages] Remote get-by-keys error:', (err as Error).message)
+      return null
     }
   }
 
@@ -679,6 +908,33 @@ interface DbRow {
   // conflict-update leaves any already-synced embedding untouched instead of
   // clobbering it with null. See memoryToDbRow below.
   embedding?: string
+}
+
+/**
+ * Max of server timestamps, compared by instant. Ties at millisecond
+ * precision keep the lexically larger string, which preserves Postgres
+ * microseconds (same offset format from the same server): truncating to ms
+ * would make `updated_at > watermark` re-match the newest row forever.
+ */
+export function maxTimestamp(current: string | null, candidates: string[]): string | null {
+  let best = current
+  for (const c of candidates) {
+    if (!c) continue
+    if (best === null) { best = c; continue }
+    const a = Date.parse(c)
+    const b = Date.parse(best)
+    if (Number.isNaN(a)) continue
+    if (Number.isNaN(b) || a > b || (a === b && c > best)) best = c
+  }
+  return best
+}
+
+/** Same instant at ms precision, tolerant of 'Z' vs '+00:00' formatting. */
+function sameInstant(a: string, b: string): boolean {
+  if (a === b) return true
+  const x = Date.parse(a)
+  const y = Date.parse(b)
+  return !Number.isNaN(x) && x === y
 }
 
 /** Serialize a raw embedding vector into the pgvector literal format Supabase expects. */
