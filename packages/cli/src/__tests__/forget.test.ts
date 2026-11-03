@@ -25,16 +25,30 @@ vi.mock('../sync/cli-sync.js', () => ({
   openCliSync: mockOpenCliSync,
 }))
 
-// Mock the Supabase auth client used for cloud delete
-const { mockDeleteEq2, mockDeleteEq1, mockDelete, mockSupabaseClient, mockCreateAuthenticatedClient } = vi.hoisted(() => {
-  const mockDeleteEq2 = vi.fn().mockResolvedValue({ data: null, error: null })
+// Mock the Supabase auth client used for cloud delete:
+//   delete().eq(project_id).eq(key).select('id')   -> mockDeleteSelect
+//   select('id').eq(project_id).eq(key)            -> mockProbeEq2 (existence probe)
+const {
+  mockDeleteSelect, mockDeleteEq2, mockDeleteEq1, mockDelete,
+  mockProbeEq2, mockProbeEq1, mockProbeSelect,
+  mockSupabaseClient, mockCreateAuthenticatedClient,
+} = vi.hoisted(() => {
+  const mockDeleteSelect = vi.fn().mockResolvedValue({ data: [{ id: 'row-1' }], error: null })
+  const mockDeleteEq2 = vi.fn().mockReturnValue({ select: mockDeleteSelect })
   const mockDeleteEq1 = vi.fn().mockReturnValue({ eq: mockDeleteEq2 })
   const mockDelete = vi.fn().mockReturnValue({ eq: mockDeleteEq1 })
+  const mockProbeEq2 = vi.fn().mockResolvedValue({ data: [], error: null })
+  const mockProbeEq1 = vi.fn().mockReturnValue({ eq: mockProbeEq2 })
+  const mockProbeSelect = vi.fn().mockReturnValue({ eq: mockProbeEq1 })
   const mockSupabaseClient = {
-    from: vi.fn().mockReturnValue({ delete: mockDelete }),
+    from: vi.fn().mockReturnValue({ delete: mockDelete, select: mockProbeSelect }),
   }
   const mockCreateAuthenticatedClient = vi.fn().mockResolvedValue(mockSupabaseClient)
-  return { mockDeleteEq2, mockDeleteEq1, mockDelete, mockSupabaseClient, mockCreateAuthenticatedClient }
+  return {
+    mockDeleteSelect, mockDeleteEq2, mockDeleteEq1, mockDelete,
+    mockProbeEq2, mockProbeEq1, mockProbeSelect,
+    mockSupabaseClient, mockCreateAuthenticatedClient,
+  }
 })
 
 vi.mock('../auth/session.js', () => ({
@@ -67,10 +81,14 @@ describe('forget command', () => {
     // Reset mocks after clearAllMocks
     mockDeleteByKey.mockReturnValue(true)
     mockFlush.mockResolvedValue(undefined)
-    mockDeleteEq2.mockResolvedValue({ data: null, error: null })
+    mockDeleteSelect.mockResolvedValue({ data: [{ id: 'row-1' }], error: null })
+    mockDeleteEq2.mockReturnValue({ select: mockDeleteSelect })
     mockDeleteEq1.mockReturnValue({ eq: mockDeleteEq2 })
     mockDelete.mockReturnValue({ eq: mockDeleteEq1 })
-    mockSupabaseClient.from.mockReturnValue({ delete: mockDelete })
+    mockProbeEq2.mockResolvedValue({ data: [], error: null })
+    mockProbeEq1.mockReturnValue({ eq: mockProbeEq2 })
+    mockProbeSelect.mockReturnValue({ eq: mockProbeEq1 })
+    mockSupabaseClient.from.mockReturnValue({ delete: mockDelete, select: mockProbeSelect })
     mockCreateAuthenticatedClient.mockResolvedValue(mockSupabaseClient)
     mockOpenCliSync.mockResolvedValue({
       cache: { deleteByKey: mockDeleteByKey },
@@ -89,7 +107,7 @@ describe('forget command', () => {
 
     const callOrder: string[] = []
     mockDeleteByKey.mockImplementation(() => { callOrder.push('sqlite'); return true })
-    mockDeleteEq2.mockImplementation(async () => { callOrder.push('cloud'); return { data: null, error: null } })
+    mockDeleteSelect.mockImplementation(async () => { callOrder.push('cloud'); return { data: [{ id: 'row-1' }], error: null } })
 
     await forgetCommand('old-convention', {})
 
@@ -123,19 +141,69 @@ describe('forget command', () => {
     expect(console_.logs.join('\n')).toContain('does-not-exist')
   })
 
-  it('cloud delete error is a warning only — does not exit', async () => {
+  it('cloud delete error exits 1 and says the shared store was not changed', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
-    mockDeleteEq2.mockResolvedValue({
-      data: null,
-      error: { message: 'permission denied' },
+    mockDeleteSelect.mockResolvedValue({ data: null, error: { message: 'permission denied' } })
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit called')
     })
 
-    // Should NOT throw — cloud errors are best-effort warnings
-    await forgetCommand('key', {})
+    await expect(forgetCommand('key', {})).rejects.toThrow('process.exit called')
 
+    expect(exitSpy).toHaveBeenCalledWith(1)
     expect(mockDeleteByKey).toHaveBeenCalled()
+    expect(mockClose).toHaveBeenCalled()
     expect(console_.errors.join('\n')).toContain('permission denied')
+    expect(console_.errors.join('\n')).toContain('shared store')
+    expect(console_.logs.join('\n')).not.toContain('Deleted')
+    exitSpy.mockRestore()
+  })
+
+  it('RLS-denied delete (0 rows, row still visible) exits 1, never prints Deleted', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    mockDeleteSelect.mockResolvedValue({ data: [], error: null })
+    mockProbeEq2.mockResolvedValue({ data: [{ id: 'row-1' }], error: null })
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit called')
+    })
+
+    await expect(forgetCommand('team-fact', {})).rejects.toThrow('process.exit called')
+
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(console_.errors.join('\n')).toMatch(/Could not delete "team-fact" from the shared store/)
+    expect(console_.errors.join('\n')).toContain('read-only')
+    expect(console_.logs.join('\n')).not.toContain('Deleted')
+    exitSpy.mockRestore()
+  })
+
+  it('0 rows deleted and no remote row (never synced) still succeeds', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    mockDeleteSelect.mockResolvedValue({ data: [], error: null })
+    mockProbeEq2.mockResolvedValue({ data: [], error: null })
+
+    await forgetCommand('local-only-key', {})
+
+    expect(mockProbeSelect).toHaveBeenCalledWith('id')
     expect(console_.logs.join('\n')).toContain('Deleted')
+  })
+
+  it('chains .select() on the delete so zero rows are observable', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+
+    await forgetCommand('k', {})
+
+    expect(mockDeleteSelect).toHaveBeenCalledWith('id')
+  })
+
+  it('builds the cloud client before the local delete (dead session deletes nothing)', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    mockCreateAuthenticatedClient.mockImplementation(async () => {
+      throw new Error('process.exit called')
+    })
+
+    await expect(forgetCommand('k', {})).rejects.toThrow('process.exit called')
+
+    expect(mockDeleteByKey).not.toHaveBeenCalled()
   })
 
   it('exits with error when no project is configured', async () => {
@@ -163,30 +231,19 @@ describe('forget command', () => {
     expect(console_.logs.join('\n')).toContain('Deleted')
   })
 
-  it('always calls close() even when cloud delete throws', async () => {
+  it('always calls close() even when cloud delete throws, and exits 1', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
-    mockDeleteEq2.mockRejectedValue(new Error('network error'))
+    mockDeleteSelect.mockRejectedValue(new Error('network error'))
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit called')
+    })
 
-    await forgetCommand('key', {})
+    await expect(forgetCommand('key', {})).rejects.toThrow('process.exit called')
 
     expect(mockDeleteByKey).toHaveBeenCalled()
     expect(mockClose).toHaveBeenCalled()
     expect(console_.errors.join('\n')).toContain('network error')
-    expect(console_.logs.join('\n')).toContain('Deleted')
-  })
-
-  it('reports Supabase delete errors as warnings (no process.exit)', async () => {
-    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
-    mockDeleteEq2.mockResolvedValue({
-      data: null,
-      error: { message: 'permission denied' },
-    })
-
-    // Should complete without throwing
-    await forgetCommand('key', {})
-
-    expect(console_.errors.join('\n')).toContain('permission denied')
-    expect(console_.logs.join('\n')).toContain('Deleted')
+    exitSpy.mockRestore()
   })
 
   it('uses --project flag to look up config', async () => {
