@@ -12,6 +12,7 @@ const gen = vi.hoisted(() => ({ generateEmbedding: vi.fn(), generateChunkEmbeddi
 vi.mock('../embeddings', () => gen)
 
 import { SqliteCache } from '../cache/sqlite'
+import { encryptValue } from '../crypto/encryption'
 import type { SupabaseSync } from '../sync/supabase-sync'
 import { runEmbeddingBackfill, BACKFILL_LIMIT } from '../sync/embedding-backfill'
 
@@ -115,5 +116,45 @@ describe('runEmbeddingBackfill', () => {
     const n = await runEmbeddingBackfill(PROJECT, cache, fakeSync() as unknown as SupabaseSync, undefined, { rowTimeoutMs: 20 })
     expect(n).toBe(2)
     expect(embeddingOf(cache, 'b')).toEqual([1, 2])
+  })
+
+  describe('encrypted rows', () => {
+    const KEY_HEX = 'ab'.repeat(32)
+    const prev = process.env.TAGES_ENCRYPTION_KEY
+    afterEach(() => {
+      if (prev === undefined) delete process.env.TAGES_ENCRYPTION_KEY
+      else process.env.TAGES_ENCRYPTION_KEY = prev
+    })
+
+    it('embeds the decrypted plaintext, never the ciphertext', async () => {
+      process.env.TAGES_ENCRYPTION_KEY = KEY_HEX
+      const cipher = encryptValue('secret deploy rule', Buffer.from(KEY_HEX, 'hex'))
+      cache.upsertMemory(mem({ key: 'enc', value: cipher, encrypted: true }), false)
+      const n = await runEmbeddingBackfill(PROJECT, cache, fakeSync() as unknown as SupabaseSync)
+      expect(n).toBe(1)
+      expect(gen.generateEmbedding.mock.calls[0][0]).toBe('secret deploy rule')
+      expect(embeddingOf(cache, 'enc')).toEqual([0.1, 0.2, 0.3])
+    })
+
+    it('without the key it skips the row: no provider call, no embedding, not counted', async () => {
+      delete process.env.TAGES_ENCRYPTION_KEY
+      cache.upsertMemory(mem({ key: 'enc-nokey', value: 'enc:v1:AAAA', encrypted: true }), false)
+      const sync = fakeSync()
+      const n = await runEmbeddingBackfill(PROJECT, cache, sync as unknown as SupabaseSync)
+      expect(n).toBe(0)
+      expect(gen.generateEmbedding).not.toHaveBeenCalled()
+      expect(sync.remoteUpdateEmbedding).not.toHaveBeenCalled()
+      expect(embeddingOf(cache, 'enc-nokey')).toBeNull()
+    })
+
+    it('a corrupt ciphertext is skipped and the next row is still embedded', async () => {
+      process.env.TAGES_ENCRYPTION_KEY = KEY_HEX
+      cache.upsertMemory(mem({ key: 'older-good', value: 'plain ok', updatedAt: '2026-01-01T00:00:00.000Z' }), false)
+      cache.upsertMemory(mem({ key: 'newer-bad', value: 'enc:v1:AAAA', encrypted: true, updatedAt: '2026-06-01T00:00:00.000Z' }), false)
+      const n = await runEmbeddingBackfill(PROJECT, cache, fakeSync() as unknown as SupabaseSync)
+      expect(n).toBe(1)
+      expect(embeddingOf(cache, 'newer-bad')).toBeNull()
+      expect(embeddingOf(cache, 'older-good')).toEqual([0.1, 0.2, 0.3])
+    })
   })
 })
