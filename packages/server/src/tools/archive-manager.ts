@@ -16,7 +16,8 @@ export async function handleArchive(
   args: { key: string; reason?: string },
   projectId: string,
   cache: SqliteCache,
-): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  sync?: SupabaseSync | null,
+): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   const memory = cache.getByKey(projectId, args.key)
   if (!memory) {
     return { content: [{ type: 'text', text: `Memory "${args.key}" not found.` }] }
@@ -24,6 +25,25 @@ export async function handleArchive(
 
   const mgr = getArchiveManager()
   mgr.archiveMemory(memory, args.reason || 'manually archived', cache)
+
+  // Retraction must reach the shared store now, not on the next 60s flush:
+  // until it does, every teammate still recalls the archived memory.
+  // Optional param so callers without a sync (local-only) are unchanged.
+  if (sync) {
+    const archived = cache.getByKey(projectId, args.key)
+    const ok = archived ? await sync.remoteInsert(archived) : false
+    if (!ok) {
+      return {
+        isError: true,
+        content: [{
+          type: 'text',
+          text: `Archived "${args.key}" on this machine only: the shared store refused the change (your role may be ` +
+            'read-only on this project) or was unreachable, so teammates still see it as live.',
+        }],
+      }
+    }
+    if (archived) cache.markSynced([archived.id])
+  }
 
   return { content: [{ type: 'text', text: `Archived "${args.key}". Restore with restore_memory.` }] }
 }

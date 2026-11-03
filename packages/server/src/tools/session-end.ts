@@ -3,6 +3,11 @@ import type { Memory } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
 import { extractMemoriesFromSummary } from './session-extract'
+import { embedOnWrite } from './embed-on-write'
+import type { SupabaseClient } from '@supabase/supabase-js'
+
+/** Capped await: short-lived servers would otherwise exit before the embedding lands. */
+const EMBED_TIMEOUT_MS = 10_000
 
 /**
  * Parses a session summary and auto-extracts memories.
@@ -14,12 +19,14 @@ export async function handleSessionEnd(
   cache: SqliteCache,
   sync: SupabaseSync | null,
   callerUserId?: string,
+  supabaseClient?: SupabaseClient,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const shouldExtract = args.extractMemories !== false
   const extracted = shouldExtract ? extractMemoriesFromSummary(args.summary) : []
 
   if (shouldExtract && extracted.length > 0) {
     const now = new Date().toISOString()
+    const written: Memory[] = []
     for (const mem of extracted) {
       const memory: Memory = {
         id: randomUUID(),
@@ -39,8 +46,24 @@ export async function handleSessionEnd(
 
       cache.upsertMemory(memory, true)
       if (sync) {
-        await sync.remoteInsert(memory)
+        const ok = await sync.remoteInsert(memory)
+        if (ok) cache.markSynced([memory.id])
       }
+      written.push(memory)
+    }
+
+    // After the inserts: remoteUpdateEmbedding needs the remote row to exist.
+    // One row at a time under one shared 10s deadline (a burst of concurrent
+    // hosted calls trips 546/429 and yields nulls); rows left at the deadline
+    // continue in the background and the boot backfill catches stragglers.
+    const deadline = Date.now() + EMBED_TIMEOUT_MS
+    for (const memory of written) {
+      const left = deadline - Date.now()
+      if (left <= 0) {
+        void embedOnWrite(memory, memory.value, cache, sync, supabaseClient)
+        continue
+      }
+      await embedOnWrite(memory, memory.value, cache, sync, supabaseClient, { timeoutMs: left })
     }
   }
 
