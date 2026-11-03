@@ -5,7 +5,7 @@ import * as path from 'path'
 import { randomUUID } from 'crypto'
 import type { Memory } from '@tages/shared'
 import { SqliteCache } from '../cache/sqlite'
-import { SupabaseSync, maxTimestamp } from '../sync/supabase-sync'
+import { SupabaseSync, maxTimestamp, pgInList } from '../sync/supabase-sync'
 
 /**
  * 0.5.7 Task 1a: hydrate reconciliation (bugs 1, 2, 3, 5, 10).
@@ -22,18 +22,40 @@ const PG_CAP = 1000
 type Row = Record<string, unknown> & { id: string; project_id: string; key: string; updated_at: string }
 
 let tick = 0
+/** Server clock base: in the past, so the W1 clamp (watermark <= local now) never bites by accident. */
+const SERVER_EPOCH = '2026-06-01T10:00:00.000Z'
 /** Monotonic server timestamps with microsecond precision. */
 function serverNow(): string {
   tick++
-  const base = Date.parse('2026-11-03T10:00:00.000Z') + tick
+  const base = Date.parse(SERVER_EPOCH) + tick
   const iso = new Date(base).toISOString().replace('Z', '')
   return `${iso}${String(tick % 1000).padStart(3, '0')}+00:00`
+}
+
+/** Postgres-like compare: timestamps by instant (then string for sub-ms), everything else by code point. */
+function cmp(a: unknown, b: unknown): number {
+  const x = String(a)
+  const y = String(b)
+  const tx = Date.parse(x)
+  const ty = Date.parse(y)
+  if (!Number.isNaN(tx) && !Number.isNaN(ty) && tx !== ty) return tx < ty ? -1 : 1
+  return x < y ? -1 : x > y ? 1 : 0
+}
+
+/** Parse a PostgREST `("a","b")` in-list literal. */
+function parseInList(v: string): string[] {
+  return [...v.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1].replace(/\\(.)/g, '$1'))
 }
 
 function makeFake(opts: { denyWrites?: boolean } = {}) {
   const rows: Row[] = []
   const calls: Array<{ op: string; filters: Array<[string, string, unknown]> }> = []
   let failSelects = false
+  /** Runs once per non-head select, AFTER its answer is computed and BEFORE it resolves. */
+  let afterSelect: ((n: number, filters: Array<[string, string, unknown]>) => void) | null = null
+  let selectN = 0
+  /** When set, every request hangs until its abort signal fires. */
+  let hang = false
 
   function addRow(over: Partial<Row> & { key: string }): Row {
     const row: Row = {
@@ -62,21 +84,35 @@ function makeFake(opts: { denyWrites?: boolean } = {}) {
     const filters: Array<[string, string, unknown]> = []
     const orders: string[] = []
     let range: [number, number] | null = null
+    let limit: number | null = null
+    let signal: AbortSignal | null = null
     const matches = (r: Row) =>
       filters.every(([kind, col, val]) => {
         if (kind === 'eq') return r[col] === val
-        if (kind === 'gt') return Date.parse(String(r[col])) > Date.parse(String(val)) || (Date.parse(String(r[col])) === Date.parse(String(val)) && String(r[col]) > String(val))
+        if (kind === 'gt') return cmp(r[col], val) > 0
         if (kind === 'in') return (val as unknown[]).includes(r[col])
+        if (kind === 'not.in') return !parseInList(String(val)).includes(String(r[col]))
         return true
       })
     const b: Record<string, unknown> = {
       eq(col: string, val: unknown) { filters.push(['eq', col, val]); return b },
       gt(col: string, val: unknown) { filters.push(['gt', col, val]); return b },
       in(col: string, val: unknown[]) { filters.push(['in', col, val]); return b },
+      not(col: string, operator: string, val: unknown) { filters.push([`not.${operator}`, col, val]); return b },
       order(col: string) { orders.push(col); return b },
       range(from: number, to: number) { range = [from, to]; return b },
+      limit(n: number) { limit = n; return b },
+      abortSignal(s: AbortSignal) { signal = s; return b },
       then(resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) {
         calls.push({ op: `${table}.${op}`, filters: [...filters] })
+        if (hang) {
+          // Like postgrest-js: an aborted fetch resolves as { error }.
+          return new Promise((res) => {
+            signal?.addEventListener('abort', () =>
+              res({ data: null, error: { message: 'AbortError: The operation was aborted.' }, count: null }),
+            )
+          }).then(resolve, reject)
+        }
         let result: unknown
         if (op === 'select') {
           if (failSelects) {
@@ -84,14 +120,17 @@ function makeFake(opts: { denyWrites?: boolean } = {}) {
           } else {
             let hit = rows.filter(matches)
             for (const col of [...orders].reverse()) {
-              hit = [...hit].sort((x, y) => String(x[col]).localeCompare(String(y[col])))
+              hit = [...hit].sort((x, y) => cmp(x[col], y[col]))
             }
             if (opOpts?.head) {
               result = { data: null, error: null, count: hit.length }
             } else {
               const [from, to] = range ?? [0, PG_CAP - 1]
-              const page = hit.slice(from, Math.min(to + 1, from + PG_CAP))
+              const cap = Math.min(PG_CAP, limit ?? PG_CAP)
+              const page = hit.slice(from, Math.min(to + 1, from + cap))
               result = { data: page.map((r) => ({ ...r })), error: null, count: null }
+              selectN++
+              afterSelect?.(selectN, filters)
             }
           }
         } else if (op === 'update') {
@@ -121,7 +160,8 @@ function makeFake(opts: { denyWrites?: boolean } = {}) {
         for (const incoming of list) {
           const existing = rows.find((r) => r.project_id === incoming.project_id && r.key === incoming.key)
           if (existing) Object.assign(existing, incoming, { id: existing.id, updated_at: serverNow() })
-          else rows.push({ ...incoming, id: `remote-${randomUUID()}`, updated_at: serverNow() } as Row)
+          // INSERT keeps the writer's updated_at: the trigger is BEFORE UPDATE only.
+          else rows.push({ ...incoming, id: `remote-${randomUUID()}`, updated_at: incoming.updated_at ?? serverNow() } as Row)
         }
         return Promise.resolve({ error: null })
       },
@@ -134,6 +174,8 @@ function makeFake(opts: { denyWrites?: boolean } = {}) {
     calls,
     addRow,
     setFailSelects(v: boolean) { failSelects = v },
+    setAfterSelect(fn: ((n: number, filters: Array<[string, string, unknown]>) => void) | null) { afterSelect = fn; selectN = 0 },
+    setHang(v: boolean) { hang = v },
   }
 }
 
@@ -328,10 +370,10 @@ describe('hydrate reconcile (0.5.7 Task 1a)', () => {
   describe('(d) watermark', () => {
     it('uses the max remote updated_at, not the local clock', async () => {
       const fake = makeFake()
-      fake.addRow({ key: 'a', updated_at: '2026-11-03T09:00:00.000001+00:00' })
-      fake.addRow({ key: 'b', updated_at: '2026-11-03T09:00:00.123456+00:00' })
+      fake.addRow({ key: 'a', updated_at: '2026-06-01T09:00:00.000001+00:00' })
+      fake.addRow({ key: 'b', updated_at: '2026-06-01T09:00:00.123456+00:00' })
       await makeSync(fake).hydrate()
-      expect(cache.getRemoteWatermark(PROJECT)).toBe('2026-11-03T09:00:00.123456+00:00')
+      expect(cache.getRemoteWatermark(PROJECT)).toBe('2026-06-01T09:00:00.123456+00:00')
     })
 
     it('a skewed-ahead local clock cannot hide a teammate edit', async () => {
@@ -593,6 +635,245 @@ describe('hydrate reconcile (0.5.7 Task 1a)', () => {
       cache.upsertMemoryWithEmbedding(localMemory({ key: 'embedded', updatedAt: t2 }), [1], false)
       expect(cache.getLiveMissingEmbedding(PROJECT, 10).map((m) => m.key)).toEqual(['newer-a', 'newer-b', 'older'])
       expect(cache.getLiveMissingEmbedding(PROJECT, 1).map((m) => m.key)).toEqual(['newer-a'])
+    })
+  })
+
+  // (i) 0.5.7 review fixes: W1 (skew), W2 (reconcile races), W3 (hangs), S2, Q2
+  describe('(i) review W1-W3, S2, Q2', () => {
+    const T = Date.parse(SERVER_EPOCH)
+    const at = (ms: number) => new Date(T + ms).toISOString().replace('Z', '000+00:00')
+    const MIN = 60_000
+
+    function useClock(ms: number) {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(T + ms))
+    }
+
+    function failPushes(fake: ReturnType<typeof makeFake>) {
+      const origFrom = fake.supabase.from
+      fake.supabase.from = vi.fn((table: string) => {
+        const t = origFrom(table)
+        return { ...t, upsert: () => Promise.resolve({ error: { message: 'permission denied' } }) }
+      }) as unknown as typeof origFrom
+    }
+
+    it('W1 clamp: a teammate clock a day fast cannot hide a later archive', async () => {
+      useClock(0)
+      const fake = makeFake()
+      fake.addRow({ key: 'base' })
+      fake.addRow({ key: 'fast', updated_at: at(24 * 60 * MIN) })
+      const sync = makeSync(fake)
+      await sync.hydrate()
+      expect(Date.parse(cache.getRemoteWatermark(PROJECT)!)).toBeLessThanOrEqual(Date.now() + 1000)
+
+      // 15 min later (server time) a teammate archives "base": now() is far
+      // below the fast row's updated_at, and the row count does not change.
+      useClock(15 * MIN)
+      const row = fake.rows.find((r) => r.key === 'base')!
+      row.status = 'archived'
+      row.updated_at = at(15 * MIN)
+      await sync.hydrate()
+      expect(cache.getByKey(PROJECT, 'base')?.status).toBe('archived')
+    })
+
+    it('W1 window: an edit whose now() trails the watermark (commit gap) is still pulled', async () => {
+      useClock(0)
+      const fake = makeFake()
+      fake.addRow({ key: 'a' })
+      fake.addRow({ key: 'b' })
+      const sync = makeSync(fake)
+      await sync.hydrate()
+
+      // A transaction that started 30s before the watermark commits after our
+      // pull: its updated_at (now() = transaction start) is below the watermark.
+      useClock(1 * MIN)
+      const row = fake.rows.find((r) => r.key === 'a')!
+      row.status = 'archived'
+      row.updated_at = at(-30_000)
+      await sync.hydrate()
+      expect(cache.getByKey(PROJECT, 'a')?.status).toBe('archived')
+    })
+
+    it('W1 window goes cold: once listed past the margin, a quiet project is two head counts', async () => {
+      useClock(0)
+      const fake = makeFake()
+      fake.addRow({ key: 'a' })
+      const sync = makeSync(fake)
+      await sync.hydrate()
+      useClock(1 * MIN)
+      fake.calls.length = 0
+      await sync.hydrate() // hot: head count + window listing
+      expect(fake.calls.filter((c) => c.op === 'memories.select').length).toBeGreaterThan(1)
+      useClock(11 * MIN)
+      await sync.hydrate() // still hot until a listing starts past the margin
+      useClock(12 * MIN)
+      fake.calls.length = 0
+      expect(await sync.hydrate()).toBe(0)
+      expect(fake.calls).toHaveLength(2)
+    })
+
+    it('W1 window: rows already cached at the same revision are not re-applied', async () => {
+      useClock(0)
+      const fake = makeFake()
+      fake.addRow({ key: 'a' })
+      const sync = makeSync(fake)
+      await sync.hydrate()
+      useClock(1 * MIN)
+      expect(await sync.hydrate()).toBe(0)
+    })
+
+    it('W2a: a row pushed and marked synced during the listing await is not deleted', async () => {
+      useClock(0)
+      const fake = makeFake()
+      fake.addRow({ key: 'a' })
+      fake.addRow({ key: 'b' })
+      const sync = makeSync(fake)
+      await sync.hydrate()
+
+      // Teammate forgets "b" (count mismatch -> reconcile listing). While the
+      // listing is in flight, this process remembers "c", pushes it and marks
+      // it synced: the listing cannot contain it.
+      fake.rows.splice(fake.rows.findIndex((r) => r.key === 'b'), 1)
+      const mem = localMemory({ key: 'c', value: 'fresh' })
+      fake.setAfterSelect((_n, filters) => {
+        const isFullListing = filters.every(([k, c]) => k === 'eq' || (k === 'gt' && c === 'id'))
+        if (!isFullListing || cache.getByKey(PROJECT, 'c')) return
+        cache.upsertMemory(mem, true)
+        fake.addRow({ key: 'c', value: 'fresh' })
+        vi.setSystemTime(new Date(Date.now() + 1000))
+        cache.markSynced([mem.id])
+      })
+      useClock(1 * MIN)
+      await sync.hydrate()
+      expect(cache.getByKey(PROJECT, 'b')).toBeNull()
+      expect(cache.getByKey(PROJECT, 'c')?.value).toBe('fresh')
+    })
+
+    it('W2b: keyset paging: a row deleted from page 1 mid-listing does not skip a live row', async () => {
+      const fake = makeFake()
+      for (let i = 0; i < 1500; i++) fake.addRow({ key: `k-${String(i).padStart(4, '0')}` })
+      const sync = makeSync(fake)
+      await sync.hydrate()
+      expect(cache.getMemoryCount(PROJECT)).toBe(1500)
+
+      // Force the full pull (legacy watermark), and have a teammate delete the
+      // lowest-id row right after page 1 is served.
+      cache.setLastSyncedAt(PROJECT, '2026-01-01T00:00:00.000Z', 1500)
+      fake.setAfterSelect((n) => {
+        if (n !== 1) return
+        const lowest = [...fake.rows].sort((x, y) => (x.id < y.id ? -1 : 1))[0]
+        fake.rows.splice(fake.rows.indexOf(lowest), 1)
+      })
+      await sync.hydrate()
+      fake.setAfterSelect(null)
+      const missing = fake.rows.filter((r) => cache.getByKey(PROJECT, r.key) === null)
+      expect(missing.map((r) => r.key)).toEqual([])
+    })
+
+    it('W3: a hung Supabase request aborts, so the single-flight hydrate is released', async () => {
+      const fake = makeFake()
+      fake.addRow({ key: 'a' })
+      const sync = makeSync(fake)
+      sync.queryTimeoutMs = 50
+      fake.setHang(true)
+      const t0 = Date.now()
+      expect(await sync.hydrate()).toBe(0)
+      expect(Date.now() - t0).toBeLessThan(1000)
+      fake.setHang(false)
+      expect(await sync.hydrate()).toBe(1)
+    }, 3000)
+
+    it('W3: a hung stale run costs one timeout in total, not one per read', async () => {
+      const fake = makeFake()
+      const sync = makeSync(fake)
+      vi.spyOn(sync, 'hydrate').mockImplementation(() => new Promise(() => {}))
+      const t0 = Date.now()
+      await sync.hydrateIfStale(15_000, 300)
+      expect(Date.now() - t0).toBeGreaterThanOrEqual(280)
+      const t1 = Date.now()
+      await sync.hydrateIfStale(15_000, 300)
+      await sync.hydrateIfStale(15_000, 300)
+      expect(Date.now() - t1).toBeLessThan(150)
+    })
+
+    it('S2: an unpushable dirty row does not force a listing on every freshen', async () => {
+      const fake = makeFake()
+      fake.addRow({ key: 'a' })
+      const sync = makeSync(fake)
+      await sync.hydrate()
+      failPushes(fake) // read-only member
+      cache.upsertMemory(localMemory({ key: 'mine', value: 'local only' }), true)
+      await sync.hydrate()
+      fake.calls.length = 0
+      expect(await sync.hydrate()).toBe(0)
+      expect(fake.calls).toHaveLength(2)
+      expect(fake.calls.every((c) => c.op === 'memories.select')).toBe(true)
+      expect(cache.getByKey(PROJECT, 'mine')?.value).toBe('local only')
+    })
+
+    it('S2: with a dirty row excluded, a teammate forget is still reconciled', async () => {
+      const fake = makeFake()
+      fake.addRow({ key: 'a' })
+      fake.addRow({ key: 'b' })
+      const sync = makeSync(fake)
+      await sync.hydrate()
+      failPushes(fake)
+      cache.upsertMemory({ ...cache.getByKey(PROJECT, 'a')!, value: 'my unpushed edit' }, true)
+      cache.upsertMemory(localMemory({ key: 'mine' }), true)
+      fake.rows.splice(fake.rows.findIndex((r) => r.key === 'b'), 1)
+      await sync.hydrate()
+      expect(cache.getByKey(PROJECT, 'b')).toBeNull()
+      expect(cache.getByKey(PROJECT, 'a')?.value).toBe('my unpushed edit')
+      expect(cache.getByKey(PROJECT, 'mine')).not.toBeNull()
+    })
+
+    it('S2: pgInList quotes and escapes keys', () => {
+      expect(pgInList(['a', 'b,c', 'q"x', 'back\\slash'])).toBe('("a","b,c","q\\"x","back\\\\slash")')
+    })
+
+    it('Q2: an edit made while the flush upsert is in flight stays dirty', async () => {
+      const fake = makeFake()
+      const sync = makeSync(fake)
+      const mem = localMemory({ key: 'q', value: 'v1', updatedAt: '2026-06-01T10:00:00.000Z' })
+      cache.upsertMemory(mem, true)
+      const origFrom = fake.supabase.from
+      fake.supabase.from = vi.fn((table: string) => {
+        const t = origFrom(table)
+        return {
+          ...t,
+          upsert: (input: Record<string, unknown>[]) => {
+            // The user edits "q" while v1 is on the wire.
+            cache.upsertMemory({ ...mem, value: 'v2', updatedAt: '2026-06-01T10:00:01.000Z' }, true)
+            return t.upsert(input)
+          },
+        }
+      }) as unknown as typeof origFrom
+      await sync.flush()
+      expect(cache.getDirty().map((m) => m.value)).toEqual(['v2'])
+      fake.supabase.from = origFrom
+      await sync.flush()
+      expect(cache.getDirty()).toHaveLength(0)
+      expect(fake.rows.find((r) => r.key === 'q')?.value).toBe('v2')
+    })
+
+    it('Q2: a status-only change during the flush (no updated_at bump) stays dirty', async () => {
+      const fake = makeFake()
+      const sync = makeSync(fake)
+      const mem = localMemory({ key: 'q', value: 'v1' })
+      cache.upsertMemory(mem, true)
+      const origFrom = fake.supabase.from
+      fake.supabase.from = vi.fn((table: string) => {
+        const t = origFrom(table)
+        return {
+          ...t,
+          upsert: (input: Record<string, unknown>[]) => {
+            cache.updateMemoryStatus(mem.id, 'archived')
+            return t.upsert(input)
+          },
+        }
+      }) as unknown as typeof origFrom
+      await sync.flush()
+      expect(cache.getDirty().map((m) => m.status)).toEqual(['archived'])
     })
   })
 })

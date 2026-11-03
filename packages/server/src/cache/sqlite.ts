@@ -574,9 +574,34 @@ export class SqliteCache {
     if (ids.length === 0) return
     const placeholders = ids.map(() => '?').join(',')
     this.db.prepare(`
-      UPDATE memories SET dirty = 0, synced_at = datetime('now')
+      UPDATE memories SET dirty = 0, synced_at = ?
       WHERE id IN (${placeholders})
-    `).run(...ids)
+    `).run(syncStamp(), ...ids)
+  }
+
+  /**
+   * Clear dirty only for rows whose revision is still the one that was pushed
+   * (Q2). `flush()` snapshots dirty rows, awaits the upsert, then marks them
+   * clean; an edit landing during that await (a new value, status or
+   * updated_at) was never pushed and must stay dirty for the next flush.
+   * `markSynced` by id alone would mark it clean and lose it. Returns the ids
+   * actually cleared.
+   */
+  markSyncedIfUnchanged(pushed: Array<Pick<Memory, 'id' | 'updatedAt' | 'value' | 'status'>>): string[] {
+    if (pushed.length === 0) return []
+    const stmt = this.db.prepare(`
+      UPDATE memories SET dirty = 0, synced_at = ?
+      WHERE id = ? AND updated_at = ? AND value = ? AND COALESCE(status, 'live') = ?
+    `)
+    const cleared: string[] = []
+    const stamp = syncStamp()
+    const run = this.db.transaction((rows: typeof pushed) => {
+      for (const r of rows) {
+        if (stmt.run(stamp, r.id, r.updatedAt, r.value, r.status || 'live').changes > 0) cleared.push(r.id)
+      }
+    })
+    run(pushed)
+    return cleared
   }
 
   /**
@@ -628,6 +653,12 @@ export class SqliteCache {
     const clearEmbeddingStmt = this.db.prepare(
       'UPDATE memories SET embedding = NULL WHERE project_id = ? AND key = ?',
     )
+    // W2: stamp synced_at so a deletion reconcile running in this or another
+    // process can tell a row confirmed in sync after its listing started.
+    const stamp = syncStamp()
+    const stampSyncedStmt = this.db.prepare(
+      "UPDATE memories SET synced_at = ? WHERE project_id = ? AND key = ?",
+    )
     const upsert = this.db.transaction((mems: Memory[]) => {
       for (const mem of mems) {
         if (dirtyKeys.has(composite(mem.projectId, mem.key))) {
@@ -636,6 +667,7 @@ export class SqliteCache {
         }
         const prev = prevValueStmt.get(mem.projectId, mem.key) as { value: string } | undefined
         this.upsertMemory(mem, false)
+        stampSyncedStmt.run(stamp, mem.projectId, mem.key)
         // Bug 1 (hydrate half): upsertMemory has no embedding column, so a
         // teammate's cache never received cloud embeddings and local semantic
         // recall could not see those rows. Carry the remote embedding in. When
@@ -716,16 +748,31 @@ export class SqliteCache {
    * but ONLY clean ones. A dirty row is unsynced local work: deleting it would
    * lose it, and the push that follows will recreate it remotely. Chunk mirror
    * rows go with their parent. Returns the number of rows deleted.
+   *
+   * `syncedBefore` (ms epoch, W2): also skip rows whose `synced_at` is
+   * after that instant. The caller passes the time its remote listing
+   * started; a row pushed (or hydrated) after that may be live remotely even
+   * though the listing could not see it. A row stamped in the same ms is
+   * still deleted: its push had already committed, so the listing saw it.
+   * Every `synced_at` this class writes is `syncStamp()` ISO-8601, so the
+   * comparison is lexical; a legacy `datetime('now')` value sorts as older.
    */
-  deleteCleanByKeys(projectId: string, keys: string[]): number {
+  deleteCleanByKeys(projectId: string, keys: string[], opts: { syncedBefore?: number } = {}): number {
     if (keys.length === 0) return 0
-    const find = this.db.prepare('SELECT id FROM memories WHERE project_id = ? AND key = ? AND dirty = 0')
+    const find = opts.syncedBefore === undefined
+      ? this.db.prepare('SELECT id FROM memories WHERE project_id = ? AND key = ? AND dirty = 0')
+      : this.db.prepare(
+          'SELECT id FROM memories WHERE project_id = ? AND key = ? AND dirty = 0 AND (synced_at IS NULL OR synced_at <= ?)',
+        )
+    const cutoff = opts.syncedBefore === undefined ? null : new Date(opts.syncedBefore).toISOString()
     const del = this.db.prepare('DELETE FROM memories WHERE id = ?')
     const delChunks = this.db.prepare('DELETE FROM memory_chunks WHERE memory_id = ?')
     let deleted = 0
     const run = this.db.transaction((ks: string[]) => {
       for (const key of ks) {
-        const row = find.get(projectId, key) as { id: string } | undefined
+        const row = (cutoff === null ? find.get(projectId, key) : find.get(projectId, key, cutoff)) as
+          | { id: string }
+          | undefined
         if (!row) continue
         deleted += del.run(row.id).changes
         delChunks.run(row.id)
@@ -1325,6 +1372,15 @@ interface SqliteMemoryRow {
   created_by: string | null
   updated_by: string | null
   embedding: string | null
+}
+
+/**
+ * `synced_at` stamp. ISO-8601 from the JS clock, ms precision, so it
+ * compares directly with the listing start SupabaseSync passes to
+ * deleteCleanByKeys (W2).
+ */
+function syncStamp(): string {
+  return new Date().toISOString()
 }
 
 function rowToMemory(row: SqliteMemoryRow): Memory {

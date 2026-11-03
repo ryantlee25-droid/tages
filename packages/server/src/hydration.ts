@@ -84,6 +84,8 @@ export function createReadFreshener(
   const bootWaitMs = opts.bootWaitMs ?? BOOT_READ_WAIT_MS
   const maxAgeMs = opts.maxAgeMs ?? READ_FRESHNESS_MS
   let bootDone = bootHydrated === null
+  /** One shared deadline for every read that arrives while boot is in flight. */
+  let bootDeadline: number | null = null
   void bootHydrated?.then(() => {
     bootDone = true
   })
@@ -91,9 +93,12 @@ export function createReadFreshener(
     if (!sync) return
     try {
       if (!bootDone && bootHydrated) {
+        const now = Date.now()
+        if (bootDeadline === null) bootDeadline = now + bootWaitMs
+        const remaining = bootDeadline - now
         let timer: ReturnType<typeof setTimeout> | undefined
         const cap = new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, bootWaitMs)
+          timer = setTimeout(resolve, Math.max(0, remaining))
           timer.unref?.()
         })
         try {
@@ -101,6 +106,9 @@ export function createReadFreshener(
         } finally {
           if (timer) clearTimeout(timer)
         }
+        // W3: once the cap has been paid, a hung boot hydrate no longer
+        // delays reads. hydrateIfStale below bounds any further wait.
+        bootDone = true
       }
       await sync.hydrateIfStale(maxAgeMs)
     } catch {

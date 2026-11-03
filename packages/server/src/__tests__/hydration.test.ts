@@ -74,11 +74,14 @@ function makeEmptyFake(rows: Array<Record<string, unknown>>, o: FakeOpts = {}) {
       eq(c: string, v: unknown) { filters.push(['eq', c, v]); return b },
       gt(c: string, v: unknown) { filters.push(['gt', c, v]); return b },
       in(c: string, v: unknown) { filters.push(['in', c, v]); return b },
+      not(c: string, op: string, v: unknown) { filters.push([`not.${op}`, c, v]); return b },
       order() { return b },
       range() { return b },
+      limit() { return b },
       then(res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) {
         const hit = rows.filter((r) => filters.every(([k, c, v]) =>
-          k === 'eq' ? r[c] === v : k === 'gt' ? String(r[c]) > String(v) : k === 'in' ? (v as unknown[]).includes(r[c]) : true))
+          k === 'eq' ? r[c] === v : k === 'gt' ? String(r[c]) > String(v) : k === 'in' ? (v as unknown[]).includes(r[c])
+            : k === 'not.in' ? !String(v).includes(`"${String(r[c])}"`) : true))
         let out: unknown
         if (opts?.head) {
           headCalls.push(cols)
