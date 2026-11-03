@@ -4,6 +4,11 @@ import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
 import { scanForSensitiveData } from './safety'
 import { tokenize } from '../search/tokenizer'
+import { embedOnWrite } from './embed-on-write'
+import type { SupabaseClient } from '@supabase/supabase-js'
+
+/** Capped await: phase tests spawn a short-lived server per call, so fire-and-forget would be cut off. */
+const EMBED_TIMEOUT_MS = 10_000
 
 /**
  * Passive observation tool. Agents call this during work to report
@@ -42,7 +47,8 @@ export async function handleObserve(
   sync: SupabaseSync | null,
   callerUserId?: string,
   autoSaveThreshold?: number | null,
-): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  supabaseClient?: SupabaseClient,
+): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   const text = args.observation.trim()
   if (text.length < 15) {
     return { content: [{ type: 'text', text: 'Observation noted.' }] }
@@ -104,10 +110,16 @@ export async function handleObserve(
     cache.indexMemoryTokens(memory.id, projectId, tokens)
   }
 
+  let remoteOk = true
   if (sync) {
-    const ok = await sync.remoteInsert(memory)
-    if (ok) cache.markSynced([memory.id])
+    remoteOk = await sync.remoteInsert(memory)
+    if (remoteOk) cache.markSynced([memory.id])
   }
+
+  // Embed at create time (pending rows too: recall filters status='live', so
+  // a later promotion needs no embedding work). Must follow remoteInsert:
+  // remoteUpdateEmbedding is an update and needs the remote row to exist.
+  await embedOnWrite(memory, text, cache, sync, supabaseClient, { timeoutMs: EMBED_TIMEOUT_MS })
 
   // Immediate auto-save: if the just-stored memory already meets the threshold,
   // promote it to live without waiting for the next sweep.
@@ -115,6 +127,7 @@ export async function handleObserve(
     const promotedAt = new Date().toISOString()
     // Local cache is correctly keyed by the local row id.
     cache.updateMemoryStatus(memory.id, 'live', promotedAt)
+    let promotedRemotely = true
     if (sync) {
       // Best-effort remote promotion; sync.flush() will catch any remaining
       // dirty records.
@@ -127,7 +140,21 @@ export async function handleObserve(
       // randomUUID(). The remote row stayed `pending` and no teammate's
       // status='live' recall could ever see it, even though the local cache
       // showed it promoted.
-      await sync.remoteVerifyMemory(projectId, key, promotedAt)
+      promotedRemotely = remoteOk && await sync.remoteVerifyMemory(projectId, key, promotedAt)
+    }
+    if (!promotedRemotely) {
+      // The shared store refused (RLS: read-only member) or matched zero rows.
+      // Do not leave the local cache claiming a promotion that did not happen.
+      cache.updateMemoryStatus(memory.id, 'pending')
+      return {
+        isError: true,
+        content: [{
+          type: 'text',
+          text: `Staged "${key}" (${matchedType}) but auto-save did NOT apply: the shared store refused the promotion ` +
+            '(your role may be read-only on this project) or could not be reached. The memory stays pending; ' +
+            'an owner or admin must approve it with `tages pending`.',
+        }],
+      }
     }
     console.error(`[tages] Auto-saved observed memory "${key}" (confidence ${memory.confidence} >= threshold ${autoSaveThreshold})`)
     return {
@@ -138,10 +165,13 @@ export async function handleObserve(
     }
   }
 
+  const localNote = remoteOk
+    ? ''
+    : ' Note: the shared store did not accept this write, so it is saved on this machine only for now.'
   return {
     content: [{
       type: 'text',
-      text: `Staged memory '${key}' for review. Run \`tages pending\` to verify or approve in bulk.`,
+      text: `Staged memory '${key}' for review. Run \`tages pending\` to verify or approve in bulk.${localNote}`,
     }],
   }
 }

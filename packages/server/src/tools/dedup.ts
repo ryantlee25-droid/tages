@@ -37,7 +37,7 @@ export async function handleConsolidate(
   cache: SqliteCache,
   sync: SupabaseSync | null,
   callerUserId?: string,
-): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   const survivor = cache.getByKey(projectId, args.survivorKey)
   const victim = cache.getByKey(projectId, args.victimKey)
 
@@ -55,25 +55,43 @@ export async function handleConsolidate(
     ? { ...result.surviving, updatedBy: callerUserId }
     : result.surviving
 
-  // Save merged survivor
-  cache.upsertMemory(surviving, true)
+  // Remote FIRST (bug 5): a read-only member's write is refused by RLS, and
+  // the tool must say so instead of reporting a merge that never happened.
   if (sync) {
     const ok = await sync.remoteInsert(surviving)
-    if (ok) cache.markSynced([surviving.id])
+    if (!ok) {
+      return {
+        isError: true,
+        content: [{
+          type: 'text',
+          text: `Permission denied: could not save the merged "${args.survivorKey}" to the shared store (your role may be ` +
+            'read-only on this project, or the database was unreachable). Nothing was changed.',
+        }],
+      }
+    }
   }
 
-  // Delete victim
-  cache.deleteByKey(projectId, result.deletedKey)
+  // Save merged survivor
+  cache.upsertMemory(surviving, true)
+  if (sync) cache.markSynced([surviving.id])
+
+  // Delete victim. remoteDelete false = error or a visible row survived a
+  // 0-row delete (RLS). (This previously reached for a nonexistent
+  // `sync.client`, threw, and the catch hid it: the remote victim never died.)
   if (sync) {
-    try {
-      // Best-effort remote delete
-      await (sync as unknown as { client: { from: (t: string) => { delete: () => { eq: (a: string, b: string) => { eq: (a: string, b: string) => Promise<unknown> } } } } }).client
-        .from('memories')
-        .delete()
-        .eq('project_id', projectId)
-        .eq('key', result.deletedKey)
-    } catch { /* remote delete is best-effort */ }
+    const ok = await sync.remoteDelete(projectId, result.deletedKey)
+    if (!ok) {
+      return {
+        isError: true,
+        content: [{
+          type: 'text',
+          text: `Merged into "${args.survivorKey}", but could not delete "${result.deletedKey}" from the shared store ` +
+            '(permission denied or unreachable). Both memories still exist for teammates; ask an owner or admin to delete it.',
+        }],
+      }
+    }
   }
+  cache.deleteByKey(projectId, result.deletedKey)
 
   // Log the consolidation
   cache.logDedupConsolidation(projectId, args.survivorKey, args.victimKey, result.mergeNote)

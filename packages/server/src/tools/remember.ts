@@ -7,7 +7,7 @@ import { scanForSensitiveData, formatSafetyWarnings, hasHighSeverity } from './s
 import { getEncryptionKey, encryptValue } from '../crypto/encryption'
 import { computeFieldDiff } from '../diff/field-diff'
 import { tokenize } from '../search/tokenizer'
-import { generateEmbedding, generateChunkEmbeddings } from '../embeddings'
+import { embedOnWrite } from './embed-on-write'
 import { extractDatesFromMemory } from '../temporal/date-extraction'
 
 export async function handleRemember(
@@ -196,7 +196,9 @@ export async function handleRemember(
   // search. Fire-and-forget — never block the tool response on this network
   // call. Generated from plaintextForIndex (pre-encryption plaintext), never
   // from ciphertext, so encrypted-at-rest memories still get correct vectors.
-  scheduleEmbeddingSync(memory, plaintextForIndex, cache, sync, supabaseClient)
+  // Shared helper (tools/embed-on-write.ts), same path observe/session_end/
+  // verify_memory/import_claude_md use.
+  void embedOnWrite(memory, plaintextForIndex, cache, sync, supabaseClient)
 
   const action = existing ? 'Updated' : 'Stored'
   const extras: string[] = []
@@ -287,104 +289,4 @@ function beginRemoteErrorCapture(): string[] {
 
 function endRemoteErrorCapture(collector: string[]): void {
   remoteErrorCollectors.delete(collector)
-}
-
-/**
- * Generate a semantic-search embedding for a memory and sync it to the local
- * cache and Supabase, without blocking the caller.
- *
- * Deliberately not awaited by handleRemember — embedding generation is a
- * network call (hosted edge function, Ollama, or OpenAI) that can take
- * seconds, and the MCP tool
- * response must return immediately. Any failure here (no provider available,
- * network error) is logged and swallowed; the memory itself is already safely
- * stored by the time this runs.
- *
- * Race-safety — this path resolves SECONDS after the original write, so by the
- * time it runs the row it captured may have been overwritten (a concurrent
- * remember(key, V2)) or deleted (a concurrent forget). Therefore it must NOT
- * re-write the full captured row. It performs a NARROW, embedding-only,
- * (project_id, key)-keyed update in both places:
- *
- *   - Locally via cache.setEmbedding: touches only the `embedding` column,
- *     never value/tags/dirty. No-op if the row was deleted. This avoids
- *     reverting V2 back to the stale captured V1 (data loss) and avoids
- *     clearing a dirty flag that a newer update set (stranded flush).
- *   - Remotely via sync.remoteUpdateEmbedding: an `.update()` (not upsert)
- *     serialized on the same queue as remoteDelete, so it cannot resurrect a
- *     row deleted by a concurrent forget, and cannot clobber a newer value.
- *
- * We deliberately do NOT markSynced here: the whole-row dirty state belongs to
- * the write path, not the embedding path.
- */
-function scheduleEmbeddingSync(
-  memory: Memory,
-  plaintext: string,
-  cache: SqliteCache,
-  sync: SupabaseSync | null,
-  supabaseClient?: SupabaseClient,
-): void {
-  const { projectId, key } = memory
-  // Both fire-and-forget chains get the SAME options object, so the pooled
-  // vector and the per-chunk vectors are produced by one provider against one
-  // project — they are compared to each other at recall time.
-  const embedOpts = { supabaseClient, projectId }
-  void generateEmbedding(plaintext, embedOpts)
-    .then(async (embedding) => {
-      if (!embedding) return
-      // Local: embedding-only column update, keyed by (projectId, key).
-      cache.setEmbedding(projectId, key, embedding)
-      if (sync) {
-        // Remote: serialized, embedding-only update; no-op if row was deleted.
-        await sync.remoteUpdateEmbedding(projectId, key, embedding)
-      }
-    })
-    .catch((err) => {
-      console.error('[tages] Embedding generation/sync failed:', (err as Error).message)
-    })
-
-  // Task 9 (Phase 2): additionally persist per-chunk embeddings for
-  // chunk-aware recall. Deliberately a SEPARATE fire-and-forget chain from
-  // the pooled embedding above, not chained after it — a chunk-generation or
-  // chunk-persistence failure must never affect the pooled embedding write
-  // (fail-open for the write path as a whole; chunk generation itself is
-  // fail-closed internally, see generateChunkEmbeddings). Keyed by
-  // memory.id, not (projectId, key): memory_chunks rows carry a memory_id FK,
-  // not a (project_id, key) unique constraint, and handleRemember already
-  // guarantees memory.id is the existing row's id on an update (line 70:
-  // `existing?.id || randomUUID()`), so this is safe the same way the pooled
-  // path's (projectId, key) keying is safe for the memories table.
-  // Wrapped in Promise.resolve().then(...) rather than calling
-  // generateChunkEmbeddings(plaintext) directly: this guarantees even a
-  // SYNCHRONOUS throw from the call itself (not just an async rejection)
-  // lands in the .catch() below instead of escaping scheduleEmbeddingSync
-  // and crashing handleRemember's caller — consistent with this being a
-  // fully fail-open path.
-  void Promise.resolve()
-    .then(() => generateChunkEmbeddings(plaintext, embedOpts))
-    .then(async (result) => {
-      if (!result) return
-      // Fix B (finding 3): encrypt chunk_text at rest with the SAME field
-      // encryption as memories.value when a key is configured — otherwise the
-      // chunk mirror leaks the memory's plaintext even though memories.value is
-      // encrypted. The per-chunk embedding was computed from PLAINTEXT
-      // (result.chunks[].embedding) before this map, exactly as
-      // memories.embedding is computed from plaintextForIndex, so semantic
-      // search is unaffected while nothing plaintext is persisted at rest.
-      const encKey = getEncryptionKey()
-      const chunksAtRest = encKey
-        ? result.chunks.map((c) => ({ text: encryptValue(c.text, encKey), embedding: c.embedding }))
-        : result.chunks
-      // Fix C: markChunksSynced clears dirty only for the exact rows upsertChunks
-      // just inserted, so a concurrent v2 chunk write during the remote await
-      // (below) is not clobbered — see supabase-sync.ts _flushDirtyChunks.
-      const rowIds = cache.upsertChunks(memory.id, projectId, chunksAtRest)
-      if (sync) {
-        const ok = await sync.remoteUpsertChunks(projectId, memory.key, chunksAtRest)
-        if (ok) cache.markChunksSynced(rowIds)
-      }
-    })
-    .catch((err) => {
-      console.error('[tages] Chunk embedding generation/sync failed:', (err as Error).message)
-    })
 }
