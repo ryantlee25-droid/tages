@@ -168,6 +168,9 @@ export async function run(ctx) {
     const fence = ['## Conventions', `- Real rule for cm${s}fence that is long enough to import.`, '```md', '## Example output', `- FENCEHEAD_SENTINEL_${s} sample list item inside a fence`, '```', ''].join('\n')
     await mcpOne(bins.serverBin, A, 'import_claude_md', { content: fence }, { graceful: true })
     const fenceLeak = await api.rest(`/memories?project_id=eq.${project.id}&value=ilike.*FENCEHEAD_SENTINEL_${s}*&select=key,type`, { as: asA })
+    // Positive control: the import itself ran, so an absent sentinel means stripped, not rejected.
+    const fenceReal = await api.rest(`/memories?project_id=eq.${project.id}&value=ilike.*cm${s}fence*&select=key`, { as: asA })
+    report.check('control — the real rule next to the fence was imported', Array.isArray(fenceReal.body) && fenceReal.body.length === 1, `${fenceReal.body?.length ?? 'error'} rows`)
     report.check('a heading-looking line INSIDE a fenced block does not split the section or leak code', Array.isArray(fenceLeak.body) && fenceLeak.body.length === 0, fenceLeak.body?.length ? `leaked as ${fenceLeak.body.map(b => `${b.type}:${b.key}`)} (import-claude-md.ts splits on /^#{2,3}/ before stripping fences)` : 'absent')
   }
 
@@ -181,6 +184,14 @@ export async function run(ctx) {
     survivors.length > 0,
     survivors.length ? `original preserved in: ${survivors.join(', ')}` : `DESTROYED: exit ${exp.code}, "${tail(exp.out, 1)}". ./CLAUDE.md no longer contains ${handSentinel}; export.ts:64 is an unconditional fs.writeFileSync`,
   )
+  report.check(
+    'and the refusal is explicit: exit 1, message names --output and --force',
+    exp.code === 1 && /already exists/i.test(exp.out) && /--output/.test(exp.out) && /--force/.test(exp.out),
+    `exit ${exp.code}: ${tail(exp.out, 2)}`,
+  )
+  const expForce = cli(bins.cliBin, A, ['export', '--force'])
+  const forced = fs.readFileSync(claudePath, 'utf-8')
+  report.check('`tages export --force` does replace the file (with the live rules)', expForce.code === 0 && forced !== original && forced.includes(items.conv2.value), `exit ${expForce.code}`)
   fs.writeFileSync(claudePath, original) // restore for the checks below
 
   // ---- EXPORT: content fidelity ------------------------------------------------
@@ -235,7 +246,7 @@ export async function run(ctx) {
   const garbage = '{ "mcpServers": { this is not json'
   fs.writeFileSync(path.join(B13.work, '.mcp.json'), garbage)
   const bad = cli(bins.cliBin, B13, ['link', '--project-id', project.id])
-  report.check('link refuses to overwrite an unparsable .mcp.json (and says so)', fs.readFileSync(path.join(B13.work, '.mcp.json'), 'utf-8') === garbage && bad.code !== 0, `exit ${bad.code}: ${tail(bad.out, 1)}`)
+  report.check('link refuses to overwrite an unparsable .mcp.json (and says so)', fs.readFileSync(path.join(B13.work, '.mcp.json'), 'utf-8') === garbage && bad.code !== 0 && /could not parse/i.test(bad.out) && !/\n\s+at /.test(bad.out), `exit ${bad.code}: ${tail(bad.out, 1)}`)
 
   // init --local, in yet another empty repo, must not write CLAUDE.md either.
   const L = await cloneIdentity(api, B, 'L13', { password: ctx.password, root: ctx.root })

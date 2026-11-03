@@ -258,13 +258,16 @@ export async function run(ctx) {
   )
 
   // ---- (f) a read-only member tries to approve -------------------------------
+  // What a permission refusal must say (CLI write-guard, MCP write paths).
+  const DENIED = /permission denied|refused|read-only|cannot .* on this project/i
   // PostgREST: an UPDATE that RLS filters to zero rows is a SUCCESS with no
   // error. Without `.select()` the CLI cannot tell that from a real update.
   const memberVerify = cli(bins.cliBin, D, ['verify', s1.key])
   const afterMemberVerify = await statusOf(s1.key)
   report.check(
     'a read-only member running `tages verify` gets an error, OR the row really became live',
-    memberVerify.code !== 0 || afterMemberVerify === 'live',
+    // A refusal must SAY it is a permission refusal; a crash or bad argument must not pass.
+    (memberVerify.code !== 0 && DENIED.test(memberVerify.out) && afterMemberVerify === 'pending') || afterMemberVerify === 'live',
     memberVerify.code !== 0
       ? `refused (exit ${memberVerify.code}): ${tail(memberVerify.out, 1)}`
       : afterMemberVerify === 'live'
@@ -279,7 +282,7 @@ export async function run(ctx) {
   const claimed = /verified:/i.test(memberMcpVerify.text)
   report.check(
     "a read-only member's agent calling `verify_memory` is not told it succeeded while the row stays pending",
-    !claimed || afterMcp === 'live',
+    (!claimed && DENIED.test(memberMcpVerify.text) && afterMcp === 'pending') || afterMcp === 'live',
     !claimed
       ? `not claimed: ${head(memberMcpVerify.text, 1)}`
       : afterMcp === 'live'
@@ -292,7 +295,7 @@ export async function run(ctx) {
   const afterBulk = (await pendingIds()).length
   report.check(
     'a read-only member running `pending --approve-all --yes` gets an error, OR rows really became live',
-    memberBulk.code !== 0 || afterBulk < beforeBulk,
+    (memberBulk.code !== 0 && DENIED.test(memberBulk.out) && afterBulk === beforeBulk) || afterBulk < beforeBulk,
     memberBulk.code !== 0
       ? `refused (exit ${memberBulk.code}): ${tail(memberBulk.out, 1)}`
       : afterBulk < beforeBulk
@@ -327,7 +330,7 @@ export async function run(ctx) {
   report.check('a read-only member cannot change the project auto-save threshold', Number(t2) === 0.75, `stored value is ${t2}`)
   report.check(
     'and the member is told it did not apply',
-    memberSet.code !== 0 || !/set to/i.test(memberSet.out) || Number(t2) === 0.1,
+    (memberSet.code !== 0 && DENIED.test(memberSet.out)) || Number(t2) === 0.1,
     memberSet.code !== 0 ? `refused (exit ${memberSet.code})` : `SILENT NO-OP: exit 0, CLI said "${tail(memberSet.out, 1)}" but the threshold is still ${t2} (settings.ts:122 has no .select())`,
   )
 
