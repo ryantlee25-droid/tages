@@ -27,6 +27,14 @@ Fixes found by new end-to-end phases 12-16 (approval queue, CLAUDE.md, recency, 
 ### Sessions
 - **Every cloud command fails loudly on a dead session** (central guard in `createAuthenticatedClient`; `doctor` opts out). `remember` keeps the memory locally and pushes it after `tages login`; `forget` refuses and deletes nothing, since a local-only delete would come back on the next pull.
 
+### Review-round hardening
+- **A teammate's fast clock can no longer hide edits or archives.** The sync watermark is clamped to local time and re-checks a 10-minute window, so a retracted memory is not served as live.
+- **Deletion sync never removes a row that was just pushed**, and listings page by id so a concurrent delete cannot skip rows.
+- **No more hangs on a bad network.** Every Supabase call in sync times out after 10s, and a stalled boot costs one wait, not one per read.
+- **Secret scanning and encryption on every write path.** `session_end` and `import_claude_md` now run the same secret gate as `remember`, and all three agent paths encrypt at rest when `TAGES_ENCRYPTION_KEY` is set. With a key set, `tages pending` and the dashboard show those pending values as ciphertext.
+- **An edit made while a flush is in flight stays queued** instead of being marked synced.
+- **`tages export --format <typo>` is an error**, and an export-then-import round trip keeps every memory type.
+
 ## 2026-08-25 — `@tages/cli` 0.5.5 · `@tages/shared` 0.2.3
 
 Six first-run defects found while provisioning a real team project and inviting two teammates. All six sit on the onboarding path, which is why 1,500+ unit tests missed every one. See `README.md` "Release Notes" for the full detail.

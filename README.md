@@ -149,7 +149,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ### 2026-11-03 — `v0.5.7`: the capture, review, recall loop works end to end
 
-Five new e2e phases (85 checks) exercised the approval queue, CLAUDE.md import/export, recency across teammates, session longevity, and a fresh-machine onboarding. About 32 failed against 0.5.6. All pass now: 281/281 against prod.
+Five new e2e phases (85 checks) exercised the approval queue, CLAUDE.md import/export, recency across teammates, session longevity, and a fresh-machine onboarding. About 32 failed against 0.5.6. All pass now against prod.
 
 - **Embeddings on every path to live.** `observe`, `session_end`, `verify_memory`, `tages verify`, `tages pending --approve-all`, and `import_claude_md` now generate embeddings (`packages/server/src/tools/embed-on-write.ts`, `packages/cli/src/lib/embed-promoted.ts`). Hydrate also copies cloud embeddings into teammates' caches, which it never did. A boot backfill embeds live rows still missing one.
 - **Retraction propagates.** `hydrate()` deletes local rows that are gone or no longer live in the cloud, skips dirty rows, never mass-deletes on an empty or failed answer, and clears the last memory only after an authenticated exact count of 0.
@@ -158,6 +158,7 @@ Five new e2e phases (85 checks) exercised the approval queue, CLAUDE.md import/e
 - **Dead sessions.** `createAuthenticatedClient` exits 1 on an expired or signed-out session. `openCliSync` instead goes local-only with a warning, so `remember` stays dirty and pushes after login and the background reconcile never fails a command. `forget` refuses on a dead session and deletes nothing.
 - **Recall ranking.** Evidence multiplies the fused score (`packages/cli/src/commands/recall.ts`); bug 13 was this sort, not the HNSW index, so no migration.
 - **CLAUDE.md safety.** `export` needs `--force` to overwrite; Don't/Never rules survive the round trip; fenced `##` lines no longer split sections.
+- **Review-round hardening.** Watermark clamped to local now plus a 10-minute skew window (no migration); deletion skips rows synced after the listing began; keyset paging; 10s timeouts on sync requests; revision-checked mark-clean; secret gate and at-rest encryption on `session_end` and `import_claude_md`; no inline embedding fan-out after the 10s deadline.
 - **Unchanged:** `@tages/shared` stays 0.2.4. `archive_memory` stays Pro-gated by design.
 
 ### 2026-08-30 — `v0.5.6`: rotated refresh tokens were only kept in memory
