@@ -7,6 +7,8 @@ import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { embedOnWrite } from './embed-on-write'
+import { scanForSensitiveData, hasHighSeverity, formatSafetyWarnings, type SafetyWarning } from './safety'
+import { getEncryptionKey, encryptValue } from '../crypto/encryption'
 
 type ImportStrategy = 'skip' | 'overwrite'
 
@@ -224,18 +226,43 @@ export async function handleImportClaudeMd(
   // Deduplicate keys within the parsed set (keep first occurrence)
   const seenKeys = new Set<string>()
   const deduped: ParsedMemory[] = []
+  // Same secret gate as `remember` (no --force here): a rule with a
+  // high-severity secret is skipped and reported, never stored, synced or
+  // sent to the embedding provider; the rest of the import proceeds. Medium
+  // (PII) warnings are stored and surfaced. Blocked rules are reported by
+  // detector name only: the key is a slug of the value and could carry part
+  // of the secret.
+  let blocked = 0
+  const blockedNames = new Set<string>()
+  const piiWarnings: SafetyWarning[] = []
   for (const item of parsed) {
-    if (!seenKeys.has(item.key)) {
-      seenKeys.add(item.key)
-      deduped.push(item)
+    if (seenKeys.has(item.key)) continue
+    seenKeys.add(item.key)
+    const warnings = scanForSensitiveData(`${item.key} ${item.value}`)
+    if (hasHighSeverity(warnings)) {
+      blocked++
+      for (const w of warnings) if (w.severity === 'high') blockedNames.add(w.name)
+      continue
     }
+    for (const w of warnings) {
+      if (!piiWarnings.some(p => p.name === w.name)) piiWarnings.push(w)
+    }
+    deduped.push(item)
   }
 
   // null = lookup failed: fall back to the local cache only, and say so.
-  const remote = sync ? await sync.remoteGetByKeys(args.projectId, deduped.map(d => d.key)) : null
-  const remoteUnavailable = sync !== null && remote === null
+  const remote = sync && deduped.length > 0
+    ? await sync.remoteGetByKeys(args.projectId, deduped.map(d => d.key))
+    : null
+  const remoteUnavailable = sync !== null && deduped.length > 0 && remote === null
 
   const written: Memory[] = []
+  // Plaintext per key, for the embedder: values are encrypted at rest below
+  // when TAGES_ENCRYPTION_KEY is set, exactly as `remember` stores them.
+  const plaintextByKey = new Map<string, string>()
+  const encKey = getEncryptionKey()
+  const atRest = (plaintext: string): { value: string; encrypted: boolean } =>
+    encKey ? { value: encryptValue(plaintext, encKey), encrypted: true } : { value: plaintext, encrypted: false }
 
   for (const item of deduped) {
     const local = cache.getByKey(args.projectId, item.key)
@@ -251,29 +278,29 @@ export async function handleImportClaudeMd(
         continue
       }
       // overwrite: start from the remote row (if any) so id and created_by
-      // stay the original author's. The new value is plaintext (import never
-      // encrypts), so clear `encrypted`; drop the stale embedding so the
-      // remote vector is replaced by embedOnWrite rather than re-sent.
+      // stay the original author's. `encrypted` follows the NEW value (set by
+      // atRest), not the old row; drop the stale embedding so the remote
+      // vector is replaced by embedOnWrite rather than re-sent.
       const memory: Memory = {
         ...existing,
-        value: item.value,
+        ...atRest(item.value),
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         type: item.type as any,
         updatedAt: now,
         source: 'import' as MemorySource,
-        encrypted: false,
         embedding: undefined,
         ...(callerUserId ? { updatedBy: callerUserId } : {}),
       }
       cache.upsertMemory(memory)
       written.push(memory)
+      plaintextByKey.set(memory.key, item.value)
       imported++
     } else {
       const memory: Memory = {
         id: randomUUID(),
         projectId: args.projectId,
         key: item.key,
-        value: item.value,
+        ...atRest(item.value),
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         type: item.type as any,
         source: 'import' as MemorySource,
@@ -287,6 +314,7 @@ export async function handleImportClaudeMd(
       }
       cache.upsertMemory(memory)
       written.push(memory)
+      plaintextByKey.set(memory.key, item.value)
       imported++
     }
   }
@@ -308,24 +336,39 @@ export async function handleImportClaudeMd(
   // Embeddings, after the push (remoteUpdateEmbedding needs the remote row).
   // One row at a time under ONE shared deadline: an import can be dozens of
   // rows, and firing them all at once bursts the hosted embed function (546 /
-  // 429), whose bounded retry then yields null for most of them. Rows still
-  // unembedded at the deadline are started in the background; the boot
-  // backfill picks up any that do not finish.
+  // 429), whose bounded retry then yields null for most of them. Rows not
+  // started by the deadline are NOT fanned out: they keep a null embedding
+  // and the boot backfill (runEmbeddingBackfill) picks them up.
   // Chunk rows are keyed by the LOCAL row id, which can differ from the
   // remote id when the cache already held the key.
   const deadline = Date.now() + EMBED_TIMEOUT_MS
+  let deferred = 0
   for (const memory of written) {
-    const localId = cache.getByKey(args.projectId, memory.key)?.id ?? memory.id
-    const job = { ...memory, id: localId }
     const left = deadline - Date.now()
     if (left <= 0) {
-      void embedOnWrite(job, memory.value, cache, sync, supabaseClient)
+      deferred++
       continue
     }
-    await embedOnWrite(job, memory.value, cache, sync, supabaseClient, { timeoutMs: left })
+    const localId = cache.getByKey(args.projectId, memory.key)?.id ?? memory.id
+    const job = { ...memory, id: localId }
+    const plaintext = plaintextByKey.get(memory.key) ?? memory.value
+    await embedOnWrite(job, plaintext, cache, sync, supabaseClient, { timeoutMs: left })
+  }
+  if (deferred > 0) {
+    console.error(
+      `[tages] import_claude_md: embedding deadline reached; ${deferred} of ${written.length} memories left ` +
+        'without an embedding for the boot backfill to pick up',
+    )
   }
 
   const notes: string[] = []
+  if (blocked > 0) {
+    notes.push(
+      `Skipped ${blocked} ${blocked === 1 ? 'rule' : 'rules'} containing detected secrets ` +
+        `(${[...blockedNames].join(', ')}); ${blocked === 1 ? 'it was' : 'they were'} not imported. ` +
+        'Remove the secret from CLAUDE.md and re-import.',
+    )
+  }
   if (remoteUnavailable) {
     notes.push('Could not read the shared store, so "skip" was judged against this machine\'s cache only.')
   }
@@ -339,7 +382,7 @@ export async function handleImportClaudeMd(
   return {
     content: [{
       type: 'text',
-      text: `Imported ${imported} memories (${skipped} skipped)${notes.length ? `\n\n${notes.join('\n')}` : ''}`,
+      text: `Imported ${imported} memories (${skipped} skipped)${notes.length ? `\n\n${notes.join('\n')}` : ''}${formatSafetyWarnings(piiWarnings)}`,
     }],
   }
 }

@@ -14,7 +14,7 @@ vi.mock('../embeddings', () => gen)
 import { SqliteCache } from '../cache/sqlite'
 import { encryptValue } from '../crypto/encryption'
 import type { SupabaseSync } from '../sync/supabase-sync'
-import { runEmbeddingBackfill, BACKFILL_LIMIT } from '../sync/embedding-backfill'
+import { runEmbeddingBackfill, BACKFILL_LIMIT, resetBackfillFailures } from '../sync/embedding-backfill'
 
 const PROJECT = 'backfill-project'
 
@@ -50,6 +50,7 @@ describe('runEmbeddingBackfill', () => {
     cache = new SqliteCache(dbPath)
     gen.generateEmbedding.mockReset().mockResolvedValue([0.1, 0.2, 0.3])
     gen.generateChunkEmbeddings.mockReset().mockResolvedValue(null)
+    resetBackfillFailures()
   })
 
   afterEach(() => {
@@ -116,6 +117,45 @@ describe('runEmbeddingBackfill', () => {
     const n = await runEmbeddingBackfill(PROJECT, cache, fakeSync() as unknown as SupabaseSync, undefined, { rowTimeoutMs: 20 })
     expect(n).toBe(2)
     expect(embeddingOf(cache, 'b')).toEqual([1, 2])
+  })
+
+  describe('starvation (S1)', () => {
+    const prevKey = process.env.TAGES_ENCRYPTION_KEY
+    afterEach(() => {
+      if (prevKey === undefined) delete process.env.TAGES_ENCRYPTION_KEY
+      else process.env.TAGES_ENCRYPTION_KEY = prevKey
+    })
+
+    it('20 newest undecryptable rows do not starve older embeddable rows', async () => {
+      delete process.env.TAGES_ENCRYPTION_KEY
+      for (let i = 0; i < 20; i++) {
+        cache.upsertMemory(mem({ key: `enc-${i}`, value: 'enc:v1:AAAA', encrypted: true, updatedAt: `2026-06-01T00:00:${String(i).padStart(2, '0')}.000Z` }), false)
+      }
+      cache.upsertMemory(mem({ key: 'older-plain', value: 'use pnpm', updatedAt: '2026-01-01T00:00:00.000Z' }), false)
+      const n = await runEmbeddingBackfill(PROJECT, cache, fakeSync() as unknown as SupabaseSync)
+      expect(n).toBe(1)
+      expect(gen.generateEmbedding).toHaveBeenCalledTimes(1)
+      expect(embeddingOf(cache, 'older-plain')).toEqual([0.1, 0.2, 0.3])
+    })
+
+    it('rows the provider refuses are not retried by a second run in the same process', async () => {
+      gen.generateEmbedding.mockImplementation(async (text: string) => (text === 'refused' ? null : [7, 7]))
+      for (let i = 0; i < 3; i++) {
+        cache.upsertMemory(mem({ key: `refused-${i}`, value: 'refused', updatedAt: `2026-06-01T00:00:0${i}.000Z` }), false)
+      }
+      cache.upsertMemory(mem({ key: 'older', value: 'fine', updatedAt: '2026-01-01T00:00:00.000Z' }), false)
+      expect(await runEmbeddingBackfill(PROJECT, cache, fakeSync() as unknown as SupabaseSync, undefined, { limit: 3 })).toBe(3)
+      expect(embeddingOf(cache, 'older')).toBeNull()
+      expect(await runEmbeddingBackfill(PROJECT, cache, fakeSync() as unknown as SupabaseSync, undefined, { limit: 3 })).toBe(1)
+      expect(embeddingOf(cache, 'older')).toEqual([7, 7])
+      expect(gen.generateEmbedding).toHaveBeenCalledTimes(4)
+    })
+
+    it('never makes more than `limit` provider calls even with a wide window', async () => {
+      for (let i = 0; i < 150; i++) cache.upsertMemory(mem(), false)
+      expect(await runEmbeddingBackfill(PROJECT, cache, fakeSync() as unknown as SupabaseSync)).toBe(BACKFILL_LIMIT)
+      expect(gen.generateEmbedding).toHaveBeenCalledTimes(BACKFILL_LIMIT)
+    })
   })
 
   describe('encrypted rows', () => {
