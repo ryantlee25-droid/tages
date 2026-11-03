@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { execSync } from 'child_process'
 import chalk from 'chalk'
-import { createAuthenticatedClient } from '../auth/session.js'
+import { createAuthenticatedClientWithStatus, requireLiveSession } from '../auth/session.js'
 import { loadProjectConfig } from '../config/project.js'
 import { getCachePath, getProjectsDir } from '../config/paths.js'
 
@@ -77,7 +77,11 @@ export async function statusCommand(options: StatusOptions) {
   }
 
   if (config.supabaseUrl && config.supabaseAnonKey) {
-    const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
+    const { supabase, status } = await createAuthenticatedClientWithStatus(
+      config.supabaseUrl,
+      config.supabaseAnonKey,
+    )
+    requireLiveSession(status, 'read project status')
 
     // Memory counts by type (live only)
     const { data, error } = await supabase

@@ -2,7 +2,12 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { execSync } from 'child_process'
-import { createSupabaseClient, createCloudProject, createLocalProject } from '@tages/shared'
+import {
+  createSupabaseClient,
+  createCloudProject,
+  createLocalProject,
+  persistSessionOnRefresh,
+} from '@tages/shared'
 import type { ProjectConfig } from '@tages/shared'
 
 export type { ProjectConfig }
@@ -214,6 +219,11 @@ export async function resolveProject(cwd: string): Promise<ResolvedProject> {
       const supabaseUrl = process.env.TAGES_SUPABASE_URL || DEFAULT_SUPABASE_URL
       const supabaseAnonKey = process.env.TAGES_SUPABASE_ANON_KEY || DEFAULT_SUPABASE_ANON_KEY
       const supabase = createSupabaseClient(supabaseUrl, supabaseAnonKey)
+      // Same reason as the boot path in index.ts: setSession refreshes on the
+      // spot when the stored access token has expired, and the rotated refresh
+      // token has to reach disk or auth.json is spent. Registering twice on the
+      // shared client instance is harmless — the second write is a no-op.
+      persistSessionOnRefresh(supabase)
       await supabase.auth.setSession({
         access_token: auth.accessToken,
         refresh_token: auth.refreshToken,

@@ -1,6 +1,7 @@
 import * as fs from 'fs'
-import { createSupabaseClient } from '@tages/shared'
-import { getAuthPath } from '../config/paths.js'
+import chalk from 'chalk'
+import { createSupabaseClient, persistSessionOnRefresh } from '@tages/shared'
+import { getAuthPath, getConfigDir } from '../config/paths.js'
 import { writeAuthFile } from './store.js'
 
 /**
@@ -50,6 +51,14 @@ export async function createAuthenticatedClientWithStatus(
   if (fs.existsSync(authPath)) {
     const auth = JSON.parse(fs.readFileSync(authPath, 'utf-8'))
     if (auth.accessToken && auth.refreshToken) {
+      // The explicit refreshSession() below persists its result, but it is not
+      // the only thing that can rotate this token: the client auto-refreshes on
+      // a 30s tick, so any command that outlives one tick (`index`, `snapshot`,
+      // `query`) rotates in the background. Whoever spends the refresh token
+      // owns writing the replacement, or the next command finds it already
+      // used — the failure mode is a session that dies without anyone logging
+      // out.
+      persistSessionOnRefresh(supabase, { configDir: getConfigDir() })
       await supabase.auth.setSession({
         access_token: auth.accessToken,
         refresh_token: auth.refreshToken,
@@ -92,4 +101,36 @@ export async function createAuthenticatedClientWithStatus(
   }
 
   return { supabase, status }
+}
+
+/**
+ * Refuse to run a command whose output would be indistinguishable on a dead
+ * session from a correct answer.
+ *
+ * Both `anonymous` and `expired` hand back the anonymous client. Every
+ * RLS-protected read then returns zero rows, and writes affect zero rows, with
+ * no error either way. `tages team list` printed
+ * "No team members. Run `tages team invite <email>` to add one."
+ * for a project that had two pending invites, and exited 0 — a wrong answer
+ * that reads as a working tool. `tages logout && tages team list` reproduces it
+ * in one step, which is why guarding only `expired` is not enough.
+ *
+ * `service-key` is deliberately allowed through: it bypasses RLS entirely and
+ * is the supported CI/headless path.
+ *
+ * @param action  verb phrase completing "Cannot ___:", e.g. "list the team".
+ * @param beforeExit  runs immediately before the error prints. Callers holding
+ *   a live ora spinner pass `() => spinner.stop()`, otherwise the red message
+ *   renders on top of a spinner frame.
+ */
+export function requireLiveSession(
+  status: SessionStatus,
+  action: string,
+  beforeExit?: () => void,
+): void {
+  if (status === 'authenticated' || status === 'service-key') return
+  beforeExit?.()
+  const why = status === 'expired' ? 'your session has expired' : 'you are not signed in'
+  console.error(chalk.red(`Cannot ${action}: ${why}. Run \`tages login\`.`))
+  process.exit(1)
 }

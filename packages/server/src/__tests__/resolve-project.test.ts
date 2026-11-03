@@ -9,10 +9,17 @@ const mockCreateCloudProject = vi.fn()
 const mockCreateLocalProject = vi.fn()
 const mockCreateSupabaseClient = vi.fn()
 
+const mockPersistSessionOnRefresh = vi.fn(() => () => {})
+
 vi.mock('@tages/shared', () => ({
   createCloudProject: (...args: unknown[]) => mockCreateCloudProject(...args),
   createLocalProject: (...args: unknown[]) => mockCreateLocalProject(...args),
   createSupabaseClient: (...args: unknown[]) => mockCreateSupabaseClient(...args),
+  // The auto-create path registers this before setSession so a rotated refresh
+  // token reaches auth.json. Omitting it from the mock makes the call throw,
+  // which resolveProject catches as "cloud auto-create failed" and silently
+  // downgrades to local mode — the assertion below is what catches that.
+  persistSessionOnRefresh: () => mockPersistSessionOnRefresh(),
 }))
 
 import { resolveProject } from '../config.js'

@@ -1,6 +1,6 @@
 import chalk from 'chalk'
 import ora from 'ora'
-import { createAuthenticatedClient } from '../auth/session.js'
+import { createAuthenticatedClientWithStatus, requireLiveSession } from '../auth/session.js'
 import { loadProjectConfig } from '../config/project.js'
 
 interface OnboardOptions {
@@ -20,7 +20,11 @@ export async function onboardCommand(options: OnboardOptions) {
   }
 
   const spinner = ora('Loading project knowledge...').start()
-  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
+  const { supabase, status } = await createAuthenticatedClientWithStatus(
+    config.supabaseUrl,
+    config.supabaseAnonKey,
+  )
+  requireLiveSession(status, 'build a briefing', () => spinner.stop())
 
   const { data: memories } = await supabase
     .from('memories')

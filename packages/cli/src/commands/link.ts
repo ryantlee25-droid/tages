@@ -7,6 +7,7 @@ import { injectMcpConfig } from '../config/mcp-inject.js'
 import { installPostCommitHook } from '../indexer/install-hook.js'
 import { createAuthenticatedClient } from '../auth/session.js'
 import { runGithubOAuth } from '../auth/github-oauth.js'
+import { writeAuthFile } from '../auth/store.js'
 // `init` owns the server-resolution helper; `link` must wire an agent exactly
 // the way `init` does, so it reuses that one implementation rather than
 // carrying a second copy that could drift.
@@ -150,11 +151,12 @@ async function linkByProjectId(projectId: string, slugOverride: string | undefin
     spinner.start('Opening browser for GitHub authentication...')
     try {
       const auth = await runGithubOAuth(DASHBOARD_URL)
-      const authDir = path.dirname(authPath)
-      if (!fs.existsSync(authDir)) {
-        fs.mkdirSync(authDir, { recursive: true })
-      }
-      fs.writeFileSync(authPath, JSON.stringify(auth, null, 2) + '\n', { mode: 0o600 })
+      // Shared writer: it creates the config dir at 0700, sets the file to 0600
+      // unconditionally (writeFileSync's `mode` is creation-only and is ignored
+      // on a pre-existing 0644 file), and writes atomically. Atomicity matters
+      // most here: this is the command a teammate runs to join, and it can race
+      // the MCP server, which writes this same file whenever it rotates a token.
+      writeAuthFile(auth)
       userId = auth.userId
       spinner.succeed('Authenticated with GitHub')
     } catch (err) {

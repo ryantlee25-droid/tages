@@ -7,10 +7,10 @@ This is the path for **creating a new project**. Joining a project a teammate al
 ```bash
 npm install -g @tages/cli
 tages --version
-# 0.5.4
+# 0.5.6
 ```
 
-That is the whole install. The published packages are current — `@tages/cli` 0.5.4, `@tages/server` 0.3.4, `@tages/shared` 0.2.2 — and the end-to-end suite gates every release against the **published** artifacts, not the source tree, so npm is the path that is actually tested.
+That is the whole install. The published packages are current — `@tages/cli` 0.5.6, `@tages/server` 0.3.5, `@tages/shared` 0.2.4 — and the end-to-end suite gates every release against the **published** artifacts, not the source tree, so npm is the path that is actually tested.
 
 Your agent is wired to `npx -y @tages/server`, which needs no clone. Nothing to keep on disk, nothing to rebuild.
 

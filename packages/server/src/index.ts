@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { createSupabaseClient } from '@tages/shared'
+import { createSupabaseClient, persistSessionOnRefresh } from '@tages/shared'
 import { z } from 'zod'
 
 import * as fs from 'fs'
@@ -120,6 +120,11 @@ async function main() {
       if (fs.existsSync(authPath)) {
         const auth = JSON.parse(fs.readFileSync(authPath, 'utf-8'))
         if (auth.accessToken && auth.refreshToken) {
+          // Register BEFORE setSession. An expired access token makes
+          // setSession refresh immediately, and that first rotation is the one
+          // that invalidates the token on disk — miss it and auth.json is
+          // already dead by the time the listener exists.
+          persistSessionOnRefresh(supabaseClient)
           await supabaseClient.auth.setSession({
             access_token: auth.accessToken,
             refresh_token: auth.refreshToken,

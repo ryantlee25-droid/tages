@@ -106,6 +106,10 @@ const mockAuth = {
   setSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'm' } }, error: null }),
   getSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'm' } }, error: null }),
   refreshSession: vi.fn().mockResolvedValue({ data: { session: { access_token: 'm', refresh_token: 'm' } }, error: null }),
+  // Every session-bearing client registers a TOKEN_REFRESHED listener so the
+  // rotated refresh token gets written back to auth.json. The real client
+  // always has this; a stub without it fails the command outright.
+  onAuthStateChange: vi.fn(() => ({ data: { subscription: { unsubscribe: vi.fn() } } })),
 }
 
 const mockSupabase = {
@@ -122,9 +126,15 @@ function resetMockSupabase() {
   mockAuth.setSession.mockClear()
   mockAuth.getSession.mockClear()
   mockAuth.refreshSession.mockClear()
+  mockAuth.onAuthStateChange.mockClear()
 }
 
-vi.mock('@tages/shared', () => ({
+// Partial mock on purpose. A whole-module replacement has to be updated every
+// time `shared` grows an export the CLI uses — it broke once already when the
+// auth-file writer and the refresh-persistence hook moved into `shared` — and
+// the failure surfaces as an unrelated command test, not as a missing import.
+vi.mock('@tages/shared', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@tages/shared')>()),
   createSupabaseClient: vi.fn(() => mockSupabase),
 }))
 
@@ -555,6 +565,10 @@ describe('onboard command', () => {
     const setup = setupTempConfigDir()
     tempConfigDir = setup.configDir
     cleanupFn = setup.cleanup
+    // `onboard` refuses to build a briefing without a live session, because an
+    // anonymous client reads zero rows and renders as a project with nothing in
+    // it. These tests assert on briefing CONTENT, so they need a real session.
+    writeAuthConfig(tempConfigDir)
     console_ = captureConsole()
     resetMockSupabase()
   })

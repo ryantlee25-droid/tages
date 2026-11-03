@@ -1,13 +1,14 @@
 import * as path from 'path'
 import * as os from 'os'
 
-export function getConfigDir(): string {
-  return path.join(os.homedir(), '.config', 'tages')
-}
-
-export function getAuthPath(): string {
-  return path.join(getConfigDir(), 'auth.json')
-}
+// Re-exported, not redefined. The MCP server writes auth.json too, so the
+// canonical location lives in `@tages/shared` alongside the writer. Keeping a
+// byte-identical copy here worked only by coincidence: the day this module
+// grew a TAGES_CONFIG_DIR override, the server's background token-persist
+// would have kept writing the default path while every command read the
+// overridden one, silently restoring the bug the writer exists to fix.
+export { getConfigDir, getAuthPath } from '@tages/shared'
+import { getConfigDir } from '@tages/shared'
 
 export function getProjectsDir(): string {
   return path.join(getConfigDir(), 'projects')

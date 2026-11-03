@@ -40,7 +40,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { createSupabaseClient } from '@tages/shared'
+import { createSupabaseClient, persistSessionOnRefresh } from '@tages/shared'
 import {
   generateChunkEmbeddings,
   resolveEmbeddingProvider,
@@ -376,6 +376,10 @@ async function buildAuthenticatedClient(supabaseUrl: string, supabaseAnonKey: st
   if (fs.existsSync(authPath)) {
     const auth = JSON.parse(fs.readFileSync(authPath, 'utf-8'))
     if (auth.accessToken && auth.refreshToken) {
+      // Long-running backfill: the client auto-refreshes on a 30s tick and
+      // Supabase invalidates the previous refresh token, so persist the
+      // rotation or this script silently ends the user's CLI session.
+      persistSessionOnRefresh(supabase)
       await supabase.auth.setSession({
         access_token: auth.accessToken,
         refresh_token: auth.refreshToken,

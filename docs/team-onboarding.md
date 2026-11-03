@@ -24,10 +24,10 @@ You need:
 ```bash
 npm install -g @tages/cli
 tages --version
-# 0.5.4
+# 0.5.6
 ```
 
-The published packages are current (`@tages/cli` 0.5.4, `@tages/server` 0.3.4) and are what the end-to-end release suite actually tests — it drives the published artifacts, not the source tree, precisely because a defect that killed an earlier release candidate was invisible to 1,200+ unit tests and only appeared when the built entrypoint was run by `node`.
+The published packages are current (`@tages/cli` 0.5.6, `@tages/server` 0.3.5) and are what the end-to-end release suite actually tests — it drives the published artifacts, not the source tree, precisely because a defect that killed an earlier release candidate was invisible to 1,200+ unit tests and only appeared when the built entrypoint was run by `node`.
 
 You do **not** need a source clone. Your agent will be wired to `npx -y @tages/server`.
 
@@ -91,7 +91,7 @@ MCP server: npx -y @tages/server (published package)
 MCP server: node /Users/you/src/tages/packages/server/dist/index.js (local build)
 ```
 
-On an npm install you get the first, and that is correct — it resolves `@tages/server` 0.3.4, the same artifact the release suite gates on. You only get the second if you built from source, in which case `link` prefers your local build.
+On an npm install you get the first, and that is correct — it resolves `@tages/server` 0.3.5, the same artifact the release suite gates on. You only get the second if you built from source, in which case `link` prefers your local build.
 
 ---
 
@@ -152,11 +152,38 @@ Project slugs are **globally unique across all owners** (`supabase/migrations/00
 
 **If you are already in this state:** delete `~/.config/tages/projects/<slug>.json`, then re-run `tages link --project-id <uuid>`. Or join under a different local name with `tages link --project-id <uuid> --slug <alias>`.
 
+### A session that dies on its own (fixed in 0.5.6 / 0.3.5 — upgrade)
+
+Symptom: you log in successfully, everything works, and roughly an hour later
+every command prints `Session expired. Run tages login`. Nobody logged out and
+`auth.json` still has its original timestamp.
+
+Cause: Supabase rotates the refresh token on every refresh and immediately
+invalidates the previous one. The Supabase client auto-refreshes on a 30-second
+tick, and the MCP server is long-lived, so it refreshed in the background and
+kept the replacement **in memory only**. The token left on disk was spent, and
+presenting it again fails with `refresh_token_already_used` — permanently. The
+CLI and the MCP server share one `auth.json`, so the server quietly ended the
+CLI's session.
+
+Fixed by having every process that holds a session write the rotated token back
+(`persistSessionOnRefresh`, `@tages/shared`). Older builds cannot be worked
+around, only re-logged-into — so upgrade rather than re-running `tages login`
+every hour:
+
+```bash
+npm install -g @tages/cli@latest
+tages login
+```
+
+Nothing needs to change in `.mcp.json`; `npx -y @tages/server` picks up the new
+server on your next Claude Code restart.
+
 ### Roles: you need `admin`, not `member`
 
 Writes require owner or `admin`. `is_write_authorized` (`supabase/migrations/0031_rbac_write_policies.sql:14-25`) returns true only for the project owner or a `team_members` row with role `owner`/`admin`.
 
-A `member` can read everything and write nothing. Their memories land in local SQLite and never sync — via the CLI you at least get the yellow `Stored locally only` warning, but **through the MCP `remember` tool the agent is told `Stored memory: ...` with no error at all** (`packages/server/src/tools/remember.ts:139-143` ignores the remote-write result). Since your agent uses the MCP path, a `member` will appear to be contributing to team memory for as long as nobody checks.
+A `member` can read everything and write nothing. Their memories land in local SQLite and never sync. Both paths now say so: the CLI prints the yellow `Stored locally only` warning, and the MCP `remember` tool returns `Stored memory in the local cache only: ... teammates will NOT see this memory`, which is deliberately not the plain success wording so the agent relays the limitation instead of reporting a save (`packages/server/src/tools/remember.ts`). Earlier builds did ignore the remote-write result and reported plain success, so a `member` appeared to be contributing to team memory until somebody checked; if you are on a build older than 0.3.5, assume that is still true.
 
 Both the CLI default (`tages team invite <email>`) and `tages init --team` invite as **`member`**. Owners must invite as admin explicitly:
 
