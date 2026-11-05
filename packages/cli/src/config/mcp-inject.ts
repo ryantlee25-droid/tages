@@ -78,6 +78,9 @@ export function injectMcpConfig(opts?: InjectMcpConfigOptions): InjectMcpConfigR
     const raw = fs.readFileSync(configPath, 'utf-8')
     try {
       config = JSON.parse(raw)
+      if (config === null || typeof config !== 'object' || Array.isArray(config)) {
+        throw new Error('expected a JSON object at the top level')
+      }
     } catch (err) {
       // Refuse to clobber a file we cannot parse — that would be data loss.
       throw new Error(
@@ -112,6 +115,53 @@ export function injectMcpConfig(opts?: InjectMcpConfigOptions): InjectMcpConfigR
 
   const exclusion = ensureLocallyExcluded(configPath)
   return { path: configPath, created, excluded: exclusion.excluded, excludePath: exclusion.excludePath }
+}
+
+/** Thrown when an existing `.mcp.json` cannot be parsed as a JSON object. */
+export class McpConfigParseError extends Error {
+  constructor(public readonly configPath: string, public readonly reason: string) {
+    super(`Could not parse ${configPath}: ${reason}`)
+    this.name = 'McpConfigParseError'
+  }
+}
+
+/**
+ * Throws `McpConfigParseError` when the project-scoped `.mcp.json` exists but
+ * is not a parsable JSON object. A missing file is fine (it will be created).
+ *
+ * `link` and `init` call this BEFORE writing anything (project config, dir
+ * marker, git hook, cloud project), so an unparsable file stops the command
+ * up front instead of leaving a half-finished setup behind.
+ */
+export function assertMcpConfigParsable(): void {
+  const configPath = getClaudeCodeMcpConfigPath()
+  if (!fs.existsSync(configPath)) return
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+  } catch (err) {
+    throw new McpConfigParseError(configPath, (err as Error).message)
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new McpConfigParseError(configPath, 'expected a JSON object at the top level')
+  }
+}
+
+/**
+ * CLI wrapper around `assertMcpConfigParsable`: prints a clear message naming
+ * the file and exits 1 (no stack trace). The file is never modified.
+ */
+export function requireParsableMcpConfig(command: string): void {
+  try {
+    assertMcpConfigParsable()
+  } catch (err) {
+    if (err instanceof McpConfigParseError) {
+      console.error(chalk.red(`  Could not parse ${err.configPath}: ${err.reason}.`))
+      console.error(chalk.dim(`  Fix or remove the file, then re-run \`tages ${command}\`. Nothing was changed.`))
+      process.exit(1)
+    }
+    throw err
+  }
 }
 
 /**

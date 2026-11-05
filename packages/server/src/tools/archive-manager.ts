@@ -16,14 +16,38 @@ export async function handleArchive(
   args: { key: string; reason?: string },
   projectId: string,
   cache: SqliteCache,
-): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+  sync?: SupabaseSync | null,
+): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
   const memory = cache.getByKey(projectId, args.key)
   if (!memory) {
     return { content: [{ type: 'text', text: `Memory "${args.key}" not found.` }] }
   }
 
+  // Remote FIRST, like verify_memory: the retraction must reach the shared
+  // store now (until it does every teammate still recalls the memory), and a
+  // refused write must leave this machine unchanged. Archiving locally first
+  // left a dirty archived row that hydrate never overwrites, so the machine
+  // diverged from the team for good. Local-only callers (no sync) skip this.
+  if (sync) {
+    const ok = await sync.remoteInsert({ ...memory, status: 'archived', updatedAt: new Date().toISOString() })
+    if (!ok) {
+      return {
+        isError: true,
+        content: [{
+          type: 'text',
+          text: `Could not archive "${args.key}": the shared store refused the change (your role may be ` +
+            'read-only on this project) or was unreachable. Nothing was changed; it is still live.',
+        }],
+      }
+    }
+  }
+
   const mgr = getArchiveManager()
   mgr.archiveMemory(memory, args.reason || 'manually archived', cache)
+  if (sync) {
+    const archived = cache.getByKey(projectId, args.key)
+    if (archived) cache.markSynced([archived.id])
+  }
 
   return { content: [{ type: 'text', text: `Archived "${args.key}". Restore with restore_memory.` }] }
 }

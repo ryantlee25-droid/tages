@@ -3,6 +3,11 @@ import ora from 'ora'
 import { createAuthenticatedClientWithStatus, requireLiveSession } from '../auth/session.js'
 import { loadProjectConfig } from '../config/project.js'
 
+/** Types that get their own section in the briefing; the rest go under OTHER. */
+const RENDERED_TYPES = new Set([
+  'architecture', 'convention', 'decision', 'lesson', 'entity', 'pattern', 'anti_pattern',
+])
+
 interface OnboardOptions {
   project?: string
 }
@@ -30,6 +35,9 @@ export async function onboardCommand(options: OnboardOptions) {
     .from('memories')
     .select('*')
     .eq('project_id', config.projectId)
+    // Live only: pending rows are unreviewed and archived rows are retired;
+    // neither belongs in a teammate's briefing.
+    .eq('status', 'live')
     .order('type')
     .order('confidence', { ascending: false })
 
@@ -118,6 +126,30 @@ export async function onboardCommand(options: OnboardOptions) {
     console.log(chalk.bold.white('  PATTERNS'))
     for (const m of grouped.pattern) {
       console.log(`    ${chalk.white('▸')} ${chalk.bold(m.key)}: ${chalk.dim(m.value)}`)
+    }
+    console.log()
+  }
+
+  // Anti-patterns: the Don't / Never rules
+  if (grouped.anti_pattern) {
+    console.log(chalk.bold.white("  ANTI-PATTERNS (DON'T / NEVER)"))
+    console.log(chalk.dim('  Things not to do here:\n'))
+    for (const m of grouped.anti_pattern) {
+      console.log(`    ${chalk.red('▸')} ${chalk.bold(m.key)}`)
+      console.log(`      ${chalk.dim(m.value)}`)
+      console.log()
+    }
+  }
+
+  // Every other live type (preference, execution, operational, environment,
+  // anything added later) so no live memory is invisible in the briefing.
+  const otherTypes = Object.keys(grouped).filter(t => !RENDERED_TYPES.has(t)).sort()
+  if (otherTypes.length > 0) {
+    console.log(chalk.bold.white('  OTHER'))
+    for (const t of otherTypes) {
+      for (const m of grouped[t]) {
+        console.log(`    ${chalk.white('▸')} ${chalk.bold(m.key)} ${chalk.dim(`(${t})`)}: ${chalk.dim(m.value)}`)
+      }
     }
     console.log()
   }

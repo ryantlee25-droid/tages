@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import * as fs from 'fs'
-import { createSupabaseClient } from '@tages/shared'
+import { createAuthenticatedClient } from '../auth/session.js'
 import type { Memory, MemoryType } from '@tages/shared'
 import { getProjectsDir } from '../config/paths.js'
 
@@ -30,7 +30,11 @@ export async function storeImported(
     throw new Error('Import requires cloud connection (no local-only support yet)')
   }
 
-  const supabase = createSupabaseClient(config.supabaseUrl, config.supabaseAnonKey)
+  // Authenticated, not a bare anon client: under RLS the anon client's
+  // writes all affected zero rows and every import "succeeded" with nothing stored.
+  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey, {
+    action: 'import memories',
+  })
   const now = new Date().toISOString()
 
   for (const mem of memories) {
@@ -48,10 +52,12 @@ export async function storeImported(
         continue
       }
       // Update
-      await supabase
+      const { data: updated, error: updateError } = await supabase
         .from('memories')
         .update({ value: mem.value, updated_at: now })
         .eq('id', existing.id)
+        .select('id')
+      assertWritten(updated, updateError, `update "${mem.key}"`)
       result.updated++
     } else {
       // Create
@@ -67,7 +73,7 @@ export async function storeImported(
         tags: [],
       }
 
-      await supabase.from('memories').insert({
+      const { data: inserted, error: insertError } = await supabase.from('memories').insert({
         id: memory.id,
         project_id: memory.projectId,
         key: memory.key,
@@ -77,12 +83,28 @@ export async function storeImported(
         confidence: memory.confidence,
         file_paths: memory.filePaths,
         tags: memory.tags,
-      })
+      }).select('id')
+      assertWritten(inserted, insertError, `create "${mem.key}"`)
       result.created++
     }
   }
 
   return result
+}
+
+/**
+ * Throw (this module reports failure by throwing) when a write errored or
+ * changed zero rows. RLS turns a read-only member's write into a zero-row
+ * success, which used to be counted as created/updated.
+ */
+function assertWritten(data: unknown[] | null, error: { message: string } | null, what: string): void {
+  if (error) throw new Error(`Import failed to ${what}: ${error.message}`)
+  if (!Array.isArray(data) || data.length === 0) {
+    throw new Error(
+      `Permission denied: your role cannot ${what} on this project ` +
+        '(read-only members cannot import). Nothing was changed for that memory.',
+    )
+  }
 }
 
 function loadProjectConfig(slug?: string) {

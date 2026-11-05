@@ -52,7 +52,7 @@ export function latestReleaseTag() {
  * @param {string} installRoot throwaway directory for the npm prefix
  * @returns {{mode, cliBin, serverBin, cliVersion, serverVersion, installLog}}
  */
-export function resolveBinaries(mode, { version = 'latest', installRoot } = {}) {
+export function resolveBinaries(mode, { version = 'latest', serverVersion = null, installRoot } = {}) {
   if (mode === 'local') {
     const cliBin = path.join(REPO_ROOT, 'packages', 'cli', 'dist', 'index.js')
     const serverBin = path.join(REPO_ROOT, 'packages', 'server', 'dist', 'index.js')
@@ -88,7 +88,7 @@ export function resolveBinaries(mode, { version = 'latest', installRoot } = {}) 
     [
       'install',
       `@tages/cli@${version}`,
-      `@tages/server@${version}`,
+      `@tages/server@${serverVersion ?? version}`,
       '--no-audit',
       '--no-fund',
       '--loglevel=error',

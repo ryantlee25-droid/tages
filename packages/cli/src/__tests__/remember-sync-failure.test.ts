@@ -63,8 +63,15 @@ vi.mock('../lib/embedding.js', () => ({
 
 // Only used by the integration block at the bottom, which loads the REAL
 // cli-sync module. remember.ts never imports this.
+// cli-sync reads the session status itself (0.5.7) so a dead session stays
+// local instead of exiting. `mockSessionStatus.value` drives that status.
+const mockSessionStatus = vi.hoisted(() => ({ value: 'authenticated' as string }))
 vi.mock('../auth/session.js', () => ({
   createAuthenticatedClient: mockCreateAuthenticatedClient,
+  createAuthenticatedClientWithStatus: async (...args: unknown[]) => ({
+    supabase: await mockCreateAuthenticatedClient(...args),
+    status: mockSessionStatus.value,
+  }),
 }))
 
 let tempConfigDir: string
@@ -311,6 +318,101 @@ describe('openCliSync flushWithResult against a real cache + real SupabaseSync',
 
       expect(result.ok).toBe(false)
       expect(result.error).toContain('no auth token')
+    } finally {
+      ctx.close()
+    }
+  })
+
+  it('a dead session keeps the write local and dirty, reports ok:false, never exits', async () => {
+    mockCreateAuthenticatedClient.mockResolvedValue(fakeSupabase(null))
+    mockSessionStatus.value = 'expired'
+    const exitSpy = vi.spyOn(process, 'exit')
+    const openCliSync = await realOpenCliSync()
+    const ctx = await openCliSync({ ...CLOUD_CONFIG, slug: `expired-${Date.now()}` })
+
+    try {
+      ctx.cache.upsertMemory(makeMemory('written-while-expired'), true)
+      const result = await ctx.flushWithResult()
+
+      expect(exitSpy).not.toHaveBeenCalled()
+      expect(result.ok).toBe(false)
+      expect(result.error).toContain('tages login')
+      // still dirty: it pushes after the user logs in
+      expect(ctx.cache.getDirty().map((m: { key: string }) => m.key)).toContain('written-while-expired')
+    } finally {
+      mockSessionStatus.value = 'authenticated'
+      exitSpy.mockRestore()
+      ctx.close()
+    }
+  })
+
+  it('an anonymous (signed-out) session also stays local, never builds a sync, never exits', async () => {
+    const supabase = fakeSupabase(null)
+    const fromSpy = vi.spyOn(supabase, 'from')
+    mockCreateAuthenticatedClient.mockResolvedValue(supabase)
+    mockSessionStatus.value = 'anonymous'
+    const exitSpy = vi.spyOn(process, 'exit')
+    const openCliSync = await realOpenCliSync()
+    const ctx = await openCliSync({ ...CLOUD_CONFIG, slug: `anon-${Date.now()}` })
+
+    try {
+      ctx.cache.upsertMemory(makeMemory('written-signed-out'), true)
+      const result = await ctx.flushWithResult()
+
+      expect(exitSpy).not.toHaveBeenCalled()
+      expect(result.ok).toBe(false)
+      expect(result.error).toContain('not signed in')
+      expect(fromSpy).not.toHaveBeenCalled()
+      expect(ctx.cache.getDirty().map((m: { key: string }) => m.key)).toContain('written-signed-out')
+    } finally {
+      mockSessionStatus.value = 'authenticated'
+      exitSpy.mockRestore()
+      ctx.close()
+    }
+  })
+
+  it('reconcile on a dead session reports unpushed, pulls nothing, touches no network, does not throw', async () => {
+    const supabase = fakeSupabase(null)
+    const fromSpy = vi.spyOn(supabase, 'from')
+    mockCreateAuthenticatedClient.mockResolvedValue(supabase)
+    mockSessionStatus.value = 'expired'
+    const openCliSync = await realOpenCliSync()
+    const ctx = await openCliSync({ ...CLOUD_CONFIG, slug: `recon-expired-${Date.now()}` })
+
+    try {
+      ctx.cache.upsertMemory(makeMemory('kept-local'), true)
+      const r = await ctx.reconcile()
+      expect(r.pushed).toBe(false)
+      expect(r.pulled).toBe(0)
+      expect(r.alreadyReported).toBe(true)
+      expect(r.error).toContain('expired')
+      expect(fromSpy).not.toHaveBeenCalled()
+      expect(ctx.cache.getDirty()).toHaveLength(1)
+    } finally {
+      mockSessionStatus.value = 'authenticated'
+      ctx.close()
+    }
+  })
+
+  it('reconcile pushes a failing dirty set once, not twice (hydrate skips its own flush)', async () => {
+    let upserts = 0
+    const supabase = {
+      from: () => ({
+        upsert: async () => {
+          upserts++
+          return { data: null, error: { message: 'new row violates row-level security policy' } }
+        },
+      }),
+    }
+    mockCreateAuthenticatedClient.mockResolvedValue(supabase)
+    const openCliSync = await realOpenCliSync()
+    const ctx = await openCliSync({ ...CLOUD_CONFIG, slug: `recon-once-${Date.now()}` })
+
+    try {
+      ctx.cache.upsertMemory(makeMemory('stuck'), true)
+      const r = await ctx.reconcile()
+      expect(r.pushed).toBe(false)
+      expect(upserts).toBe(1)
     } finally {
       ctx.close()
     }

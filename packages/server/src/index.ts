@@ -7,7 +7,7 @@ import { z } from 'zod'
 import * as fs from 'fs'
 import * as path from 'path'
 import { loadServerConfig, getConfigDir, getCachePath, resolveProject } from './config'
-import { shouldHydrate } from './hydration'
+import { startBootFreshness, createReadFreshener } from './hydration'
 import { SqliteCache } from './cache/sqlite'
 import { SupabaseSync } from './sync/supabase-sync'
 import { SessionTracker } from './tracking'
@@ -65,8 +65,6 @@ import {
   MemoryAuditSchema, SharpenMemorySchema, PostSessionSchema,
 } from './schemas'
 
-const HYDRATION_TTL_MS = 60_000
-
 async function main() {
   // Project resolution: env var (backward compat) → auto-detect from cwd
   let config = loadServerConfig(process.env.TAGES_PROJECT_SLUG)
@@ -107,6 +105,8 @@ async function main() {
   let sync: SupabaseSync | null = null
   let supabaseClient = null
   let callerUserId: string | undefined = undefined
+  // Resolves when the boot hydrate settles; read tools wait on it (capped).
+  let bootHydrated: Promise<void> | null = null
   const walPath = cachePath.replace('.db', '-wal.db')
   if (config.project.supabaseUrl && config.project.supabaseAnonKey) {
     supabaseClient = createSupabaseClient(
@@ -180,17 +180,10 @@ async function main() {
       console.error(`[tages] WAL recovery: replayed ${recovered} operations`)
     }
 
-    // Hydrate cache from Supabase (with staleness guard)
-    const lastSync = cache.getLastSyncedAt(projectId)
-    if (shouldHydrate(lastSync, HYDRATION_TTL_MS)) {
-      const count = await sync.hydrate()
-      if (count > 0) {
-        console.error(`[tages] Hydrated ${count} memories from Supabase`)
-      }
-    } else {
-      const age = lastSync ? Date.now() - new Date(lastSync).getTime() : 0
-      console.error(`[tages] Cache fresh (${Math.round(age / 1000)}s old) — skipping hydration`)
-    }
+    // Hydrate on every boot (cheap delta check when current). Not awaited:
+    // the MCP handshake must not wait on the network. The read tools wait for
+    // it (capped) via freshen(). The bounded embedding backfill runs after it.
+    bootHydrated = startBootFreshness(sync, cache, projectId, supabaseClient).hydrated
 
     // Start background sync
     sync.startSync()
@@ -240,6 +233,9 @@ async function main() {
       console.error('[tages] Decay check error:', (err as Error).message)
     }
   }, DECAY_INTERVAL_MS)
+
+  // Freshness step for recall / conventions / project_brief.
+  const freshen = createReadFreshener(sync, bootHydrated)
 
   const server = new McpServer({
     name: 'tages',
@@ -291,6 +287,7 @@ async function main() {
       assembledContext: RecallSchema.shape.assembledContext,
     },
     async (args) => {
+      await freshen()
       const result = await handleRecall(args, projectId, cache, sync, supabaseClient || undefined)
       // Track recall access
       const memories = cache.queryMemories(projectId, args.query, undefined, args.limit || 5)
@@ -314,6 +311,7 @@ async function main() {
       key: ForgetSchema.shape.key,
     },
     async (args) => {
+      await freshen()
       const mem = cache.getByKey(projectId, args.key)
       const result = await handleForget(args, projectId, cache, sync)
       if (mem) await tracker.logDelete(mem.id)
@@ -325,7 +323,10 @@ async function main() {
     'conventions',
     'List all coding conventions for this project',
     {},
-    async () => handleConventions(projectId, cache, sync),
+    async () => {
+      await freshen()
+      return handleConventions(projectId, cache, sync)
+    },
   )
 
   server.tool(
@@ -401,14 +402,22 @@ async function main() {
     {
       key: VerifyMemorySchema.shape.key,
     },
-    async (args) => handleVerifyMemory(args, projectId, cache, sync),
+    // Key lookups wait for the boot/freshness hydrate like the read tools:
+    // on a fresh machine the row may not be cached yet ("No memory found").
+    async (args) => {
+      await freshen()
+      return handleVerifyMemory(args, projectId, cache, sync)
+    },
   )
 
   server.tool(
     'pending_memories',
     'List auto-extracted memories that need verification before they appear in recall',
     {},
-    async () => handlePendingMemories(projectId, cache),
+    async () => {
+      await freshen()
+      return handlePendingMemories(projectId, cache)
+    },
   )
 
   server.tool(
@@ -655,7 +664,10 @@ async function main() {
       key: ArchiveSchema.shape.key,
       reason: ArchiveSchema.shape.reason,
     },
-    withGate('archive_memory', async (args) => handleArchive(args, projectId, cache)),
+    withGate('archive_memory', async (args) => {
+      await freshen()
+      return handleArchive(args, projectId, cache, sync)
+    }),
   )
 
   server.tool(
@@ -773,7 +785,10 @@ async function main() {
       task: BriefSchema.shape.task,
       budget: BriefSchema.shape.budget,
     },
-    async (args) => handleBrief(args, projectId, cache, sync),
+    async (args) => {
+      await freshen()
+      return handleBrief(args, projectId, cache, sync)
+    },
   )
 
   // CLAUDE.md import

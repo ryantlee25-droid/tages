@@ -2,6 +2,8 @@ import chalk from 'chalk'
 import ora from 'ora'
 import { createAuthenticatedClient } from '../auth/session.js'
 import { loadProjectConfig } from '../config/project.js'
+import { assertRowsAffected } from '../lib/write-guard.js'
+import { embedPromoted } from '../lib/embed-promoted.js'
 
 interface VerifyOptions {
   project?: string
@@ -20,7 +22,10 @@ export async function verifyCommand(key: string, options: VerifyOptions) {
   }
 
   const spinner = ora(`Verifying "${key}"...`).start()
-  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
+  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey, {
+    action: 'verify memories',
+    beforeExit: () => spinner.stop(),
+  })
 
   // Find the memory
   const { data: memory, error: fetchError } = await supabase
@@ -45,7 +50,9 @@ export async function verifyCommand(key: string, options: VerifyOptions) {
     process.exit(1)
   }
 
-  const { error: updateError } = await supabase
+  // `.select('id')` so an RLS-filtered update (read-only member) shows up as
+  // zero rows instead of a silent success.
+  const updateResult = await supabase
     .from('memories')
     .update({
       status: 'live',
@@ -53,11 +60,14 @@ export async function verifyCommand(key: string, options: VerifyOptions) {
       updated_at: new Date().toISOString(),
     })
     .eq('id', memory.id)
+    .select('id')
 
-  if (updateError) {
-    spinner.fail(`Failed to verify memory: ${updateError.message}`)
-    process.exit(1)
-  }
+  assertRowsAffected(updateResult, { action: 'verify memories', beforeExit: () => spinner.stop() })
+
+  // Promoted rows staged without an embedding would be live but invisible to
+  // semantic recall. Non-fatal: embedPromoted warns and never throws.
+  spinner.text = `Embedding "${key}"...`
+  await embedPromoted(supabase, config.projectId, [key], { supabaseUrl: config.supabaseUrl })
 
   spinner.succeed(
     `${chalk.green('Verified')} ${chalk.bold(key)} — now live and available in recall.`,

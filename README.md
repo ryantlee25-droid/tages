@@ -147,6 +147,21 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-11-03 — `v0.5.7`: the capture, review, recall loop works end to end
+
+Five new e2e phases (85 checks) exercised the approval queue, CLAUDE.md import/export, recency across teammates, session longevity, and a fresh-machine onboarding. About 32 failed against 0.5.6. All pass now against prod.
+
+- **Embeddings on every path to live.** `observe`, `session_end`, `verify_memory`, `tages verify`, `tages pending --approve-all`, and `import_claude_md` now generate embeddings (`packages/server/src/tools/embed-on-write.ts`, `packages/cli/src/lib/embed-promoted.ts`). Hydrate also copies cloud embeddings into teammates' caches, which it never did. A boot backfill embeds live rows still missing one.
+- **Retraction propagates.** `hydrate()` deletes local rows that are gone or no longer live in the cloud, skips dirty rows, never mass-deletes on an empty or failed answer, and clears the last memory only after an authenticated exact count of 0.
+- **Freshness.** Boot always hydrates without blocking the MCP handshake; read tools call `hydrateIfStale(15_000)`. The 60s skip is gone.
+- **Denied writes fail.** `assertRowsAffected` (CLI) and zero-row checks in `remoteVerifyMemory`/`remoteDelete` (server) turn RLS no-ops into permission errors.
+- **Dead sessions.** `createAuthenticatedClient` exits 1 on an expired or signed-out session. `openCliSync` instead goes local-only with a warning, so `remember` stays dirty and pushes after login and the background reconcile never fails a command. `forget` refuses on a dead session and deletes nothing.
+- **Recall ranking.** Evidence multiplies the fused score (`packages/cli/src/commands/recall.ts`); bug 13 was this sort, not the HNSW index, so no migration.
+- **CLAUDE.md safety.** `export` needs `--force` to overwrite; Don't/Never rules survive the round trip; fenced `##` lines no longer split sections.
+- **Review-round hardening.** Watermark clamped to local now plus a 10-minute skew window (no migration); deletion skips rows synced after the listing began; keyset paging; 10s timeouts on sync requests; revision-checked mark-clean; secret gate on `session_end` and `import_claude_md` (agent-path values stay readable at rest even with `TAGES_ENCRYPTION_KEY`, since no read path for them decrypts); 10s timeouts also on embedding, chunk, and delete calls; no inline embedding fan-out after the 10s deadline.
+- **Code-review round 2.** Listings page until empty and the full pull deletes only when an exact count agrees (no deletes from a truncated listing); `verify_memory` pushes an unsynced row first and never reports a row the cloud lacks as verified; `archive_memory` is remote-first; a failed push backs off 60s on the read path, keeps one WAL entry per row, and the CLI pushes once per command; a changed CLAUDE.md rule drops its old embedding; the CLI importer follows CommonMark fences; key-lookup write tools wait for the boot sync like the read tools.
+- **Unchanged:** `@tages/shared` stays 0.2.4. `archive_memory` stays Pro-gated by design.
+
 ### 2026-08-30 — `v0.5.6`: rotated refresh tokens were only kept in memory
 
 Supabase rotates the refresh token on every refresh and invalidates the previous one immediately. `createSupabaseClient` uses the client defaults (`autoRefreshToken: true`), and in Node the session store is in-memory only. The long-lived MCP server calls `setSession()` at boot and auto-refreshes on a 30s tick, so the rotated token lived in the server's memory and nowhere else — while the CLI and the server share the same `~/.config/tages/auth.json` on disk. The server was spending the CLI's on-disk refresh token every ~30 seconds without ever writing the new one back, so the on-disk credential eventually hit `refresh_token_already_used` and stayed dead. Confirmed empirically: `auth.json`'s mtime was still the original login while a direct call to the token endpoint returned `refresh_token_already_used`. `rlee@mersive.com`'s session died about an hour after login and stayed dead for four days; both pending `phoenix` teammates would have hit the same wall within an hour of joining.
