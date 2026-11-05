@@ -55,6 +55,25 @@ describe('parseCLAUDEmd', () => {
     expect(memories[0].value).toContain('Keep PRs small')
   })
 
+  it('a fence closes only on the same character and length (CommonMark)', () => {
+    const file = write(
+      [
+        '## Conventions',
+        '- Keep examples fenced',
+        '````md',
+        '~~~',
+        '## Example',
+        '```',
+        '````',
+        '## Patterns',
+        '- Repository per aggregate',
+      ].join('\n'),
+    )
+    const memories = parseCLAUDEmd(file)
+    expect(memories.map((m) => m.type)).toEqual(['convention', 'pattern'])
+    expect(memories[0].value).toContain('## Example')
+  })
+
   it('an `export` then `import` round trip keeps every type; nothing after Anti-patterns becomes a prohibition', () => {
     const mem = (key: string, type: string, value: string) => ({ key, type, value, status: 'live' })
     const md = exportAsCLAUDEmd(

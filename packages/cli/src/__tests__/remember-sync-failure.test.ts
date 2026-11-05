@@ -394,6 +394,30 @@ describe('openCliSync flushWithResult against a real cache + real SupabaseSync',
     }
   })
 
+  it('reconcile pushes a failing dirty set once, not twice (hydrate skips its own flush)', async () => {
+    let upserts = 0
+    const supabase = {
+      from: () => ({
+        upsert: async () => {
+          upserts++
+          return { data: null, error: { message: 'new row violates row-level security policy' } }
+        },
+      }),
+    }
+    mockCreateAuthenticatedClient.mockResolvedValue(supabase)
+    const openCliSync = await realOpenCliSync()
+    const ctx = await openCliSync({ ...CLOUD_CONFIG, slug: `recon-once-${Date.now()}` })
+
+    try {
+      ctx.cache.upsertMemory(makeMemory('stuck'), true)
+      const r = await ctx.reconcile()
+      expect(r.pushed).toBe(false)
+      expect(upserts).toBe(1)
+    } finally {
+      ctx.close()
+    }
+  })
+
   it('local mode (no supabaseUrl) still reports success — nothing was lost', async () => {
     const openCliSync = await realOpenCliSync()
     const ctx = await openCliSync({ projectId: 'local-project', slug: `local-${Date.now()}` })

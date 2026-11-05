@@ -6,6 +6,8 @@ import { SyncWAL } from '../cache/sync-wal'
 const SYNC_INTERVAL_MS = 60_000
 /** PostgREST's default max rows per response. */
 const PAGE_SIZE = 1000
+/** How long the read path waits before retrying a failed dirty push. */
+const FLUSH_RETRY_BACKOFF_MS = 60_000
 /** remoteGetByKeys batch size (keeps the `in.(...)` URL well under limits). */
 const KEY_BATCH = 100
 /**
@@ -37,6 +39,8 @@ export class SupabaseSync {
   private staleRun: Promise<void> | null = null
   /** ms epoch of the last hydrate that completed without error. */
   private lastHydrateOkAt = 0
+  /** ms epoch of the last failed dirty push (0 = last push succeeded). */
+  private lastFlushFailedAt = 0
   /** ms epoch of the last hydrateIfStale attempt (success or failure). */
   private lastHydrateAttemptAt = 0
   /** ms epoch the in-flight staleRun started (W3: callers share its wait budget). */
@@ -157,18 +161,24 @@ export class SupabaseSync {
    *
    * Single-flight: concurrent callers share one run.
    */
-  async hydrate(): Promise<number> {
+  async hydrate(opts: { skipFlush?: boolean } = {}): Promise<number> {
     if (this.hydrating) return this.hydrating
-    const run = this._hydrate().finally(() => {
+    const run = this._hydrate(opts).finally(() => {
       this.hydrating = null
     })
     this.hydrating = run
     return run
   }
 
-  private async _hydrate(): Promise<number> {
+  private async _hydrate(opts: { skipFlush?: boolean } = {}): Promise<number> {
     try {
-      await this.flush()
+      // skipFlush: the caller just pushed (the CLI reconcile). After a failed
+      // push, wait FLUSH_RETRY_BACKOFF_MS before the read path retries it: an
+      // unpushable row (read-only member) would otherwise cost a doomed upsert
+      // on every 15s freshen. The 60s interval flush still retries it.
+      if (!opts.skipFlush && Date.now() - this.lastFlushFailedAt >= FLUSH_RETRY_BACKOFF_MS) {
+        await this.flush()
+      }
 
       const watermark = this.cache.getRemoteWatermark(this.projectId)
       const localCount = this.cache.getMemoryCount(this.projectId)
@@ -284,14 +294,32 @@ export class SupabaseSync {
       }
       const memories = rows.map(dbRowToMemory)
       const result = this.cache.hydrateFromRemote(memories)
-      const remoteKeys = new Set(memories.map((m) => m.key))
-      const gone = this.cache
-        .getSyncIndex(this.projectId)
-        .filter((r) => !r.dirty && !remoteKeys.has(r.key))
-        .map((r) => r.key)
-      const deleted = this.cache.deleteCleanByKeys(this.projectId, gone, { syncedBefore: startedAt })
-      if (deleted > 0) console.error(`[tages] Removed ${deleted} memories deleted from the shared store`)
-      this.advanceWatermark(maxTimestamp(null, memories.map((m) => m.updatedAt)), result.skipped.length)
+      // Same guard as reconcileByListing: delete only when an exact count
+      // agrees with the listing. A failed count or a mismatch (truncated
+      // listing, or a write that raced it) applies rows but deletes nothing.
+      const { count: remoteTotal, error: countError } = await this.timed(
+        this.supabase
+          .from('memories')
+          .select('id', { count: 'exact', head: true })
+          .eq('project_id', this.projectId),
+      )
+      const listingComplete = !countError && remoteTotal === rows.length
+      let deleted = 0
+      if (listingComplete) {
+        const remoteKeys = new Set(memories.map((m) => m.key))
+        const gone = this.cache
+          .getSyncIndex(this.projectId)
+          .filter((r) => !r.dirty && !remoteKeys.has(r.key))
+          .map((r) => r.key)
+        deleted = this.cache.deleteCleanByKeys(this.projectId, gone, { syncedBefore: startedAt })
+        if (deleted > 0) console.error(`[tages] Removed ${deleted} memories deleted from the shared store`)
+      } else {
+        console.error('[tages] Full sync: listing and count disagree, skipping deletions this round')
+      }
+      this.advanceWatermark(
+        maxTimestamp(null, memories.map((m) => m.updatedAt)),
+        result.skipped.length + (listingComplete ? 0 : 1),
+      )
       this.windowCheckedAt = startedAt
       this.lastHydrateOkAt = Date.now()
       return result.applied + deleted
@@ -363,9 +391,18 @@ export class SupabaseSync {
         return null
       }
       const page = (data || []) as T[]
+      // Stop only on an empty page. A short page is not the end: a PostgREST
+      // db-max-rows below PAGE_SIZE caps every page, and stopping there would
+      // hand a truncated listing to the deletion reconcile.
+      if (page.length === 0) return out
+      const nextId = page[page.length - 1].id
+      // A cursor that does not advance would loop forever: treat as an error.
+      if (lastId !== null && !(nextId > lastId)) {
+        console.error('[tages] Hydration page cursor did not advance; aborting listing')
+        return null
+      }
       out.push(...page)
-      if (page.length < PAGE_SIZE) return out
-      lastId = page[page.length - 1].id
+      lastId = nextId
     }
   }
 
@@ -577,6 +614,9 @@ export class SupabaseSync {
     // Log to WAL before remote call for crash safety
     const walIds: string[] = []
     if (this.wal) {
+      // Supersede earlier attempts so a row that keeps failing holds one
+      // pending entry (its latest payload), not one per retry.
+      this.wal.discardPendingByMemoryIds(dirty.map(m => m.id))
       for (const mem of dirty) {
         const walId = this.wal.logPending(mem.id, mem.projectId, 'upsert', memoryToDbRow(mem))
         walIds.push(walId)
@@ -595,9 +635,11 @@ export class SupabaseSync {
       )
 
       if (error) {
+        this.lastFlushFailedAt = Date.now()
         console.error('[tages] Sync flush failed:', error.message)
         return
       }
+      this.lastFlushFailedAt = 0
 
       // Q2: a row edited during the upsert await keeps its dirty flag.
       this.cache.markSyncedIfUnchanged(dirty)
@@ -607,6 +649,7 @@ export class SupabaseSync {
         this.wal.markCompleteByMemoryIds(dirty.map(m => m.id))
       }
     } catch (err) {
+      this.lastFlushFailedAt = Date.now()
       console.error('[tages] Sync error:', (err as Error).message)
     }
   }
@@ -682,6 +725,31 @@ export class SupabaseSync {
     } catch {
       return false
     }
+  }
+
+  /**
+   * Null the remote embedding for (project_id, key) after its value changed,
+   * so a stale vector is never ranked against new text and the backfill
+   * (embedding IS NULL) re-embeds it. Same queue and no-op-on-missing as
+   * remoteUpdateEmbedding.
+   */
+  async remoteClearEmbedding(projectId: string, key: string): Promise<boolean> {
+    return this.enqueue(async () => {
+      try {
+        const { error } = await this.timed(this.supabase
+          .from('memories')
+          .update({ embedding: null })
+          .eq('project_id', projectId)
+          .eq('key', key))
+        if (error) {
+          console.error('[tages] Remote embedding clear failed:', error.message)
+          return false
+        }
+        return true
+      } catch {
+        return false
+      }
+    })
   }
 
   /**
@@ -964,8 +1032,8 @@ export class SupabaseSync {
    * Returns false on error, and when the update changed zero rows although a
    * row with that key is visible: that is RLS refusing a read-only member
    * (bug 5), which PostgREST reports as success with no rows. A key with no
-   * visible remote row (not pushed yet) returns true; the dirty flush carries
-   * the local status up.
+   * visible remote row also returns false: nothing in the shared store was
+   * verified. Callers push an unsynced row first (handleVerifyMemory does).
    */
   async remoteVerifyMemory(projectId: string, key: string, verifiedAt: string): Promise<boolean> {
     try {
@@ -980,10 +1048,10 @@ export class SupabaseSync {
       }
       if (count === 0) {
         const visible = await this.remoteKeyVisible(projectId, key)
-        if (visible !== false) {
-          console.error(`[tages] Remote verify refused: "${key}" exists but 0 rows were updated (permission denied)`)
-          return false
-        }
+        console.error(visible === false
+          ? `[tages] Remote verify failed: "${key}" is not in the shared store`
+          : `[tages] Remote verify refused: "${key}" exists but 0 rows were updated (permission denied)`)
+        return false
       }
       return true
     } catch {

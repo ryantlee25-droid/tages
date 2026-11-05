@@ -311,6 +311,7 @@ async function main() {
       key: ForgetSchema.shape.key,
     },
     async (args) => {
+      await freshen()
       const mem = cache.getByKey(projectId, args.key)
       const result = await handleForget(args, projectId, cache, sync)
       if (mem) await tracker.logDelete(mem.id)
@@ -401,14 +402,22 @@ async function main() {
     {
       key: VerifyMemorySchema.shape.key,
     },
-    async (args) => handleVerifyMemory(args, projectId, cache, sync),
+    // Key lookups wait for the boot/freshness hydrate like the read tools:
+    // on a fresh machine the row may not be cached yet ("No memory found").
+    async (args) => {
+      await freshen()
+      return handleVerifyMemory(args, projectId, cache, sync)
+    },
   )
 
   server.tool(
     'pending_memories',
     'List auto-extracted memories that need verification before they appear in recall',
     {},
-    async () => handlePendingMemories(projectId, cache),
+    async () => {
+      await freshen()
+      return handlePendingMemories(projectId, cache)
+    },
   )
 
   server.tool(
@@ -655,7 +664,10 @@ async function main() {
       key: ArchiveSchema.shape.key,
       reason: ArchiveSchema.shape.reason,
     },
-    withGate('archive_memory', async (args) => handleArchive(args, projectId, cache, sync)),
+    withGate('archive_memory', async (args) => {
+      await freshen()
+      return handleArchive(args, projectId, cache, sync)
+    }),
   )
 
   server.tool(

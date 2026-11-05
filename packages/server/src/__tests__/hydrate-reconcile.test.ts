@@ -56,6 +56,9 @@ function makeFake(opts: { denyWrites?: boolean } = {}) {
   let selectN = 0
   /** When set, every request hangs until its abort signal fires. */
   let hang = false
+  /** PostgREST db-max-rows: every page is capped here regardless of limit(). */
+  let pgCap = PG_CAP
+  let failUpserts = false
 
   function addRow(over: Partial<Row> & { key: string }): Row {
     const row: Row = {
@@ -125,8 +128,8 @@ function makeFake(opts: { denyWrites?: boolean } = {}) {
             if (opOpts?.head) {
               result = { data: null, error: null, count: hit.length }
             } else {
-              const [from, to] = range ?? [0, PG_CAP - 1]
-              const cap = Math.min(PG_CAP, limit ?? PG_CAP)
+              const [from, to] = range ?? [0, pgCap - 1]
+              const cap = Math.min(pgCap, limit ?? pgCap)
               const page = hit.slice(from, Math.min(to + 1, from + cap))
               result = { data: page.map((r) => ({ ...r })), error: null, count: null }
               selectN++
@@ -156,6 +159,8 @@ function makeFake(opts: { denyWrites?: boolean } = {}) {
       update: (payload: unknown, o?: { count?: string }) => builder(table, 'update', payload, o),
       delete: (o?: { count?: string }) => builder(table, 'delete', undefined, o),
       upsert: (input: Record<string, unknown> | Record<string, unknown>[]) => {
+        calls.push({ op: `${table}.upsert`, filters: [] })
+        if (failUpserts) return Promise.resolve({ error: { message: 'new row violates row-level security policy' } })
         const list = Array.isArray(input) ? input : [input]
         for (const incoming of list) {
           const existing = rows.find((r) => r.project_id === incoming.project_id && r.key === incoming.key)
@@ -176,6 +181,8 @@ function makeFake(opts: { denyWrites?: boolean } = {}) {
     setFailSelects(v: boolean) { failSelects = v },
     setAfterSelect(fn: ((n: number, filters: Array<[string, string, unknown]>) => void) | null) { afterSelect = fn; selectN = 0 },
     setHang(v: boolean) { hang = v },
+    setPgCap(n: number) { pgCap = n },
+    setFailUpserts(v: boolean) { failUpserts = v },
   }
 }
 
@@ -501,9 +508,9 @@ describe('hydrate reconcile (0.5.7 Task 1a)', () => {
       expect(await makeSync(fake).remoteVerifyMemory(PROJECT, 'p', '2026-11-03T00:00:00Z')).toBe(false)
     })
 
-    it('verify: true when no remote row exists yet (dirty flush carries it)', async () => {
-      const fake = makeFake({ denyWrites: true })
-      expect(await makeSync(fake).remoteVerifyMemory(PROJECT, 'missing', '2026-11-03T00:00:00Z')).toBe(true)
+    it('verify: false when the key is not in the shared store (nothing was verified)', async () => {
+      const fake = makeFake()
+      expect(await makeSync(fake).remoteVerifyMemory(PROJECT, 'missing', '2026-11-03T00:00:00Z')).toBe(false)
     })
 
     it('verify: false on error', async () => {
@@ -639,6 +646,91 @@ describe('hydrate reconcile (0.5.7 Task 1a)', () => {
   })
 
   // (i) 0.5.7 review fixes: W1 (skew), W2 (reconcile races), W3 (hangs), S2, Q2
+  describe('(j) /code-review round 2', () => {
+    const T0 = Date.parse('2026-11-05T12:00:00.000Z')
+    function useClock(ms: number) {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(T0 + ms))
+    }
+    it('full pull with db-max-rows below PAGE_SIZE lists every row and deletes nothing', async () => {
+      const fake = makeFake()
+      for (let i = 0; i < 1200; i++) fake.addRow({ key: `k-${String(i).padStart(4, '0')}` })
+      const sync = makeSync(fake)
+      await sync.hydrate()
+      expect(cache.getMemoryCount(PROJECT)).toBe(1200)
+
+      // A 500-row server cap plus a legacy watermark forces the full pull.
+      fake.setPgCap(500)
+      // A teammate edits a row that sorts past the first capped page.
+      const late = [...fake.rows].sort((x, y) => (x.id < y.id ? -1 : 1))[1100]
+      late.value = 'edited by a teammate'
+      late.updated_at = serverNow()
+      cache.setLastSyncedAt(PROJECT, '2026-01-01T00:00:00.000Z', 1200)
+      await sync.hydrate()
+      expect(cache.getMemoryCount(PROJECT)).toBe(1200)
+      expect(cache.getByKey(PROJECT, late.key)?.value).toBe('edited by a teammate')
+    })
+
+    it('full pull deletes nothing when the exact count disagrees with the listing', async () => {
+      const fake = makeFake()
+      fake.addRow({ key: 'a' })
+      fake.addRow({ key: 'b' })
+      const sync = makeSync(fake)
+      await sync.hydrate()
+      // "b" is missing from the listing, but the exact count says 2 rows
+      // (a truncated listing): nothing may be deleted on that evidence.
+      fake.rows.splice(fake.rows.findIndex((r) => r.key === 'b'), 1)
+      const origFrom = fake.supabase.from
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ;(fake.supabase as any).from = (table: string) => {
+        const t = origFrom(table)
+        return {
+          ...t,
+          select: (cols: string, o?: { count?: string; head?: boolean }) =>
+            o?.head
+              ? { eq: () => ({ then: (r: (v: unknown) => unknown) => Promise.resolve({ data: null, error: null, count: 2 }).then(r) }) }
+              : t.select(cols, o),
+        }
+      }
+      cache.setLastSyncedAt(PROJECT, '2026-01-01T00:00:00.000Z', 2)
+      await sync.hydrate()
+      expect(cache.getByKey(PROJECT, 'b')).not.toBeNull()
+      // With an agreeing count the same listing deletes it.
+      ;(fake.supabase as any).from = origFrom
+      cache.setLastSyncedAt(PROJECT, '2026-01-01T00:00:00.000Z', 2)
+      await sync.hydrate()
+      expect(cache.getByKey(PROJECT, 'b')).toBeNull()
+    })
+
+    it('a failed push is not retried by every read within the backoff', async () => {
+      const fake = makeFake()
+      fake.addRow({ key: 'a' })
+      const sync = makeSync(fake)
+      await sync.hydrate()
+      useClock(0)
+      cache.upsertMemory(localMemory({ key: 'stuck', value: 'never lands' }), true)
+      fake.setFailUpserts(true)
+      const upserts = () => fake.calls.filter((c) => c.op === 'memories.upsert').length
+
+      await sync.hydrate() // first attempt fails
+      expect(upserts()).toBe(1)
+      useClock(30_000)
+      await sync.hydrate()
+      expect(upserts()).toBe(1) // inside the 60s backoff: no doomed retry
+      useClock(61_000)
+      await sync.hydrate()
+      expect(upserts()).toBe(2)
+    })
+
+    it('hydrate({ skipFlush: true }) does not push', async () => {
+      const fake = makeFake()
+      const sync = makeSync(fake)
+      cache.upsertMemory(localMemory({ key: 'dirty' }), true)
+      await sync.hydrate({ skipFlush: true })
+      expect(fake.calls.filter((c) => c.op === 'memories.upsert')).toHaveLength(0)
+    })
+  })
+
   describe('(i) review W1-W3, S2, Q2', () => {
     const T = Date.parse(SERVER_EPOCH)
     const at = (ms: number) => new Date(T + ms).toISOString().replace('Z', '000+00:00')
@@ -744,6 +836,13 @@ describe('hydrate reconcile (0.5.7 Task 1a)', () => {
         cache.markSynced([mem.id])
       })
       useClock(1 * MIN)
+      await sync.hydrate()
+      // The listing pages until an empty page, so it may pick up "c" and
+      // disagree with the count; that round defers deletions. Either way "c"
+      // is never deleted, and "b" is gone by the next round at the latest.
+      expect(cache.getByKey(PROJECT, 'c')?.value).toBe('fresh')
+      fake.setAfterSelect(null)
+      useClock(2 * MIN)
       await sync.hydrate()
       expect(cache.getByKey(PROJECT, 'b')).toBeNull()
       expect(cache.getByKey(PROJECT, 'c')?.value).toBe('fresh')

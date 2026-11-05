@@ -258,6 +258,10 @@ export async function handleImportClaudeMd(
   const written: Memory[] = []
   // Plaintext per key, for the embedder.
   const plaintextByKey = new Map<string, string>()
+  // Overwritten keys whose text changed: their old vectors (local and remote)
+  // are cleared so a row that misses the embed deadline is re-embedded by the
+  // backfill instead of being ranked by the old text's vector.
+  const staleEmbedding = new Set<string>()
   // Stored readable on purpose (as before 0.5.7): no read path for these rows
   // decrypts (conventions, project_brief, resources, the review queue, the
   // dashboard), so ciphertext here would make imported rules and pending
@@ -292,6 +296,10 @@ export async function handleImportClaudeMd(
         ...(callerUserId ? { updatedBy: callerUserId } : {}),
       }
       cache.upsertMemory(memory)
+      if (existing.encrypted || existing.value !== item.value) {
+        staleEmbedding.add(memory.key)
+        cache.clearEmbedding(args.projectId, memory.key)
+      }
       written.push(memory)
       plaintextByKey.set(memory.key, item.value)
       imported++
@@ -327,6 +335,7 @@ export async function handleImportClaudeMd(
       if (ok) {
         const cached = cache.getByKey(args.projectId, memory.key)
         if (cached) cache.markSynced([cached.id])
+        if (staleEmbedding.has(memory.key)) await sync.remoteClearEmbedding(args.projectId, memory.key)
       } else {
         pushFailed++
       }

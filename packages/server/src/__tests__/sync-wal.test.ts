@@ -29,6 +29,15 @@ describe('SyncWAL', () => {
     expect(id.length).toBeGreaterThan(0)
   })
 
+  it('discardPendingByMemoryIds drops pending upserts only, keeping deletes and other rows', () => {
+    wal.logPending('mem-1', 'proj-1', 'upsert', { key: 'a' })
+    wal.logPending('mem-1', 'proj-1', 'delete', 'a')
+    wal.logPending('mem-2', 'proj-1', 'upsert', { key: 'b' })
+    wal.discardPendingByMemoryIds(['mem-1'])
+    const left = wal.getIncomplete().map((e) => `${e.memoryId}:${e.operation}`).sort()
+    expect(left).toEqual(['mem-1:delete', 'mem-2:upsert'])
+  })
+
   it('getIncomplete returns the logged operation', () => {
     wal.logPending('mem-1', 'proj-1', 'upsert', { key: 'test' })
     const incomplete = wal.getIncomplete()

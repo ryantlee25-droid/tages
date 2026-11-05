@@ -75,6 +75,7 @@ function makeSync(remote: Map<string, Memory> | null) {
   return {
     remoteGetByKeys: vi.fn(async () => remote),
     remoteInsert: vi.fn(async (m: Memory) => { order.push(`insert:${m.key}`); return true }),
+    remoteClearEmbedding: vi.fn(async () => true),
   } as unknown as SupabaseSync & { remoteGetByKeys: ReturnType<typeof vi.fn>; remoteInsert: ReturnType<typeof vi.fn> }
 }
 
@@ -150,6 +151,24 @@ describe('handleImportClaudeMd against the shared store', () => {
     expect(pushed.value).toBe(target.value)
     expect(pushed.encrypted).toBe(false)
     expect(cache.getByKey(PROJECT, target.key)!.id).toBe(`remote-${target.key}`)
+  })
+
+  it('overwrite with changed text clears the old vector locally and remotely; unchanged text keeps it', async () => {
+    const items = parseClaudeMd(DOC)
+    const [changed, same] = items
+    cache.upsertMemoryWithEmbedding({ ...remoteRow(changed.key, 'old text'), projectId: PROJECT } as Memory, [1, 2, 3], false)
+    cache.upsertMemoryWithEmbedding({ ...remoteRow(same.key, same.value), projectId: PROJECT } as Memory, [4, 5, 6], false)
+    const sync = makeSync(new Map())
+    // Leave every row past the embed deadline so only the clear is observed.
+    mockEmbed.mockImplementation(async () => {})
+    await handleImportClaudeMd({ content: DOC, projectId: PROJECT, strategy: 'overwrite' }, cache, sync, TEAMMATE)
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const emb = (key: string) => ((cache as any).db.prepare('SELECT embedding FROM memories WHERE project_id = ? AND key = ?').get(PROJECT, key) as { embedding: string | null }).embedding
+    expect(emb(changed.key)).toBeNull()
+    expect(emb(same.key)).toBe('[4,5,6]')
+    const cleared = (sync as unknown as { remoteClearEmbedding: ReturnType<typeof vi.fn> }).remoteClearEmbedding.mock.calls.map(c => c[1])
+    expect(cleared).toEqual([changed.key])
   })
 
   it('remote lookup unavailable: falls back to the local cache and says so', async () => {

@@ -36,6 +36,15 @@ Fixes found by new end-to-end phases 12-16 (approval queue, CLAUDE.md, recency, 
 - **An edit made while a flush is in flight stays queued** instead of being marked synced.
 - **`tages export --format <typo>` is an error**, and an export-then-import round trip keeps every memory type.
 
+### Code-review round 2
+- **A full sync can no longer delete memories from a truncated listing.** Listings page until an empty page (a server row cap below 1,000 used to end the listing early), and the full pull deletes only when an exact count agrees with the listing.
+- **`verify_memory` no longer reports success for a row the shared store never received.** An unsynced row is pushed live first; a refused push fails the verify.
+- **`archive_memory` writes the shared store first.** A refused archive leaves this machine unchanged instead of permanently out of step with the team.
+- **A row that cannot be pushed no longer costs every read a doomed upsert.** After a failed push the read path waits 60s before retrying (the interval flush still retries), the sync WAL keeps one entry per row instead of one per attempt, and the CLI no longer pushes twice per command.
+- **Re-importing a changed CLAUDE.md rule clears its old embedding** (locally and in the cloud), so a row that misses the embed deadline is re-embedded by the backfill instead of ranked by the old text.
+- **`tages import` follows CommonMark fences** (same character, at least as long), matching the MCP importer.
+- **`verify_memory`, `pending_memories`, `forget`, and `archive_memory` wait for the boot sync** like the read tools, so an agent on a fresh machine no longer gets "No memory found" for a row that has not downloaded yet.
+
 ## 2026-08-25 — `@tages/cli` 0.5.5 · `@tages/shared` 0.2.3
 
 Six first-run defects found while provisioning a real team project and inviting two teammates. All six sit on the onboarding path, which is why 1,500+ unit tests missed every one. See `README.md` "Release Notes" for the full detail.

@@ -339,6 +339,13 @@ export class SqliteCache {
    * (the key was `forget`-deleted between the write and now) — UPDATE simply
    * matches nothing and never re-creates the row.
    */
+  /** Null the cached embedding after the value changed (the backfill re-embeds it). */
+  clearEmbedding(projectId: string, key: string): void {
+    this.db.prepare(
+      'UPDATE memories SET embedding = NULL WHERE project_id = ? AND key = ?'
+    ).run(projectId, key)
+  }
+
   setEmbedding(projectId: string, key: string, embedding: number[]): void {
     this.db.prepare(
       'UPDATE memories SET embedding = ? WHERE project_id = ? AND key = ?'

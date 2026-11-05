@@ -94,6 +94,24 @@ describe('MCP write tools: denied writes and embed-on-write wiring', () => {
       expect(mockEmbed.mock.calls[0][1]).toBe('value of p2 long enough')
     })
 
+    it('a row that never reached the shared store is pushed live first', async () => {
+      cache.upsertMemory(mem('u1'), true) // dirty: the original insert failed
+      const sync = makeSync()
+      const res = await handleVerifyMemory({ key: 'u1' }, PROJECT, cache, sync)
+      expect(res.isError).toBeUndefined()
+      expect(sync.remoteInsert).toHaveBeenCalledWith(expect.objectContaining({ key: 'u1', status: 'live' }))
+      expect(cache.getByKey(PROJECT, 'u1')!.status).toBe('live')
+    })
+
+    it('an unsynced row whose push is refused is not reported verified', async () => {
+      cache.upsertMemory(mem('u2'), true)
+      const sync = makeSync({ insert: false })
+      const res = await handleVerifyMemory({ key: 'u2' }, PROJECT, cache, sync)
+      expect(res.isError).toBe(true)
+      expect(sync.remoteVerifyMemory).not.toHaveBeenCalled()
+      expect(cache.getByKey(PROJECT, 'u2')!.status).toBe('pending')
+    })
+
     it('local-only project (no sync) still verifies and embeds', async () => {
       cache.upsertMemory(mem('p3'), false)
       const res = await handleVerifyMemory({ key: 'p3' }, PROJECT, cache, null)
@@ -159,11 +177,21 @@ describe('MCP write tools: denied writes and embed-on-write wiring', () => {
       expect(sync.remoteInsert).toHaveBeenCalledWith(expect.objectContaining({ key: 'a1', status: 'archived' }))
     })
 
-    it('refused push: isError saying teammates still see it', async () => {
+    it('refused push: isError, and this machine is left unchanged (live, clean)', async () => {
       cache.upsertMemory(mem('a2', { status: 'live' }), false)
       const res = await handleArchive({ key: 'a2' }, PROJECT, cache, makeSync({ insert: false }))
       expect(res.isError).toBe(true)
-      expect(res.content[0].text).toMatch(/teammates still see it/)
+      expect(res.content[0].text).toMatch(/Nothing was changed/)
+      expect(cache.getByKey(PROJECT, 'a2')!.status).toBe('live')
+      expect(cache.getDirty().map((m) => m.key)).not.toContain('a2')
+    })
+
+    it('accepted push: archived locally and marked synced', async () => {
+      cache.upsertMemory(mem('a3', { status: 'live' }), false)
+      const res = await handleArchive({ key: 'a3' }, PROJECT, cache, makeSync())
+      expect(res.isError).toBeUndefined()
+      expect(cache.getByKey(PROJECT, 'a3')!.status).toBe('archived')
+      expect(cache.getDirty().map((m) => m.key)).not.toContain('a3')
     })
   })
 

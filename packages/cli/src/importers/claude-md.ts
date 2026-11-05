@@ -39,15 +39,20 @@ export function parseCLAUDEmd(filePath: string): ImportedMemory[] {
   let currentKey = ''
   let currentLines: string[] = []
 
-  let inFence = false
+  // A `##` inside a fenced code block is code, not a section heading. Fences
+  // follow CommonMark (same rule as the server's stripFencedCode): a fence
+  // closes only on the same character, at least as long, with nothing after.
+  let fence: { char: string; len: number } | null = null
   for (const line of content.split('\n')) {
-    // A `##` inside a fenced code block is code, not a section heading.
-    if (/^\s*(```|~~~)/.test(line)) {
-      inFence = !inFence
+    if (fence) {
+      const close = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/)
+      if (close && close[1][0] === fence.char && close[1].length >= fence.len) fence = null
       if (currentKey) currentLines.push(line)
       continue
     }
-    if (inFence) {
+    const open = line.match(/^ {0,3}(`{3,}|~{3,})/)
+    if (open) {
+      fence = { char: open[1][0], len: open[1].length }
       if (currentKey) currentLines.push(line)
       continue
     }

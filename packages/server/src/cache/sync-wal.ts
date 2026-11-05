@@ -88,6 +88,21 @@ export class SyncWAL {
   }
 
   /**
+   * Drop incomplete upsert entries for these memories. A retried flush logs a
+   * fresh entry with the latest payload, so earlier attempts are superseded
+   * (without this a row that keeps failing adds one entry per retry).
+   */
+  discardPendingByMemoryIds(memoryIds: string[]): void {
+    for (let i = 0; i < memoryIds.length; i += 500) {
+      const batch = memoryIds.slice(i, i + 500)
+      const placeholders = batch.map(() => '?').join(',')
+      this.db.prepare(
+        `DELETE FROM sync_wal WHERE memory_id IN (${placeholders}) AND completed = 0 AND operation = 'upsert'`
+      ).run(...batch)
+    }
+  }
+
+  /**
    * Get all incomplete WAL entries for crash recovery.
    */
   getIncomplete(): PendingOp[] {

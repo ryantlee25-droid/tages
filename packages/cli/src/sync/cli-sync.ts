@@ -254,7 +254,9 @@ export async function openCliSync(config: ProjectConfig): Promise<CliSyncContext
 
     const push = await flushWithResult()
     try {
-      const pulled = await sync.hydrate()
+      // skipFlush: we just pushed; a second push would double a failing
+      // upsert's timeout and log entries, outside the stderr tee.
+      const pulled = await sync.hydrate({ skipFlush: true })
       return { pushed: push.ok, pulled: typeof pulled === 'number' ? pulled : 0, error: push.ok ? undefined : push.error }
     } catch (err) {
       // Report BOTH halves. Overwriting push.error with the hydrate error hides

@@ -35,8 +35,17 @@ export async function handleVerifyMemory(
     // confirms. The REMOTE row is addressed by (project_id, key), not
     // memory.id: remote upserts strip the local id, so the ids diverge.
     // false = error OR zero rows changed (RLS silently filters a read-only
-    // member's UPDATE down to 0 rows).
-    const ok = await sync.remoteVerifyMemory(projectId, memory.key, now)
+    // member's UPDATE down to 0 rows) OR the key is not in the shared store.
+    // A row that never reached the shared store (still dirty locally) is
+    // pushed first, already live; a refused push fails the verify.
+    const unsynced = cache.getSyncIndex(projectId).some((r) => r.key === memory.key && r.dirty)
+    let ok: boolean
+    if (unsynced) {
+      ok = await sync.remoteInsert({ ...memory, status: 'live', verifiedAt: now, updatedAt: now })
+      if (ok) ok = await sync.remoteVerifyMemory(projectId, memory.key, now)
+    } else {
+      ok = await sync.remoteVerifyMemory(projectId, memory.key, now)
+    }
     if (!ok) {
       return {
         isError: true,

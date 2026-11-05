@@ -4,6 +4,7 @@ import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
 import { extractMemoriesFromSummary } from './session-extract'
 import { embedOnWrite } from './embed-on-write'
+import { SESSION_EXTRACT_TAG } from '../sync/auto-save'
 import { scanForSensitiveData, hasHighSeverity, formatSafetyWarnings, type SafetyWarning } from './safety'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
@@ -59,7 +60,8 @@ export async function handleSessionEnd(
         status: 'pending' as const,
         confidence: 0.8,
         filePaths: [],
-        tags: ['session-extract'],
+        // The auto-save sweep skips this tag: extractions always wait for review.
+        tags: [SESSION_EXTRACT_TAG],
         createdAt: now,
         updatedAt: now,
         ...(callerUserId ? { createdBy: callerUserId, updatedBy: callerUserId } : {}),
