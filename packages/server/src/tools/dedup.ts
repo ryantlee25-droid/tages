@@ -60,6 +60,8 @@ export async function handleConsolidate(
   if (sync) {
     const ok = await sync.remoteInsert(surviving)
     if (!ok) {
+      // We tell the user nothing changed, so the WAL entry must not replay.
+      sync.discardPendingWal([surviving.id])
       return {
         isError: true,
         content: [{

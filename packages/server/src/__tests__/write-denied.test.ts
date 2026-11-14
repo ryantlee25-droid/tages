@@ -50,6 +50,7 @@ function makeSync(opts: { verify?: boolean; del?: boolean; insert?: boolean } = 
     remoteDelete: vi.fn(async () => opts.del ?? true),
     remoteUpdateEmbedding: vi.fn(async () => true),
     remoteUpsertChunks: vi.fn(async () => true),
+    discardPendingWal: vi.fn(),
   } as unknown as SupabaseSync & Record<'remoteInsert' | 'remoteVerifyMemory' | 'remoteDelete', ReturnType<typeof vi.fn>>
 }
 

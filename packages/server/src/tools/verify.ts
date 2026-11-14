@@ -42,6 +42,9 @@ export async function handleVerifyMemory(
     let ok: boolean
     if (unsynced) {
       ok = await sync.remoteInsert({ ...memory, status: 'live', verifiedAt: now, updatedAt: now })
+      // A refused push must not replay as a live row on the next boot; the
+      // dirty pending row stays and the normal flush re-logs its real state.
+      if (!ok) sync.discardPendingWal([memory.id])
       if (ok) ok = await sync.remoteVerifyMemory(projectId, memory.key, now)
     } else {
       ok = await sync.remoteVerifyMemory(projectId, memory.key, now)

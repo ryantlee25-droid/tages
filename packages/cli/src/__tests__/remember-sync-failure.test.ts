@@ -405,6 +405,11 @@ describe('openCliSync flushWithResult against a real cache + real SupabaseSync',
       }),
     }
     mockCreateAuthenticatedClient.mockResolvedValue(supabase)
+    // The 60s failed-push backoff alone would also hold upserts at 1, so assert
+    // the skipFlush hand-off directly: without it this test would still pass.
+    // @ts-ignore — cross-package source import, same module cli-sync loads
+    const { SupabaseSync } = await import('../../../server/src/sync/supabase-sync.js')
+    const hydrateSpy = vi.spyOn(SupabaseSync.prototype, 'hydrate')
     const openCliSync = await realOpenCliSync()
     const ctx = await openCliSync({ ...CLOUD_CONFIG, slug: `recon-once-${Date.now()}` })
 
@@ -413,7 +418,9 @@ describe('openCliSync flushWithResult against a real cache + real SupabaseSync',
       const r = await ctx.reconcile()
       expect(r.pushed).toBe(false)
       expect(upserts).toBe(1)
+      expect(hydrateSpy).toHaveBeenCalledWith(expect.objectContaining({ skipFlush: true }))
     } finally {
+      hydrateSpy.mockRestore()
       ctx.close()
     }
   })

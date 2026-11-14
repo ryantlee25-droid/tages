@@ -705,6 +705,18 @@ export class SupabaseSync {
     }
   }
 
+  /**
+   * Drop this machine's pending WAL upserts for these local memory ids.
+   * Remote-first callers (archive, verify of an unsynced row) call it when
+   * remoteInsert fails: they leave the local row unchanged and tell the user
+   * nothing changed, so the WAL entry remoteInsert logged must not be replayed
+   * by recoverWAL on the next boot. Replaying it would apply the refused change
+   * team-wide and overwrite any teammate edit made since with a stale row.
+   */
+  discardPendingWal(memoryIds: string[]): void {
+    this.wal?.discardPendingByMemoryIds(memoryIds)
+  }
+
   async remoteInsert(memory: Memory): Promise<boolean> {
     // Log to WAL before the remote call
     const walId = this.wal?.logPending(memory.id, memory.projectId, 'upsert', memoryToDbRow(memory))

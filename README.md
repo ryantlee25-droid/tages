@@ -147,6 +147,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 ## Release Notes
 
+### 2026-11-14 — `v0.5.7` (unreleased): refused remote-first writes no longer replay from the WAL
+
+- **Fix.** `archive_memory`, `verify_memory` on an unsynced row, and `consolidate_memories` write the shared store before any local change. When the store refused, they said nothing was changed, but the pending upsert stayed in the sync WAL and `recoverWAL` replayed it on the next boot. The refused change then landed team-wide and overwrote any teammate edit made since. These tools now discard their WAL entry on a refused write (`SupabaseSync.discardPendingWal`). Local-first callers are unchanged, since their dirty row is the durable record.
+- **Tests.** A new test uses a real `SupabaseSync` with an on-disk WAL and fails if the discards are removed. The CLI "reconcile pushes once" test now asserts hydrate gets `skipFlush: true`; it passed with the fix reverted before, because the 60s backoff masked it.
+
 ### 2026-11-03 — `v0.5.7`: the capture, review, recall loop works end to end
 
 Five new e2e phases (85 checks) exercised the approval queue, CLAUDE.md import/export, recency across teammates, session longevity, and a fresh-machine onboarding. About 32 failed against 0.5.6. All pass now against prod.

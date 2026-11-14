@@ -31,6 +31,8 @@ export async function handleArchive(
   if (sync) {
     const ok = await sync.remoteInsert({ ...memory, status: 'archived', updatedAt: new Date().toISOString() })
     if (!ok) {
+      // We tell the user nothing changed, so the WAL entry must not replay.
+      sync.discardPendingWal([memory.id])
       return {
         isError: true,
         content: [{
