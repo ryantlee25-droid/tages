@@ -7,7 +7,7 @@ import { getCacheDir } from '../config/paths.js'
 import { generateEmbedding } from '../lib/embedding.js'
 import { sortByTemporalProximity } from '../lib/temporal-sort.js'
 import { evidenceWeight, judgeRelevance, type EvidenceLevel } from '@tages/shared'
-import { reciprocalRankFusion } from '../lib/rrf.js'
+import { compareNewestThenId, reciprocalRankFusionScored } from '../lib/rrf.js'
 import { rerankCandidates } from '../lib/reranker.js'
 import { fetchTemporalCandidates } from '../lib/temporal-recall.js'
 
@@ -161,9 +161,13 @@ function getRecallThreshold(): number {
 // content and must be preserved. The >=40-char guard avoids pruning on a
 // coincidental short-substring match. Deliberately narrow — it should rarely
 // fire at session-level ingestion granularity.
+function normalizeContent(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
 function isContainedInKept(candidate: string, kept: string): boolean {
-  const normCand = candidate.trim().toLowerCase().replace(/\s+/g, ' ')
-  const normKept = kept.trim().toLowerCase().replace(/\s+/g, ' ')
+  const normCand = normalizeContent(candidate)
+  const normKept = normalizeContent(kept)
   if (!normCand || !normKept) return false
   if (normCand === normKept) return true
   // Only prune when the candidate is at least 40 chars, so we never drop a
@@ -177,16 +181,42 @@ function isContainedInKept(candidate: string, kept: string): boolean {
 // earlier (higher-ranked) row — i.e. the later row's value is fully contained
 // in a kept row. Expects `rows` to already be sorted by rank/relevance so
 // "earlier" means "higher-ranked". Never drops a row that is a superset of a
-// kept row (it carries new content); the top-ranked row is always kept.
-function dedupeNearDuplicateContent(rows: Record<string, unknown>[]): Record<string, unknown>[] {
-  const kept: Record<string, unknown>[] = []
+// kept row (it carries new content).
+//
+// Newest wins between IDENTICAL texts (0.5.7, bug 10). Two memories with the
+// same normalized value score identically, so which one ranked first was
+// whatever order the RPCs returned, and the older one was often the one kept.
+// When the duplicate is the same text and newer (updated_at DESC, then id ASC),
+// it takes the kept row's slot. A shorter row contained in a longer kept row is
+// still dropped whatever its age: the kept superset carries more content.
+function dedupeNearDuplicateContent<T extends Record<string, unknown>>(rows: T[]): T[] {
+  const kept: T[] = []
   for (const row of rows) {
     const value = row.value
-    const isDuplicate =
-      typeof value === 'string' &&
-      kept.some((k) => typeof k.value === 'string' && isContainedInKept(value, k.value as string))
-    if (!isDuplicate) {
+    if (typeof value !== 'string') {
       kept.push(row)
+      continue
+    }
+    const at = kept.findIndex((k) => typeof k.value === 'string' && isContainedInKept(value, k.value as string))
+    if (at === -1) {
+      kept.push(row)
+      continue
+    }
+    const holder = kept[at]
+    const sameText = normalizeContent(value) === normalizeContent(holder.value as string)
+    if (
+      sameText &&
+      typeof row.id === 'string' &&
+      typeof holder.id === 'string' &&
+      compareNewestThenId(row as unknown as { id: string }, holder as unknown as { id: string }) < 0
+    ) {
+      // The newer row inherits the slot's fused score, so the evidence
+      // weighting below does not push it back under rows the older copy beat.
+      if (typeof holder.rrf_score === 'number') {
+        const own = typeof row.rrf_score === 'number' ? row.rrf_score : 0
+        ;(row as Record<string, unknown>).rrf_score = Math.max(own, holder.rrf_score)
+      }
+      kept[at] = row
     }
   }
   return kept
@@ -363,16 +393,19 @@ export async function recallCommand(query: string | undefined, options: RecallOp
         )
       }
 
-      const merged = reciprocalRankFusion<Record<string, unknown> & { id: string }>([
+      // The fused score rides on each row as `rrf_score` so the evidence
+      // weighting below can scale relevance instead of replacing it.
+      const merged: Record<string, unknown>[] = reciprocalRankFusionScored<Record<string, unknown> & { id: string }>([
         semanticJudged.relevant ? semanticRows : [],
         chunkJudged.relevant ? chunkRows : [],
         trigramRows,
         temporalTagged,
-      ])
+      ]).map(({ item, score }) => ({ ...item, rrf_score: score }))
 
       // Drop near-duplicate content (e.g. two overlapping long-session chunks
-      // that both cleared threshold), keeping the higher-ranked occurrence.
-      // Runs after RRF fusion and before rerank/temporal reordering.
+      // that both cleared threshold), keeping the higher-ranked occurrence, or
+      // the newest of identical texts. Runs after RRF fusion and before
+      // rerank/temporal reordering.
       const contentDeduped = dedupeNearDuplicateContent(merged)
 
       // Evidence weighting (migration 0070). Applied HERE and not only in the
@@ -382,9 +415,18 @@ export async function recallCommand(query: string | undefined, options: RecallOp
       // fact answering the same question, which is precisely what the field
       // exists to prevent. Measured end to end before this was added.
       //
-      // A stable sort on the weight alone: RRF has already produced the
-      // relevance order, and this only reorders WITHIN that, so a strongly
-      // relevant inferred row still beats an irrelevant verified one.
+      // The weight MULTIPLIES the fused RRF score (0.5.7, bug 13). It used to
+      // be a stable sort on the weight alone, which is a partition, not a
+      // nudge: every row with a higher weight moved ahead of every row with a
+      // lower one regardless of relevance. CLI `remember` writes `declared`
+      // (0.95) and import/observe/approve write NULL (1.0), so in a 55-memory
+      // project a just-written memory queried by its own exact sentence
+      // (similarity 1.000, rank 1 on every channel) sat behind every NULL row
+      // and fell off `--limit 10`. Reproduced on prod, see
+      // docs/recall-miss-diagnosis-0.5.7.md. Scaling keeps the 0070 intent:
+      // between two rows of comparable relevance the better-established one
+      // still leads (rank 1 inferred: 2/61 x 0.75 = 0.025, rank 10 verified:
+      // 2/70 x 1.0 = 0.029), while an exact match is not buried.
       // The four recall RPCs return a fixed table shape that predates 0070 and
       // does not carry `evidence`, so the fused rows arrive without it. Widening
       // those return types means DROP + CREATE on four SECURITY DEFINER
@@ -541,9 +583,10 @@ function formatEvidence(evidence: unknown): string {
  * Reorder a relevance-ranked list so better-established claims come first,
  * without discarding the relevance ordering (migration 0070).
  *
- * Stable, and applied AFTER fusion: it only reorders rows that RRF already
- * considered comparable, so a highly relevant `inferred` memory still outranks
- * an irrelevant `verified` one. What it prevents is the case the end-to-end
+ * Applied AFTER fusion, as a multiplier on each row's fused RRF score (see
+ * stableSortByEvidence): only rows RRF already considered comparable change
+ * places, so a highly relevant `inferred` memory still outranks an irrelevant
+ * `verified` one. What it prevents is the case the end-to-end
  * suite caught — two memories answering the SAME question, where the guess
  * happened to match the query text slightly better and was therefore served
  * first to the agent.
@@ -577,8 +620,22 @@ async function fetchEvidenceLevels(
 
 function stableSortByEvidence<T extends Record<string, unknown>>(rows: T[]): T[] {
   return rows
-    .map((row, index) => ({ row, index, weight: evidenceWeight(row.evidence as EvidenceLevel | undefined) }))
-    .sort((a, b) => b.weight - a.weight || a.index - b.index)
+    .map((row, index) => {
+      const weight = evidenceWeight(row.evidence as EvidenceLevel | undefined)
+      // Rows without a fused score (none on the hybrid path today) keep their
+      // input order through a rank-derived stand-in on the same 1/(60+r) scale.
+      const base = typeof row.rrf_score === 'number' ? row.rrf_score : 1 / (60 + index + 1)
+      return { row, index, score: base * weight }
+    })
+    .sort((a, b) => {
+      const diff = b.score - a.score
+      if (Math.abs(diff) > 1e-12) return diff
+      if (typeof a.row.id === 'string' && typeof b.row.id === 'string') {
+        const tie = compareNewestThenId(a.row as unknown as { id: string }, b.row as unknown as { id: string })
+        if (tie !== 0) return tie
+      }
+      return a.index - b.index
+    })
     .map((entry) => entry.row)
 }
 

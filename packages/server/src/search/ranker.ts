@@ -74,6 +74,23 @@ export function combineScores(
 
 const TEMPORAL_WEIGHT = 0.5
 
+/** Milliseconds of a timestamp string; 0 when absent or unparsable, so a bad value can't make the comparator return NaN. */
+function timeOrZero(value: string | undefined): number {
+  if (!value) return 0
+  const t = new Date(value).getTime()
+  return Number.isNaN(t) ? 0 : t
+}
+
+/**
+ * Deterministic tiebreak for two memories of equal score: newer `updatedAt`
+ * first (falling back to `createdAt`), then `id` ascending.
+ */
+export function compareNewestThenId(a: Memory, b: Memory): number {
+  const diff = timeOrZero(b.updatedAt ?? b.createdAt) - timeOrZero(a.updatedAt ?? a.createdAt)
+  if (diff !== 0) return diff
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
+
 /**
  * Proximity of a memory's temporal anchor to a comparison instant, in the
  * range (0, 1]. Uses the fallback chain referencedDate -> relativeDate ->
@@ -125,16 +142,12 @@ export function rankResults(results: ScoredMemory[], config: RankerConfig = {}, 
     return { memory: r.memory, score }
   })
 
-  // Sort descending, stable tie-breaking by updatedAt then id
+  // Sort descending; ties break on updatedAt DESC then id ASC, the rule shared
+  // with the CLI's RRF fusion and the server's SQLite query (0.5.7, bug 10).
   scored.sort((a, b) => {
     const diff = b.score - a.score
     if (Math.abs(diff) > 1e-10) return diff
-    // Tie-break: newer updatedAt wins
-    const timeA = new Date(a.memory.updatedAt).getTime()
-    const timeB = new Date(b.memory.updatedAt).getTime()
-    if (timeA !== timeB) return timeB - timeA
-    // Final tie-break: lexicographic by id for determinism
-    return a.memory.id < b.memory.id ? -1 : 1
+    return compareNewestThenId(a.memory, b.memory)
   })
 
   // Deduplicate by id (keep highest-scored occurrence)

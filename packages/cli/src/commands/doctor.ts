@@ -436,7 +436,9 @@ async function checkCloudConnection(
 
   if (mode.kind === 'cloud') {
     try {
-      const supabase = await createAuthenticatedClient(mode.url, mode.anonKey)
+      // doctor REPORTS a dead session (its auth check does that); it must not
+      // exit on one the way every other command does.
+      const supabase = await createAuthenticatedClient(mode.url, mode.anonKey, { allowDeadSession: true })
       const { error } = await supabase.from('projects').select('id').limit(1)
       if (error) {
         report(tally, 'fail', LABEL, error.message)

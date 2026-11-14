@@ -21,6 +21,7 @@ vi.mock('../auth/github-oauth.js', () => ({
 
 vi.mock('../config/mcp-inject.js', () => ({
   injectMcpConfig: vi.fn().mockReturnValue({ path: '/mock/.mcp.json', created: true }),
+  requireParsableMcpConfig: vi.fn(),
 }))
 
 vi.mock('../indexer/install-hook.js', () => ({

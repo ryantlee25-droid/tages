@@ -1,7 +1,7 @@
 import * as fs from 'fs'
 import chalk from 'chalk'
 import { getCacheDir, getAuthPath } from '../config/paths.js'
-import { createAuthenticatedClient } from '../auth/session.js'
+import { createAuthenticatedClientWithStatus } from '../auth/session.js'
 
 /**
  * The two `@tages/server` modules the CLI needs to read and push the local
@@ -148,7 +148,18 @@ export async function openCliSync(config: ProjectConfig): Promise<CliSyncContext
 
   try {
     const anonKey = config.supabaseAnonKey || ''
-    const supabase = await createAuthenticatedClient(config.supabaseUrl, anonKey)
+    // Read the status instead of using the exiting guard. On a dead session the
+    // write must stay local and dirty (it pushes after `tages login`), and the
+    // background reconcile must never fail the command. Building a sync over
+    // the anonymous client would let RLS drop every push with no error.
+    const { supabase, status } = await createAuthenticatedClientWithStatus(config.supabaseUrl, anonKey)
+    if (status === 'expired' || status === 'anonymous') {
+      throw new Error(
+        status === 'expired'
+          ? 'your session has expired, run `tages login` (changes are kept locally and sync after you log in)'
+          : 'you are not signed in, run `tages login` (changes are kept locally and sync after you log in)',
+      )
+    }
     sync = new SupabaseSync(supabase, cache, config.projectId)
   } catch (err) {
     // Auth setup failed — fall back to local mode with a warning
@@ -243,7 +254,9 @@ export async function openCliSync(config: ProjectConfig): Promise<CliSyncContext
 
     const push = await flushWithResult()
     try {
-      const pulled = await sync.hydrate()
+      // skipFlush: we just pushed; a second push would double a failing
+      // upsert's timeout and log entries, outside the stderr tee.
+      const pulled = await sync.hydrate({ skipFlush: true })
       return { pushed: push.ok, pulled: typeof pulled === 'number' ? pulled : 0, error: push.ok ? undefined : push.error }
     } catch (err) {
       // Report BOTH halves. Overwriting push.error with the hydrate error hides

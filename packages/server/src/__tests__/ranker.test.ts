@@ -141,6 +141,28 @@ describe('rankResults', () => {
     expect(results[0].key).toBe('newer')
   })
 
+  it('exact score ties break on updatedAt DESC then id ASC, whatever the input order (0.5.7 bug 10)', () => {
+    const t0 = '2020-01-01T00:00:00.000Z' // outside the recency-boost window, so no boost differs
+    const t1 = '2020-01-01T00:00:02.500Z'
+    const oldB = makeMemory({ key: 'old-b', id: 'bbb', updatedAt: t0 })
+    const oldA = makeMemory({ key: 'old-a', id: 'aaa', updatedAt: t0 })
+    const fresh = makeMemory({ key: 'new', id: 'zzz', updatedAt: t1 })
+    const asTie = (m: Memory) => ({ memory: m, semanticScore: 0.5, textScore: 0.5 })
+    for (const order of [[oldB, oldA, fresh], [fresh, oldA, oldB], [oldA, fresh, oldB]]) {
+      expect(rankResults(order.map(asTie)).map(m => m.key)).toEqual(['new', 'old-a', 'old-b'])
+    }
+  })
+
+  it('an unparsable updatedAt sorts as oldest instead of making the comparator NaN', () => {
+    const bad = makeMemory({ key: 'bad', id: 'aaa', updatedAt: 'not-a-date' })
+    const good = makeMemory({ key: 'good', id: 'bbb', updatedAt: '2020-01-01T00:00:00.000Z' })
+    const results = rankResults([
+      { memory: bad, semanticScore: 0.5, textScore: 0.5 },
+      { memory: good, semanticScore: 0.5, textScore: 0.5 },
+    ])
+    expect(results.map(m => m.key)).toEqual(['good', 'bad'])
+  })
+
   it('asTextResults wraps memories with textScore=1, semanticScore=0', () => {
     const mems = [makeMemory({ key: 'a' }), makeMemory({ key: 'b' })]
     const scored = asTextResults(mems)

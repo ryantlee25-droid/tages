@@ -3,7 +3,7 @@ import * as path from 'path'
 import chalk from 'chalk'
 import ora from 'ora'
 import { getProjectsDir, getAuthPath } from '../config/paths.js'
-import { injectMcpConfig } from '../config/mcp-inject.js'
+import { injectMcpConfig, requireParsableMcpConfig } from '../config/mcp-inject.js'
 import { installPostCommitHook } from '../indexer/install-hook.js'
 import { createAuthenticatedClient } from '../auth/session.js'
 import { runGithubOAuth } from '../auth/github-oauth.js'
@@ -121,6 +121,11 @@ async function linkByProjectId(projectId: string, slugOverride: string | undefin
   // client config.
   const supabaseUrl = SUPABASE_URL
   const supabaseAnonKey = SUPABASE_ANON_KEY
+
+  // Validate .mcp.json before anything is written (auth, project config, dir
+  // marker, git hook). An unparsable file used to surface as a stack trace from
+  // injectMcpConfig AFTER the project config and marker were already on disk.
+  requireParsableMcpConfig('link')
 
   const spinner = ora()
 

@@ -5,7 +5,7 @@ import chalk from 'chalk'
 import ora from 'ora'
 import { createSupabaseClient, createCloudProject, createLocalProject } from '@tages/shared'
 import { getConfigDir, getProjectsDir, getCacheDir, getAuthPath } from '../config/paths.js'
-import { injectMcpConfig } from '../config/mcp-inject.js'
+import { injectMcpConfig, requireParsableMcpConfig } from '../config/mcp-inject.js'
 import { runGithubOAuth } from '../auth/github-oauth.js'
 import { writeAuthFile } from '../auth/store.js'
 import { createAuthenticatedClientWithStatus } from '../auth/session.js'
@@ -155,6 +155,10 @@ interface InitOptions {
 export async function initCommand(options: InitOptions) {
   const spinner = ora()
   const slug = options.slug || path.basename(process.cwd())
+
+  // Validate .mcp.json before anything is written or created (project config,
+  // cloud project, git hook), so an unparsable file stops init cleanly.
+  requireParsableMcpConfig('init')
 
   // Ensure config directories exist
   const dirs = [getConfigDir(), getProjectsDir(), getCacheDir()]

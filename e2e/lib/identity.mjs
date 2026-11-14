@@ -123,3 +123,36 @@ export async function createIdentity(api, label, { emailPrefix, password, root }
 
   return new Identity(label, { email, userId, session, home, work })
 }
+
+/**
+ * "Same person, different laptop": a second machine for an EXISTING fixture
+ * user. A fresh $HOME, a fresh git repo, and a brand-new Supabase session
+ * (password grant) — so its refresh-token lineage is independent of the
+ * original identity's. Phases that burn a session (forced rotation, a
+ * deliberately dead refresh token) use a clone so they cannot poison the
+ * credentials that phases 01-11 and 99 still depend on.
+ *
+ * No user is created, so teardown (which deletes every user in `ids`) needs
+ * no knowledge of clones.
+ */
+export async function cloneIdentity(api, base, label, { password, root }) {
+  const session = await api.signIn(base.email, password)
+  const home = path.join(root, 'homes', label)
+  const work = path.join(root, 'work', label)
+  fs.mkdirSync(path.join(home, '.config', 'tages'), { recursive: true })
+  fs.mkdirSync(work, { recursive: true })
+  execFileSync('git', ['init', '-q'], { cwd: work })
+  execFileSync('git', ['config', 'user.email', base.email], { cwd: work })
+  execFileSync('git', ['config', 'user.name', `E2E ${label}`], { cwd: work })
+  fs.writeFileSync(path.join(work, 'README.md'), `# fixture work repo for ${label}\n`)
+  fs.writeFileSync(
+    path.join(home, '.config', 'tages', 'auth.json'),
+    JSON.stringify(
+      { userId: base.userId, email: base.email, accessToken: session.accessToken, refreshToken: session.refreshToken },
+      null,
+      2,
+    ),
+    { mode: 0o600 },
+  )
+  return new Identity(label, { email: base.email, userId: base.userId, session, home, work })
+}

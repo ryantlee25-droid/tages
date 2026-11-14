@@ -28,7 +28,9 @@ export async function handleBrief(
   cache: SqliteCache,
   sync: SupabaseSync | null,
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
-  const allMemories = cache.getAllForProject(projectId)
+  // Live only (bug 4): pending rows are unreviewed and archived rows are
+  // retracted; neither may be injected into an agent's system prompt.
+  const allMemories = cache.getAllForProject(projectId).filter((m) => m.status === 'live')
   const budget = args.budget || adaptiveBudget(allMemories.length)
 
   if (allMemories.length === 0) {

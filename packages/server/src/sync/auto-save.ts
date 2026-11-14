@@ -16,6 +16,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SqliteCache } from '../cache/sqlite'
 
+/** Tag session_end puts on every extracted row (tools/session-end.ts). */
+export const SESSION_EXTRACT_TAG = 'session-extract'
+
 export interface AutoSaveResult {
   promoted: number
   threshold: number
@@ -40,6 +43,11 @@ export async function runAutoSaveSweep(
     .eq('project_id', projectId)
     .eq('status', 'pending')
     .gte('confidence', threshold)
+    // Never promote session_end extractions (bug 6). source cannot separate
+    // them: observe and session_end both write source='agent'. Filter on the
+    // tag instead. tags is a nullable text[], and NOT (NULL @> ...) is NULL,
+    // which would silently exclude untagged rows, so NULL is allowed explicitly.
+    .or(`tags.is.null,tags.not.cs.{"${SESSION_EXTRACT_TAG}"}`)
     .select('id')
 
   if (error) {
@@ -68,6 +76,7 @@ export function runAutoSaveSweepLocal(
   let promoted = 0
 
   for (const mem of pending) {
+    if (mem.tags?.includes(SESSION_EXTRACT_TAG)) continue
     if (mem.confidence >= threshold) {
       cache.updateMemoryStatus(mem.id, 'live', now)
       promoted++

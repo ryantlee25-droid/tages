@@ -119,16 +119,20 @@ export async function teamRemoveCommand(emailOrId: string, options: TeamOptions)
   requireLiveSession(status, 'remove a member')
 
   // Soft-revoke: update status to 'revoked' instead of hard delete
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('team_members')
     .update({ status: 'revoked' })
     .eq('project_id', config.projectId)
     .or(`email.eq.${emailOrId},user_id.eq.${emailOrId}`)
+    .select('id')
 
   if (error) {
     console.error(chalk.red(`  Failed to remove: ${error.message}`))
     process.exit(1)
   }
+  // Zero rows = no such member, or RLS hid the row (caller is not owner/admin).
+  // Either way nothing changed, so "Revoked" would be a lie.
+  if (!Array.isArray(data) || data.length === 0) failNoMemberChanged(emailOrId)
 
   console.log(chalk.green(`  Revoked access for ${emailOrId}`))
 }
@@ -151,16 +155,28 @@ export async function teamRoleCommand(emailOrId: string, role: string, options: 
   )
   requireLiveSession(status, 'change a role')
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('team_members')
     .update({ role })
     .eq('project_id', config.projectId)
     .or(`email.eq.${emailOrId},user_id.eq.${emailOrId}`)
+    .select('id')
 
   if (error) {
     console.error(chalk.red(`  Failed to update role: ${error.message}`))
     process.exit(1)
   }
+  if (!Array.isArray(data) || data.length === 0) failNoMemberChanged(emailOrId)
 
   console.log(chalk.green(`  Updated ${emailOrId} to ${role}`))
+}
+
+function failNoMemberChanged(emailOrId: string): never {
+  console.error(
+    chalk.red(
+      `  Nothing was changed: no member matching ${emailOrId} that you can manage ` +
+        '(they are not on this project, or your role cannot manage members).',
+    ),
+  )
+  process.exit(1)
 }

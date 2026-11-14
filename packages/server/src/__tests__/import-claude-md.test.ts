@@ -14,6 +14,7 @@ function makeCache(): SqliteCache {
     upsertMemory: (memory: { key: string; value: string; type: string; id: string; projectId: string }) => {
       store.set(`${memory.projectId}:${memory.key}`, memory)
     },
+    clearEmbedding: () => {},
     _store: store,
   } as unknown as SqliteCache
 }

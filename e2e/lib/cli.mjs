@@ -54,12 +54,23 @@ export function cli(bin, identity, args, { cwd, timeoutMs = 120000, env = {} } =
  * teammate sees new data. Reusing a long-lived process here would hide that.
  *
  * @param {Array<{method:string, params:object}>} calls issued in order after initialize
+ * @param {object} opts
+ * @param {boolean} opts.graceful  end the session the way a real MCP client does:
+ *        SIGTERM, then wait for the server to drain. The default is SIGKILL, which
+ *        is right for read-only probes but WRONG for anything that writes through
+ *        the background sync queue (import_claude_md, archive_memory, verify_memory):
+ *        those mark rows dirty and rely on the 60s flush or the shutdown drain, and
+ *        SIGKILL skips both. Claude Code and Claude Desktop send SIGTERM.
+ * @param {string} opts.command / opts.args / opts.env  launch something other than
+ *        `node <serverBin>` (e.g. the exact command a teammate's .mcp.json holds).
  * @returns {Promise<{ok:boolean, why?:string, bootMs:number, responses:object[], stderr:string}>}
  */
-export function mcp(serverBin, identity, calls, { timeoutMs = 60000, cwd } = {}) {
+export function mcp(serverBin, identity, calls, { timeoutMs = 60000, cwd, graceful = false, command, args, env } = {}) {
   return new Promise(resolve => {
     const started = Date.now()
-    const proc = spawn('node', [serverBin], { cwd: cwd || identity.work, env: identity.env() })
+    const proc = command
+      ? spawn(command, args ?? [], { cwd: cwd || identity.work, env: identity.env(env ?? {}) })
+      : spawn('node', [serverBin], { cwd: cwd || identity.work, env: identity.env(env ?? {}) })
 
     let stdout = ''
     let stderr = ''
@@ -72,8 +83,18 @@ export function mcp(serverBin, identity, calls, { timeoutMs = 60000, cwd } = {})
       if (settled) return
       settled = true
       clearTimeout(timer)
-      proc.kill('SIGKILL')
-      resolve({ bootMs: bootMs ?? Date.now() - started, responses, stderr: redact(stderr), ...result })
+      const done = () => resolve({ bootMs: bootMs ?? Date.now() - started, responses, stderr: redact(stderr), ...result })
+      if (graceful && result.ok) {
+        const hardKill = setTimeout(() => proc.kill('SIGKILL'), 15000)
+        proc.once('exit', () => {
+          clearTimeout(hardKill)
+          done()
+        })
+        proc.kill('SIGTERM')
+      } else {
+        proc.kill('SIGKILL')
+        done()
+      }
     }
 
     const timer = setTimeout(
@@ -143,4 +164,25 @@ export function mcpText(response) {
   const blocks = response?.result?.content
   if (!Array.isArray(blocks)) return redact(JSON.stringify(response?.result ?? response ?? ''))
   return redact(blocks.map(b => b?.text ?? '').join('\n'))
+}
+
+/** Shorthand for a `tools/call` entry in an mcp() sequence. */
+export function toolCall(name, args = {}) {
+  return { method: 'tools/call', params: { name, arguments: args } }
+}
+
+/**
+ * One MCP tool call in a fresh server process, returning the flattened text.
+ * `ok:false` carries the reason so callers can put it in a check's detail.
+ */
+export async function mcpOne(serverBin, identity, name, args = {}, opts = {}) {
+  const r = await mcp(serverBin, identity, [toolCall(name, args)], opts)
+  const last = r.responses.at(-1)
+  return {
+    ok: r.ok && !last?.error && !last?.result?.isError,
+    text: r.ok ? mcpText(last) : '',
+    why: r.ok ? (last?.error ? JSON.stringify(last.error).slice(0, 200) : '') : `${r.why} :: ${r.stderr.slice(0, 200)}`,
+    stderr: r.stderr,
+    raw: r,
+  }
 }

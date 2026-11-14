@@ -4,6 +4,7 @@ import { createHash } from 'crypto'
 import chalk from 'chalk'
 import ora from 'ora'
 import { createAuthenticatedClient } from '../auth/session.js'
+import { permissionDeniedMessage } from '../lib/write-guard.js'
 import { loadProjectConfig } from '../config/project.js'
 import { execSync } from 'child_process'
 
@@ -104,8 +105,11 @@ export async function checkCommand(options: CheckOptions) {
   // Mark stale in DB if --fix
   if (options.fix) {
     const spinner2 = ora('Marking stale memories...').start()
+    let marked = 0
     for (const m of staleMemories) {
-      await supabase
+      // `.select('id')`: a read-only member's update is RLS-filtered to zero
+      // rows with no error, so count what actually changed.
+      const { data, error } = await supabase
         .from('memories')
         .update({
           stale: true,
@@ -113,6 +117,17 @@ export async function checkCommand(options: CheckOptions) {
           updated_at: new Date().toISOString(),
         })
         .eq('id', m.id)
+        .select('id')
+      if (!error && Array.isArray(data) && data.length > 0) marked++
+    }
+    if (marked < staleMemories.length) {
+      spinner2.stop()
+      if (marked === 0) {
+        console.error(chalk.red(permissionDeniedMessage('mark memories stale')))
+      } else {
+        console.error(chalk.red(`Only ${marked} of ${staleMemories.length} memories were marked stale; your role cannot change the rest.`))
+      }
+      process.exit(1)
     }
     spinner2.succeed(`Marked ${staleMemories.length} memories as stale`)
   } else {

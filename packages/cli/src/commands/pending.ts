@@ -3,6 +3,8 @@ import ora from 'ora'
 import * as readline from 'readline'
 import { createAuthenticatedClient } from '../auth/session.js'
 import { loadProjectConfig } from '../config/project.js'
+import { assertRowsAffected } from '../lib/write-guard.js'
+import { embedPromoted } from '../lib/embed-promoted.js'
 
 interface PendingOptions {
   project?: string
@@ -45,7 +47,10 @@ export async function pendingCommand(options: PendingOptions) {
   }
 
   const spinner = ora('Loading pending memories...').start()
-  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
+  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey, {
+    action: 'load pending memories',
+    beforeExit: () => spinner.stop(),
+  })
 
   const { data: memories, error } = await supabase
     .from('memories')
@@ -89,7 +94,7 @@ export async function pendingCommand(options: PendingOptions) {
 
   // --approve-all mode
   if (options.approveAll) {
-    await bulkApprove(filtered, supabase, options.yes)
+    await bulkApprove(filtered, supabase, options.yes, config.projectId, config.supabaseUrl)
     return
   }
 
@@ -182,7 +187,9 @@ async function bulkApprove(
   memories: PendingMemory[],
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: any,
-  skipConfirm?: boolean,
+  skipConfirm: boolean | undefined,
+  projectId: string,
+  supabaseUrl: string,
 ) {
   if (memories.length === 0) {
     console.log(chalk.dim('No pending memories match the filter.'))
@@ -202,7 +209,7 @@ async function bulkApprove(
   const spinner = ora(`Approving ${memories.length} ${memories.length === 1 ? 'memory' : 'memories'}...`).start()
 
   const ids = memories.map(m => m.id)
-  const { error } = await supabase
+  const result = await supabase
     .from('memories')
     .update({
       status: 'live',
@@ -210,11 +217,23 @@ async function bulkApprove(
       updated_at: new Date().toISOString(),
     })
     .in('id', ids)
+    .select('id, key')
 
-  if (error) {
-    spinner.fail(`Failed to approve memories: ${error.message}`)
-    process.exit(1)
+  // Embed whatever actually went live BEFORE the row-count guard, so a partial
+  // approval (some rows RLS-filtered) still leaves the approved ones findable.
+  const approvedKeys = !result.error && Array.isArray(result.data)
+    ? (result.data as Array<{ key: string }>).map(r => r.key)
+    : []
+  if (approvedKeys.length > 0) {
+    spinner.text = `Embedding ${approvedKeys.length} approved ${approvedKeys.length === 1 ? 'memory' : 'memories'}...`
+    await embedPromoted(supabase, projectId, approvedKeys, { supabaseUrl })
   }
+
+  assertRowsAffected(result, {
+    action: 'approve memories',
+    expected: ids.length,
+    beforeExit: () => spinner.stop(),
+  })
 
   spinner.succeed(chalk.green(`Approved ${memories.length} ${memories.length === 1 ? 'memory' : 'memories'} — now live and available in recall.`))
 }
@@ -243,18 +262,20 @@ async function bulkReject(
   const spinner = ora(`Archiving ${memories.length} ${memories.length === 1 ? 'memory' : 'memories'}...`).start()
 
   const ids = memories.map(m => m.id)
-  const { error } = await supabase
+  const result = await supabase
     .from('memories')
     .update({
       status: 'archived',
       updated_at: new Date().toISOString(),
     })
     .in('id', ids)
+    .select('id')
 
-  if (error) {
-    spinner.fail(`Failed to archive memories: ${error.message}`)
-    process.exit(1)
-  }
+  assertRowsAffected(result, {
+    action: 'archive memories',
+    expected: ids.length,
+    beforeExit: () => spinner.stop(),
+  })
 
   spinner.succeed(chalk.dim(`Archived ${memories.length} ${memories.length === 1 ? 'memory' : 'memories'}.`))
 }

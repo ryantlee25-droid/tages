@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { reciprocalRankFusion } from '../lib/rrf.js'
+import { reciprocalRankFusion, reciprocalRankFusionScored } from '../lib/rrf.js'
 
 interface Row {
   id: string
@@ -93,5 +93,37 @@ describe('reciprocalRankFusion', () => {
     const listA: Row[] = [{ id: 'first' }, { id: 'second' }, { id: 'third' }]
     const result = reciprocalRankFusion([listA])
     expect(result.map((r) => r.id)).toEqual(['first', 'second', 'third'])
+  })
+
+  it('breaks exact score ties on updated_at DESC, then id ASC (0.5.7 bug 10)', () => {
+    const older = { id: 'b', updated_at: '2026-11-01T10:00:00.000Z' }
+    const newer = { id: 'z', updated_at: '2026-11-01T10:00:02.500Z' }
+    const sameTimeLowId = { id: 'a', updated_at: '2026-11-01T10:00:00.000Z' }
+    // Each is rank 1 in its own list, so all three tie at 1/61.
+    const perms = [
+      [[older], [newer], [sameTimeLowId]],
+      [[newer], [sameTimeLowId], [older]],
+      [[sameTimeLowId], [older], [newer]],
+    ]
+    for (const lists of perms) {
+      expect(reciprocalRankFusion(lists).map((r) => r.id)).toEqual(['z', 'a', 'b'])
+    }
+  })
+
+  it('falls back to created_at for the tiebreak when updated_at is absent', () => {
+    const result = reciprocalRankFusion([
+      [{ id: 'a', created_at: '2026-01-01T00:00:00Z' }],
+      [{ id: 'b', created_at: '2026-01-02T00:00:00Z' }],
+    ])
+    expect(result.map((r) => r.id)).toEqual(['b', 'a'])
+  })
+})
+
+describe('reciprocalRankFusionScored', () => {
+  it('returns the summed score with each item', () => {
+    const result = reciprocalRankFusionScored([[{ id: 'x' }, { id: 'y' }], [{ id: 'x' }]])
+    expect(result[0].item.id).toBe('x')
+    expect(result[0].score).toBeCloseTo(2 / 61, 12)
+    expect(result[1].score).toBeCloseTo(1 / 62, 12)
   })
 })

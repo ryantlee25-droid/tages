@@ -10,15 +10,24 @@ import {
 
 // vi.mock factories are hoisted — do not reference outer variables inside them.
 // Use vi.hoisted() to share mutable state with tests.
-const { mockIn, mockUpdate, mockChainData, mockChainError } = vi.hoisted(() => {
-  const mockIn = vi.fn().mockResolvedValue({ data: null, error: null })
+const { mockIn, mockUpdate, mockUpdateSelect, mockEmbedPromoted, mockChainData, mockChainError } = vi.hoisted(() => {
+  // update().in(ids).select(cols) — the select resolves with the rows that
+  // actually changed. Default: every requested id (set per test via updatedRows).
+  const mockUpdateSelect = vi.fn()
+  const mockIn = vi.fn().mockReturnValue({ select: mockUpdateSelect })
+  const mockEmbedPromoted = vi.fn().mockResolvedValue({ embedded: 0, failed: 0 })
   const mockUpdate = vi.fn().mockReturnValue({ in: mockIn, eq: vi.fn().mockReturnThis() })
 
   const mockChainData: unknown[] = []
   const mockChainError: { message: string } | null = null
 
-  return { mockIn, mockUpdate, mockChainData, mockChainError }
+  return { mockIn, mockUpdate, mockUpdateSelect, mockEmbedPromoted, mockChainData, mockChainError }
 })
+
+vi.mock('../lib/embed-promoted.js', () => ({ embedPromoted: mockEmbedPromoted }))
+
+/** Rows the next update "changes"; null = every id passed to .in(). */
+let updatedRows: Array<{ id: string; key: string }> | null = null
 
 // Mutable references so tests can swap the pending memories returned
 let pendingMemories: unknown[] = []
@@ -101,8 +110,18 @@ describe('pending command', () => {
     pendingMemories = []
     pendingError = null
 
+    // A live session: the central dead-session guard lets service-key through.
+    process.env.TAGES_SERVICE_KEY = 'test-service-key'
+    updatedRows = null
+
     // Re-apply mocks after clearAllMocks
-    mockIn.mockResolvedValue({ data: null, error: null })
+    mockEmbedPromoted.mockResolvedValue({ embedded: 0, failed: 0 })
+    mockIn.mockImplementation((_col: string, ids: string[]) => ({
+      select: mockUpdateSelect.mockImplementation(async () => ({
+        data: updatedRows ?? ids.map(id => ({ id, key: `key-of-${id}` })),
+        error: null,
+      })),
+    }))
     mockUpdate.mockReturnValue({ in: mockIn, eq: vi.fn().mockResolvedValue({ data: null, error: null }) })
     mockSupabaseClient.from.mockReturnValue({
       ...selectChain,
@@ -111,6 +130,7 @@ describe('pending command', () => {
   })
 
   afterEach(() => {
+    delete process.env.TAGES_SERVICE_KEY
     console_.restore()
     cleanupFn()
   })
@@ -248,6 +268,38 @@ describe('pending command', () => {
     await expect(pendingCommand({})).rejects.toThrow('process.exit called')
     expect(exitSpy).toHaveBeenCalledWith(1)
 
+    exitSpy.mockRestore()
+  })
+
+  it('--approve-all embeds only the rows that went live', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    pendingMemories = [
+      { id: 'id-1', key: 'k1', type: 'convention', confidence: 0.9, created_at: '2026-04-18T00:00:00Z', tags: [] },
+      { id: 'id-2', key: 'k2', type: 'decision', confidence: 0.9, created_at: '2026-04-18T00:00:00Z', tags: [] },
+    ]
+    updatedRows = [{ id: 'id-1', key: 'k1' }, { id: 'id-2', key: 'k2' }]
+
+    await pendingCommand({ approveAll: true, yes: true })
+
+    expect(mockUpdateSelect).toHaveBeenCalledWith('id, key')
+    expect(mockEmbedPromoted).toHaveBeenCalledWith(
+      mockSupabaseClient, 'test-project-id', ['k1', 'k2'], expect.any(Object),
+    )
+  })
+
+  it('a dead session exits 1 with the login message (no "No memories pending review")', async () => {
+    writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    delete process.env.TAGES_SERVICE_KEY // no auth.json either -> anonymous
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit called')
+    })
+
+    await expect(pendingCommand({})).rejects.toThrow('process.exit called')
+
+    expect(exitSpy).toHaveBeenCalledWith(1)
+    expect(console_.errors.join('\n')).toContain('Cannot load pending memories')
+    expect(console_.errors.join('\n')).toContain('tages login')
+    expect(console_.logs.join('\n')).not.toContain('No memories pending review')
     exitSpy.mockRestore()
   })
 })

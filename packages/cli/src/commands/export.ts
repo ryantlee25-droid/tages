@@ -9,6 +9,13 @@ interface ExportOptions {
   project?: string
   output?: string
   format?: string
+  force?: boolean
+}
+
+const FORMAT_FILENAMES: Record<string, string> = {
+  'claude-md': 'CLAUDE.md',
+  'architecture-md': 'ARCHITECTURE.md',
+  json: 'tages-memories.json',
 }
 
 export async function exportCommand(options: ExportOptions) {
@@ -23,51 +30,79 @@ export async function exportCommand(options: ExportOptions) {
     process.exit(1)
   }
 
+  // An unknown format is an error, not CLAUDE.md: a typo must never aim the
+  // write at the one file people care most about.
+  if (options.format && !Object.hasOwn(FORMAT_FILENAMES, options.format)) {
+    console.error(chalk.red(`  Unknown --format "${options.format}". Use one of: ${Object.keys(FORMAT_FILENAMES).join(', ')}.`))
+    process.exit(1)
+  }
+  const format = options.format ?? 'claude-md'
+  const outputPath = path.resolve(options.output || path.join(process.cwd(), FORMAT_FILENAMES[format]))
+
+  // Never destroy an existing file (a hand-written CLAUDE.md, most often).
+  // Checked before any network call so the refusal is immediate.
+  if (fs.existsSync(outputPath) && !options.force) {
+    console.error(chalk.red(`  ${outputPath} already exists. Refusing to overwrite it.`))
+    console.error(chalk.dim('  Write somewhere else with `--output <path>`, or replace it with `--force`.'))
+    process.exit(1)
+  }
+
   const spinner = ora('Loading memories...').start()
   const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
 
-  const { data: memories } = await supabase
+  const { data: memories, error } = await supabase
     .from('memories')
     .select('*')
     .eq('project_id', config.projectId)
+    // Live only: pending rows are unreviewed, archived rows are retired.
+    .eq('status', 'live')
     .order('type')
     .order('updated_at', { ascending: false })
+
+  if (error) {
+    spinner.fail(`Could not load memories: ${error.message}`)
+    process.exit(1)
+  }
 
   if (!memories || memories.length === 0) {
     spinner.info('No memories to export.')
     return
   }
 
-  const format = options.format || 'claude-md'
-
   let content: string
-  let filename: string
-
   switch (format) {
-    case 'claude-md':
-      content = exportAsCLAUDEmd(memories, config.slug)
-      filename = 'CLAUDE.md'
-      break
     case 'architecture-md':
       content = exportAsArchitectureMd(memories, config.slug)
-      filename = 'ARCHITECTURE.md'
       break
     case 'json':
       content = JSON.stringify(memories, null, 2)
-      filename = 'tages-memories.json'
       break
     default:
       content = exportAsCLAUDEmd(memories, config.slug)
-      filename = 'CLAUDE.md'
   }
 
-  const outputPath = options.output || path.join(process.cwd(), filename)
   fs.writeFileSync(outputPath, content)
 
   spinner.succeed(`Exported ${memories.length} memories to ${outputPath}`)
 }
 
-function exportAsCLAUDEmd(memories: Record<string, unknown>[], slug: string): string {
+/** Types with a dedicated section in the CLAUDE.md export. */
+const CLAUDE_MD_SECTION_TYPES = new Set([
+  'convention', 'architecture', 'decision', 'pattern', 'lesson', 'entity', 'anti_pattern',
+])
+
+const OTHER_TYPE_HEADINGS: Record<string, string> = {
+  preference: 'Preferences',
+  execution: 'Execution',
+  operational: 'Operational',
+  environment: 'Environment',
+}
+
+function titleCase(s: string): string {
+  return s.split(/[_\s-]+/).filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join(' ')
+}
+
+export function exportAsCLAUDEmd(memories: Record<string, unknown>[], slug: string): string {
   const grouped: Record<string, Record<string, unknown>[]> = {}
   for (const m of memories) {
     const type = m.type as string
@@ -141,6 +176,28 @@ function exportAsCLAUDEmd(memories: Record<string, unknown>[], slug: string): st
     sections.push('## Entities')
     sections.push('')
     for (const m of grouped.entity) {
+      sections.push(`- **${m.key}**: ${m.value}`)
+    }
+    sections.push('')
+  }
+
+  // Don't / Never rules. The heading classifies back to anti_pattern on
+  // import (import-claude-md.ts matches "anti-pattern" / "don't" / "never").
+  if (grouped.anti_pattern) {
+    sections.push("## Anti-patterns (Don't / Never)")
+    sections.push('')
+    for (const m of grouped.anti_pattern) {
+      sections.push(`- ${m.value}`)
+    }
+    sections.push('')
+  }
+
+  // Every remaining type, so no live memory is silently dropped.
+  const others = Object.keys(grouped).filter(t => !CLAUDE_MD_SECTION_TYPES.has(t)).sort()
+  for (const type of others) {
+    sections.push(`## ${OTHER_TYPE_HEADINGS[type] ?? titleCase(type)}`)
+    sections.push('')
+    for (const m of grouped[type]) {
       sections.push(`- **${m.key}**: ${m.value}`)
     }
     sections.push('')

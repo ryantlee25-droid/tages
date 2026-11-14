@@ -171,6 +171,8 @@ describe('dedup command', () => {
     const setup = setupTempConfigDir()
     tempConfigDir = setup.configDir
     cleanupFn = setup.cleanup
+    // Signed in: since 0.5.7 a dead session exits 1 before the command runs.
+    writeAuthConfig(tempConfigDir)
     console_ = captureConsole()
     resetMockSupabase()
   })
@@ -227,6 +229,8 @@ describe('impact command', () => {
     const setup = setupTempConfigDir()
     tempConfigDir = setup.configDir
     cleanupFn = setup.cleanup
+    // Signed in: since 0.5.7 a dead session exits 1 before the command runs.
+    writeAuthConfig(tempConfigDir)
     console_ = captureConsole()
     resetMockSupabase()
   })
@@ -277,6 +281,8 @@ describe('risk command', () => {
     const setup = setupTempConfigDir()
     tempConfigDir = setup.configDir
     cleanupFn = setup.cleanup
+    // Signed in: since 0.5.7 a dead session exits 1 before the command runs.
+    writeAuthConfig(tempConfigDir)
     console_ = captureConsole()
     resetMockSupabase()
   })
@@ -308,6 +314,8 @@ describe('enforce command', () => {
     const setup = setupTempConfigDir()
     tempConfigDir = setup.configDir
     cleanupFn = setup.cleanup
+    // Signed in: since 0.5.7 a dead session exits 1 before the command runs.
+    writeAuthConfig(tempConfigDir)
     console_ = captureConsole()
     resetMockSupabase()
   })
@@ -355,6 +363,8 @@ describe('quality command', () => {
     const setup = setupTempConfigDir()
     tempConfigDir = setup.configDir
     cleanupFn = setup.cleanup
+    // Signed in: since 0.5.7 a dead session exits 1 before the command runs.
+    writeAuthConfig(tempConfigDir)
     console_ = captureConsole()
     resetMockSupabase()
   })
@@ -392,6 +402,8 @@ describe('export command', () => {
     const setup = setupTempConfigDir()
     tempConfigDir = setup.configDir
     cleanupFn = setup.cleanup
+    // Signed in: since 0.5.7 a dead session exits 1 before the command runs.
+    writeAuthConfig(tempConfigDir)
     console_ = captureConsole()
     resetMockSupabase()
   })
@@ -446,6 +458,8 @@ describe('pending command', () => {
     const setup = setupTempConfigDir()
     tempConfigDir = setup.configDir
     cleanupFn = setup.cleanup
+    // Signed in: since 0.5.7 a dead session exits 1 before the command runs.
+    writeAuthConfig(tempConfigDir)
     console_ = captureConsole()
     resetMockSupabase()
   })
@@ -485,6 +499,8 @@ describe('verify command', () => {
     const setup = setupTempConfigDir()
     tempConfigDir = setup.configDir
     cleanupFn = setup.cleanup
+    // Signed in: since 0.5.7 a dead session exits 1 before the command runs.
+    writeAuthConfig(tempConfigDir)
     console_ = captureConsole()
     resetMockSupabase()
   })
@@ -516,6 +532,8 @@ describe('suggest command', () => {
     const setup = setupTempConfigDir()
     tempConfigDir = setup.configDir
     cleanupFn = setup.cleanup
+    // Signed in: since 0.5.7 a dead session exits 1 before the command runs.
+    writeAuthConfig(tempConfigDir)
     console_ = captureConsole()
     resetMockSupabase()
   })
@@ -565,6 +583,8 @@ describe('onboard command', () => {
     const setup = setupTempConfigDir()
     tempConfigDir = setup.configDir
     cleanupFn = setup.cleanup
+    // Signed in: since 0.5.7 a dead session exits 1 before the command runs.
+    writeAuthConfig(tempConfigDir)
     // `onboard` refuses to build a briefing without a live session, because an
     // anonymous client reads zero rows and renders as a project with nothing in
     // it. These tests assert on briefing CONTENT, so they need a real session.
@@ -607,6 +627,8 @@ describe('token commands', () => {
     const setup = setupTempConfigDir()
     tempConfigDir = setup.configDir
     cleanupFn = setup.cleanup
+    // Signed in: since 0.5.7 a dead session exits 1 before the command runs.
+    writeAuthConfig(tempConfigDir)
     console_ = captureConsole()
     resetMockSupabase()
   })
@@ -625,6 +647,7 @@ describe('token commands', () => {
 
   it('token generate exits when not authenticated', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    fs.rmSync(path.join(tempConfigDir, 'auth.json'), { force: true })
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('exit') })
     await expect(tokenGenerateCommand({})).rejects.toThrow('exit')
     expect(console_.errors.join('\n')).toContain('Not authenticated')
@@ -664,6 +687,7 @@ describe('token commands', () => {
 
   it('token rotate exits when not authenticated', async () => {
     writeProjectConfig(tempConfigDir, TEST_PROJECT_CONFIG)
+    fs.rmSync(path.join(tempConfigDir, 'auth.json'), { force: true })
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('exit') })
     await expect(tokenRotateCommand({})).rejects.toThrow('exit')
     expect(console_.errors.join('\n')).toContain('Not authenticated')

@@ -59,7 +59,10 @@ async function resolveHostedEmbedToken(
   if (process.env.TAGES_SERVICE_KEY) return undefined
   if (!supabaseUrl || !supabaseAnonKey) return undefined
   try {
-    const supabase = await createAuthenticatedClient(supabaseUrl, supabaseAnonKey)
+    // Token lookup only: a dead session must not exit here, before the local
+    // write. allowDeadSession hands back the anon client, whose session is
+    // null, so the embedding simply falls back to the next provider.
+    const supabase = await createAuthenticatedClient(supabaseUrl, supabaseAnonKey, { allowDeadSession: true })
     const { data } = await supabase.auth.getSession()
     return data?.session?.access_token ?? undefined
   } catch {

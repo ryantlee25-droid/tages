@@ -1,6 +1,12 @@
 import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
+import type { Memory } from '@tages/shared'
 import type { SqliteCache } from '../cache/sqlite'
 import type { SupabaseSync } from '../sync/supabase-sync'
+
+/** Resources feed agent context: pending (unreviewed) and archived (retracted) rows never belong there. */
+function liveOnly(memories: Memory[]): Memory[] {
+  return memories.filter((m) => m.status === 'live')
+}
 
 export function registerResources(
   server: import('@modelcontextprotocol/sdk/server/mcp.js').McpServer,
@@ -14,7 +20,7 @@ export function registerResources(
     { description: 'All coding conventions for this project' },
     async (uri, params) => {
       const projectId = params.id as string
-      const memories = cache.getByType(projectId, 'convention')
+      const memories = liveOnly(cache.getByType(projectId, 'convention'))
       const text = memories.length > 0
         ? memories.map(m => `## ${m.key}\n${m.value}`).join('\n\n')
         : 'No conventions recorded.'
@@ -32,7 +38,7 @@ export function registerResources(
     { description: 'Architecture notes and module boundaries' },
     async (uri, params) => {
       const projectId = params.id as string
-      const memories = cache.getByType(projectId, 'architecture')
+      const memories = liveOnly(cache.getByType(projectId, 'architecture'))
       const text = memories.length > 0
         ? memories.map(m => `## ${m.key}\n${m.value}`).join('\n\n')
         : 'No architecture notes recorded.'
@@ -50,7 +56,7 @@ export function registerResources(
     { description: 'Decision log — why things were built the way they are' },
     async (uri, params) => {
       const projectId = params.id as string
-      const memories = cache.getByType(projectId, 'decision')
+      const memories = liveOnly(cache.getByType(projectId, 'decision'))
       const text = memories.length > 0
         ? memories.map(m => `## ${m.key}\n${m.value}`).join('\n\n')
         : 'No decisions recorded.'
@@ -68,7 +74,7 @@ export function registerResources(
     { description: 'Key entities, modules, and components in this project' },
     async (uri, params) => {
       const projectId = params.id as string
-      const memories = cache.getByType(projectId, 'entity')
+      const memories = liveOnly(cache.getByType(projectId, 'entity'))
       const text = memories.length > 0
         ? memories.map(m => `## ${m.key}\n${m.value}`).join('\n\n')
         : 'No entities recorded.'
@@ -86,7 +92,7 @@ export function registerResources(
     { description: 'Execution flows, pipelines, and event-driven processes' },
     async (uri, params) => {
       const projectId = params.id as string
-      const memories = cache.getByType(projectId, 'execution')
+      const memories = liveOnly(cache.getByType(projectId, 'execution'))
 
       if (memories.length === 0) {
         return {
@@ -136,7 +142,7 @@ export function registerResources(
     { description: 'Complete project context bundled for documentation generation — conventions, architecture, decisions, entities, patterns, and lessons in one payload' },
     async (uri, params) => {
       const projectId = params.id as string
-      const all = cache.getAllForProject(projectId)
+      const all = liveOnly(cache.getAllForProject(projectId))
 
       const grouped: Record<string, typeof all> = {}
       for (const m of all) {

@@ -3,6 +3,7 @@ import ora from 'ora'
 import * as readline from 'readline'
 import { createAuthenticatedClient } from '../auth/session.js'
 import { loadProjectConfig } from '../config/project.js'
+import { assertRowsAffected } from '../lib/write-guard.js'
 
 interface SettingsAutoSaveOptions {
   project?: string
@@ -32,7 +33,9 @@ export async function settingsAutoSaveCommand(
     process.exit(1)
   }
 
-  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey)
+  const supabase = await createAuthenticatedClient(config.supabaseUrl, config.supabaseAnonKey, {
+    action: 'change project settings',
+  })
 
   // Read-only mode: no argument provided
   if (threshold === undefined) {
@@ -119,17 +122,20 @@ export async function settingsAutoSaveCommand(
 
   const spinner = ora('Updating auto-save threshold...').start()
 
-  const { error } = await Promise.resolve(
+  // `.select('id')`: RLS lets a read-only member's UPDATE "succeed" with zero
+  // rows, which used to print "Auto-save set to 10%" while nothing changed.
+  const result = await Promise.resolve(
     supabase
       .from('projects')
       .update({ auto_save_threshold: newThreshold, updated_at: new Date().toISOString() })
       .eq('id', config.projectId)
+      .select('id')
   )
 
-  if (error) {
-    spinner.fail(`Failed to update auto-save threshold: ${error.message}`)
-    process.exit(1)
-  }
+  assertRowsAffected(result, {
+    action: 'change the auto-save threshold',
+    beforeExit: () => spinner.stop(),
+  })
 
   if (newThreshold === null) {
     spinner.succeed(`Auto-save ${chalk.bold('disabled')} for ${chalk.bold(projectName)}.`)

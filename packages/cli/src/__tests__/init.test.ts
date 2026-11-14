@@ -22,6 +22,7 @@ const mockInjectMcpConfig = vi.fn().mockReturnValue({
 })
 vi.mock('../config/mcp-inject.js', () => ({
   injectMcpConfig: (...args: unknown[]) => mockInjectMcpConfig(...args),
+  requireParsableMcpConfig: vi.fn(),
 }))
 
 // Mock the post-commit hook installer to avoid real git dir access

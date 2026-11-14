@@ -14,6 +14,21 @@ import { writeAuthFile } from './store.js'
  */
 export type SessionStatus = 'service-key' | 'authenticated' | 'anonymous' | 'expired'
 
+export interface CreateAuthenticatedClientOptions {
+  /**
+   * Return the (anonymous) client even when the session is dead, instead of
+   * exiting. Only for commands whose job is to REPORT on the session, such as
+   * `doctor`. Everything else must fail loudly.
+   */
+  allowDeadSession?: boolean
+  /** Completes "Cannot ___:" in the dead-session message. */
+  action?: string
+  /** Runs right before the dead-session message prints (e.g. stop a spinner). */
+  beforeExit?: () => void
+}
+
+export const DEFAULT_GUARD_ACTION = 'reach the Tages cloud'
+
 /**
  * Creates an authenticated Supabase client for CLI operations.
  *
@@ -22,11 +37,26 @@ export type SessionStatus = 'service-key' | 'authenticated' | 'anonymous' | 'exp
  * 2. ~/.config/tages/auth.json — user JWT from `tages login` OAuth flow
  * 3. Falls back to anon key (will fail on RLS-protected tables)
  *
- * Prefer {@link createAuthenticatedClientWithStatus} in any command whose
- * output would look the same on an expired session as on an empty project.
+ * Exits 1 with "Cannot <action>: your session has expired. Run `tages login`."
+ * (or "you are not signed in") when the session is `expired` or `anonymous`
+ * and a cloud URL is configured, unless `opts.allowDeadSession` is set.
+ * `service-key` and `authenticated` pass through.
  */
-export async function createAuthenticatedClient(supabaseUrl: string, supabaseAnonKey: string) {
-  const { supabase } = await createAuthenticatedClientWithStatus(supabaseUrl, supabaseAnonKey)
+export async function createAuthenticatedClient(
+  supabaseUrl: string,
+  supabaseAnonKey: string,
+  opts: CreateAuthenticatedClientOptions = {},
+): Promise<ReturnType<typeof createSupabaseClient>> {
+  const { supabase, status } = await createAuthenticatedClientWithStatus(supabaseUrl, supabaseAnonKey)
+  // Central dead-session guard. A dead session hands back the anonymous client,
+  // and every RLS-protected read then returns zero rows and every write
+  // affects zero rows, with no error. Without this, each of the ~30 commands
+  // built on this function reported "nothing found" / "done" on a dead login.
+  // Guarding here instead of in every command means a new command is covered
+  // by default. No cloud URL means a local-only caller: nothing to guard.
+  if (supabaseUrl && !opts.allowDeadSession) {
+    requireLiveSession(status, opts.action ?? DEFAULT_GUARD_ACTION, opts.beforeExit)
+  }
   return supabase
 }
 

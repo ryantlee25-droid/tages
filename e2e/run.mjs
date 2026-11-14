@@ -46,6 +46,11 @@ const PHASE_MODULES = [
   './phases/09-lifecycle.mjs',
   './phases/10-bidirectional-sync.mjs',
   './phases/11-evidence.mjs',
+  './phases/12-pending-queue.mjs',
+  './phases/13-claude-md.mjs',
+  './phases/14-recency.mjs',
+  './phases/15-session-longevity.mjs',
+  './phases/16-onboarding-smoke.mjs',
   './phases/99-controls.mjs',
 ]
 
@@ -55,6 +60,7 @@ function parseArgs(argv) {
   const args = {
     mode: process.env.TAGES_E2E_MODE || 'npm',
     version: process.env.TAGES_E2E_VERSION || 'latest',
+    serverVersion: process.env.TAGES_E2E_SERVER_VERSION || null,
     target: process.env.TAGES_E2E_TARGET || 'prod',
     stopAfter: null,
     setCredentials: false,
@@ -67,6 +73,7 @@ function parseArgs(argv) {
     const next = () => argv[++i]
     if (a === '--mode') args.mode = next()
     else if (a === '--version') args.version = next()
+    else if (a === '--server-version') args.serverVersion = next()
     else if (a === '--target') args.target = next()
     else if (a === '--stop-after') args.stopAfter = next()
     else if (a === '--set-credentials') args.setCredentials = true
@@ -97,6 +104,9 @@ Options
                        throwaway prefix and tests what a teammate gets.
                        local tests this working tree's dist/ output.
   --version <spec>     npm dist-tag or exact version. Default: latest.
+  --server-version <spec>
+                       Version for @tages/server when it differs from the CLI's
+                       (the two packages are versioned independently).
   --target <prod|dev|https://ref.supabase.co>
                        Which Supabase project to run against. Default: prod.
   --stop-after <id>    Run from the beginning through the first phase whose id
@@ -190,7 +200,7 @@ async function main() {
 
   let bins
   try {
-    bins = resolveBinaries(args.mode, { version: args.version, installRoot: path.join(root, 'install') })
+    bins = resolveBinaries(args.mode, { version: args.version, serverVersion: args.serverVersion, installRoot: path.join(root, 'install') })
   } catch (err) {
     report.check('CLI and MCP server binaries resolve', false, err.message)
     abort(2)
@@ -347,7 +357,7 @@ async function main() {
     )
     if (!project.id) throw new Error('fixture project could not be created; aborting before any phase runs')
 
-    const ctx = { api, report, bins, project, ids, state, root, fixturePrefix, args }
+    const ctx = { api, report, bins, project, ids, state, root, fixturePrefix, args, password }
 
     // ---- phases ----------------------------------------------------------
     for (const modPath of PHASE_MODULES) {
